@@ -26,6 +26,7 @@ import com.zhousl.aether.data.LlmProvider
 import com.zhousl.aether.data.LlmProviderConfig
 import com.zhousl.aether.data.LocalRuntimeId
 import com.zhousl.aether.data.ProviderModelOption
+import com.zhousl.aether.data.PersistedChatState
 import com.zhousl.aether.data.PersistedChatWriteIntent
 import com.zhousl.aether.data.availableModelOptions
 import com.zhousl.aether.data.McpClientManager
@@ -72,7 +73,9 @@ import com.zhousl.aether.data.resolveStoredOrAutomaticModelKey
 import com.zhousl.aether.termux.TermuxSetupIssue
 import com.zhousl.aether.termux.TermuxSetupState
 import com.zhousl.aether.runtime.AlpineTerminalLaunchSpec
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -128,6 +131,7 @@ class AetherViewModel(
     private val _uiState = MutableStateFlow(AetherUiState())
     private val _transientMessages = MutableSharedFlow<UiText>(extraBufferCapacity = 4)
     private var didEvaluateWorkspaceMode = false
+    private var selectSessionJob: Job? = null
 
     val uiState: StateFlow<AetherUiState> = _uiState.asStateFlow()
     val transientMessages = _transientMessages.asSharedFlow()
@@ -177,12 +181,20 @@ class AetherViewModel(
         }
 
         viewModelScope.launch {
+            var didReceiveChatState = false
             chatStateStore.state.collect { persisted ->
+                if (!didReceiveChatState && persisted.sessions.isEmpty() && persisted.currentSessionId == DraftSessionId) {
+                    didReceiveChatState = true
+                    return@collect
+                }
+                didReceiveChatState = true
+                val hydratedPersisted = hydrateCurrentSessionMessages(persisted)
                 _uiState.update { current ->
-                    val currentExecution = current.sessionExecutionStates[persisted.currentSessionId.ifBlank { DraftSessionId }]
+                    val currentSessionId = hydratedPersisted.currentSessionId.ifBlank { DraftSessionId }
+                    val currentExecution = current.sessionExecutionStates[currentSessionId]
                     current.copy(
-                        sessions = persisted.sessions,
-                        currentSessionId = persisted.currentSessionId.ifBlank { DraftSessionId },
+                        sessions = hydratedPersisted.sessions,
+                        currentSessionId = currentSessionId,
                         isSending = currentExecution?.isRunning == true,
                         pendingResponseSessionId = currentExecution?.sessionId,
                         pendingToolInvocations = currentExecution?.pendingToolInvocations.orEmpty(),
@@ -1016,6 +1028,15 @@ class AetherViewModel(
         _uiState.update { it.copy(currentScreen = AppScreen.Settings) }
     }
 
+    fun refreshUsageStatisticsSnapshots() {
+        viewModelScope.launch {
+            val snapshots = withContext(Dispatchers.IO) {
+                runtime.chatRepository.getUsageStatisticsSnapshot()
+            }
+            _uiState.update { it.copy(usageStatisticsSnapshots = snapshots) }
+        }
+    }
+
     fun closeSettings() {
         _uiState.update {
             it.copy(
@@ -1048,9 +1069,11 @@ class AetherViewModel(
     }
 
     fun selectSession(sessionId: String) {
-        _uiState.update {
-            it.copy(
+        selectSessionJob?.cancel()
+        _uiState.update { current ->
+            current.copy(
                 currentScreen = AppScreen.Chat,
+                sessions = current.sessions.withMessagesOnlyForSession(sessionId),
                 currentSessionId = sessionId,
                 draftInput = "",
                 draftAttachments = emptyList(),
@@ -1061,11 +1084,44 @@ class AetherViewModel(
                 draftWorkspaceId = null,
                 editingSessionId = null,
                 editingMessageId = null,
-                unviewedCompletedSessionIds = it.unviewedCompletedSessionIds - sessionId,
+                unviewedCompletedSessionIds = current.unviewedCompletedSessionIds - sessionId,
                 showStarterPromptHint = false,
             )
         }
-        persistCurrentSessionId(sessionId)
+        selectSessionJob = viewModelScope.launch {
+            val loadedSession = if (sessionId == DraftSessionId) {
+                null
+            } else {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        runtime.chatRepository.getSessionWithMessages(sessionId)
+                    }
+                }.getOrElse { throwable ->
+                    if (throwable is CancellationException) throw throwable
+                    diagnosticLogger.exception(
+                        category = "storage",
+                        event = "session_selection_hydration_failed",
+                        throwable = throwable,
+                        level = "warn",
+                        sessionId = sessionId,
+                    )
+                    null
+                }
+            }
+            loadedSession?.let { session ->
+                _uiState.update { current ->
+                    if (current.currentSessionId != sessionId) {
+                        current
+                    } else {
+                        current.copy(
+                            sessions = replaceOrPrependSession(current.sessions, session)
+                                .withMessagesOnlyForSession(sessionId),
+                        )
+                    }
+                }
+            }
+            persistSessionSelection(sessionId, loadedSession)
+        }
     }
 
     fun renameSession(
@@ -1141,9 +1197,9 @@ class AetherViewModel(
         sessionId: String,
         destinationUri: Uri,
     ) {
-        val session = _uiState.value.sessions.firstOrNull { it.id == sessionId } ?: return
         viewModelScope.launch {
             val didExport = withContext(Dispatchers.IO) {
+                val session = runtime.chatRepository.getSessionWithMessages(sessionId) ?: return@withContext false
                 writeTextToUri(
                     uri = destinationUri,
                     text = JSONObject().apply {
@@ -1162,9 +1218,10 @@ class AetherViewModel(
         val snapshot = _uiState.value
         viewModelScope.launch {
             val didExport = withContext(Dispatchers.IO) {
+                val sessions = runtime.chatRepository.getSessionsWithMessages()
                 writeTextToUri(
                     uri = destinationUri,
-                    text = buildFullAppExportJson(snapshot).toString(2),
+                    text = buildFullAppExportJson(snapshot, sessions).toString(2),
                 )
             }
             emitTransientMessage(uiString(if (didExport) R.string.message_app_data_exported else R.string.message_app_data_export_failed))
@@ -2676,9 +2733,74 @@ class AetherViewModel(
 
     private fun persistCurrentSessionId(sessionId: String) {
         chatStateStore.update { persisted ->
-            persisted.copy(currentSessionId = sessionId)
+            persisted.copy(
+                sessions = persisted.sessions.withMessagesOnlyForSession(sessionId),
+                currentSessionId = sessionId,
+            )
         }
     }
+
+    private suspend fun hydrateCurrentSessionMessages(persisted: PersistedChatState): PersistedChatState {
+        val currentSessionId = persisted.currentSessionId.ifBlank { DraftSessionId }
+        if (currentSessionId == DraftSessionId) return persisted
+        val currentSession = persisted.sessions.firstOrNull { it.id == currentSessionId } ?: return persisted
+        if (currentSession.messages.isNotEmpty() || currentSession.messageCount <= 0) return persisted
+        val loadedSession = runCatching {
+            withContext(Dispatchers.IO) {
+                runtime.chatRepository.getSessionWithMessages(currentSessionId)
+            }
+        }.getOrElse { throwable ->
+            if (throwable is CancellationException) throw throwable
+            diagnosticLogger.exception(
+                category = "storage",
+                event = "session_hydration_failed",
+                throwable = throwable,
+                level = "warn",
+                sessionId = currentSessionId,
+            )
+            null
+        } ?: return persisted
+        return persisted.copy(
+            sessions = replaceOrPrependSession(persisted.sessions, loadedSession),
+        )
+    }
+
+    private fun persistSessionSelection(
+        sessionId: String,
+        loadedSession: ChatSession?,
+    ) {
+        if (loadedSession == null) {
+            persistCurrentSessionId(sessionId)
+            return
+        }
+        chatStateStore.update { persisted ->
+            persisted.copy(
+                sessions = replaceOrPrependSession(persisted.sessions, loadedSession)
+                    .withMessagesOnlyForSession(sessionId),
+                currentSessionId = sessionId,
+            )
+        }
+    }
+
+    private fun replaceOrPrependSession(
+        sessions: List<ChatSession>,
+        session: ChatSession,
+    ): List<ChatSession> = if (sessions.any { it.id == session.id }) {
+        sessions.map { existing ->
+            if (existing.id == session.id) session else existing
+        }
+    } else {
+        listOf(session) + sessions
+    }
+
+    private fun List<ChatSession>.withMessagesOnlyForSession(sessionId: String): List<ChatSession> =
+        map { session ->
+            if (session.id == sessionId) {
+                session
+            } else {
+                session.copy(messages = emptyList())
+            }
+        }
 
     private fun replacePersistedChats(
         sessions: List<ChatSession>,
@@ -3125,6 +3247,8 @@ class AetherViewModel(
             title = if (hasCustomTitle) title else metadata.title,
             preview = metadata.preview,
             messages = syncedMessages,
+            messageCount = syncedMessages.size,
+            lastMessageAtMillis = syncedMessages.maxOfOrNull { it.createdAtMillis },
         )
     }
 
@@ -4070,15 +4194,15 @@ class AetherViewModel(
                 "recentSessions",
                 JSONArray().apply {
                     snapshot.sessions
-                        .sortedByDescending { session -> session.messages.maxOfOrNull { it.createdAtMillis } ?: 0L }
+                        .sortedByDescending { session -> session.lastMessageAtMillis ?: 0L }
                         .take(12)
                         .forEach { session ->
                             put(
                                 JSONObject().apply {
                                     put("id", session.id)
                                     put("title", session.title)
-                                    put("messageCount", session.messages.size)
-                                    put("lastMessageAtMillis", session.messages.maxOfOrNull { it.createdAtMillis } ?: 0L)
+                                    put("messageCount", session.messageCount)
+                                    put("lastMessageAtMillis", session.lastMessageAtMillis ?: 0L)
                                     put("selectedModelKey", session.selectedModelKey)
                                     put("selectedSkillCount", session.selectedSkillIds.size)
                                     put("activeMcpServerCount", session.activeMcpServerIds.size)
@@ -4161,14 +4285,17 @@ class AetherViewModel(
         }
     }
 
-    private fun buildFullAppExportJson(snapshot: AetherUiState): JSONObject =
+    private fun buildFullAppExportJson(
+        snapshot: AetherUiState,
+        sessions: List<ChatSession>,
+    ): JSONObject =
         JSONObject().apply {
             put("schemaVersion", 2)
             put("exportType", "app")
             put("exportedAtMillis", System.currentTimeMillis())
             put("settings", snapshot.settings.toJson())
             put("providerConfigs", JSONArray(serializeProviderConfigs(snapshot.providerConfigs)))
-            put("sessions", JSONArray(serializeChatSessions(snapshot.sessions.map { it.copy(activeSkills = emptyList()) })))
+            put("sessions", JSONArray(serializeChatSessions(sessions.map { it.copy(activeSkills = emptyList()) })))
             put("currentSessionId", snapshot.currentSessionId)
             put("skillBundles", skillManager.exportSkillBundles(snapshot.installedSkills))
             put("mcpServers", JSONArray(serializeMcpServerConfigs(snapshot.mcpServers)))

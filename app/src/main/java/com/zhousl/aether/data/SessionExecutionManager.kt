@@ -115,6 +115,7 @@ class SessionExecutionManager(
     private val settingsRepository: SettingsRepository,
     private val extensionsRepository: AgentExtensionsRepository,
     private val chatStateStore: ChatStateStore,
+    private val chatRepository: ChatRepository,
     private val bashTool: TermuxBashTool,
     private val runtimeRouter: RuntimeRouter,
     private val workspaceFileBridge: WorkspaceFileBridge,
@@ -318,12 +319,17 @@ class SessionExecutionManager(
         var activeMcpServerIds: List<String> = emptyList()
         var agentModeEnabled = false
 
+        val persistedSessionWithMessages = chatRepository.getSessionWithMessages(sessionId)
+
         chatStateStore.updateAndFlush { persisted ->
             val updatedSessions = persisted.sessions.toMutableList()
             val existingIndex = updatedSessions.indexOfFirst { it.id == sessionId }
             val updatedSession = if (existingIndex >= 0) {
                 val existing = updatedSessions.removeAt(existingIndex)
-                existing.withDerivedMessages(existing.messages + userMessage)
+                val baseMessages = existing.messages.ifEmpty {
+                    persistedSessionWithMessages?.messages.orEmpty()
+                }
+                existing.withDerivedMessages(baseMessages + userMessage)
             } else {
                 ChatSession(
                     id = sessionId,

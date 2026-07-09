@@ -164,6 +164,7 @@ class SessionExecutionManager(
 
     fun startTurn(request: SessionTurnRequest) {
         val handle = SessionExecutionHandle(sessionId = request.sessionId)
+        handle.replaceRetainedMessages(request.requestMessages)
         if (executionHandles.putIfAbsent(request.sessionId, handle) != null) return
 
         val validationError = validateRequest(request)
@@ -186,6 +187,7 @@ class SessionExecutionManager(
                 ),
                 thoughtDurationMillis = null,
                 outcome = SessionTurnOutcome.ValidationError,
+                baseMessages = request.requestMessages,
             )
             _turnEvents.tryEmit(completion.toTurnEvent(request.sessionId))
             return
@@ -392,7 +394,7 @@ class SessionExecutionManager(
 
                 val nextQueued = pollNextQueuedInput(handle) ?: break
                 nextRequest = buildQueuedTurnRequest(
-                    sessionId = handle.sessionId,
+                    handle = handle,
                     queuedInput = nextQueued.message,
                 )
             }
@@ -686,6 +688,7 @@ class SessionExecutionManager(
                         turnCompletedAtMillis = turnCompletedAtMillis,
                         inputMessageCount = request.requestMessages.size,
                         userMessageCount = request.requestMessages.count { it.author == MessageAuthor.User },
+                        handle = handle,
                     )
                 },
                 onFailure = { throwable ->
@@ -717,6 +720,7 @@ class SessionExecutionManager(
                         turnCompletedAtMillis = System.currentTimeMillis(),
                         inputMessageCount = request.requestMessages.size,
                         userMessageCount = request.requestMessages.count { it.author == MessageAuthor.User },
+                        handle = handle,
                     )
                 },
             )
@@ -786,14 +790,19 @@ class SessionExecutionManager(
     }
 
     private fun buildQueuedTurnRequest(
-        sessionId: String,
+        handle: SessionExecutionHandle,
         queuedInput: ChatMessage,
-    ): SessionTurnRequest? = queuedTurnRequestBuilder.build(
-        sessionId = sessionId,
-        queuedInput = queuedInput,
-        baseSettings = currentSettings.value,
-        providerConfigs = currentProviderConfigs.value,
-    )
+    ): SessionTurnRequest? {
+        val request = queuedTurnRequestBuilder.build(
+            sessionId = handle.sessionId,
+            queuedInput = queuedInput,
+            baseMessages = handle.retainedMessagesSnapshot(),
+            baseSettings = currentSettings.value,
+            providerConfigs = currentProviderConfigs.value,
+        )
+        request?.let { handle.replaceRetainedMessages(it.requestMessages) }
+        return request
+    }
 
     private fun updateSessionSelections(
         sessionId: String,
@@ -869,6 +878,8 @@ class SessionExecutionManager(
         turnCompletedAtMillis: Long? = null,
         inputMessageCount: Int = 0,
         userMessageCount: Int = 0,
+        handle: SessionExecutionHandle? = null,
+        baseMessages: List<ChatMessage> = handle?.retainedMessagesSnapshot().orEmpty(),
     ): CompletionSummary {
         var sessionTitle = resolveSessionTitle(sessionId)
         var replySummary = blocks.lastOrNull()
@@ -895,9 +906,11 @@ class SessionExecutionManager(
 
             val updatedSessions = persisted.sessions.toMutableList()
             val session = updatedSessions.removeAt(sessionIndex)
+            val currentMessages = session.messages.ifEmpty { baseMessages }
             val updatedSession = session.withDerivedMessages(
-                session.messages + appendedMessages
+                currentMessages + appendedMessages
             )
+            handle?.replaceRetainedMessages(updatedSession.messages)
             sessionTitle = updatedSession.title
             replySummary = updatedSession.preview
             updatedSessions.add(0, updatedSession)
@@ -1156,6 +1169,7 @@ class SessionExecutionManager(
                 blocks = blocks,
                 thoughtDurationMillis = thoughtDurationMillis,
                 outcome = SessionTurnOutcome.Neutral,
+                handle = handle,
             )
         }
     }
@@ -1199,11 +1213,14 @@ class SessionExecutionManager(
 
             val updatedSessions = persisted.sessions.toMutableList()
             val session = updatedSessions.removeAt(sessionIndex)
+            val currentMessages = session.messages.ifEmpty { handle.retainedMessagesSnapshot() }
+            val updatedSession = session.withDerivedMessages(
+                syncActiveBranches(currentMessages + interruptedAssistantMessages + userMessages)
+            )
+            handle.replaceRetainedMessages(updatedSession.messages)
             updatedSessions.add(
                 0,
-                session.withDerivedMessages(
-                    syncActiveBranches(session.messages + interruptedAssistantMessages + userMessages)
-                ),
+                updatedSession,
             )
             persisted.copy(sessions = updatedSessions)
         }
@@ -2512,6 +2529,7 @@ class SessionExecutionManager(
         val lock = Any()
         val queuedInputs = ArrayDeque<PendingEnvelope>()
         val steerInputs = ArrayDeque<PendingEnvelope>()
+        private var retainedMessages: List<ChatMessage> = emptyList()
         private var pendingBlockCounter: Long = 0
         private var reasoningChunkCounter: Long = 0
         private var reasoningTimelineCounter: Long = 0
@@ -2565,6 +2583,16 @@ class SessionExecutionManager(
             reasoningFirstSummarySubmitted = false
             reasoningLastSubmittedCharIndex = 0
             reasoningLastTimedSummaryAtMillis = 0L
+        }
+
+        fun retainedMessagesSnapshot(): List<ChatMessage> = synchronized(lock) {
+            retainedMessages
+        }
+
+        fun replaceRetainedMessages(messages: List<ChatMessage>) {
+            synchronized(lock) {
+                retainedMessages = messages
+            }
         }
     }
 }

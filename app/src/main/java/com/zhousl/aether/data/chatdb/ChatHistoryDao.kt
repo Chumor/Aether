@@ -70,13 +70,6 @@ interface ChatHistoryDao {
         observeMessageSummariesForSession(sessionId).first()
 
     @Query("""
-        SELECT sessionId, id, position, messageJson
-        FROM chat_messages
-        ORDER BY sessionId ASC, position ASC
-    """)
-    suspend fun getAllMessageJson(): List<ChatMessageJsonEntity>
-
-    @Query("""
         SELECT length(messageJson)
         FROM chat_messages
         WHERE sessionId = :sessionId AND id = :messageId

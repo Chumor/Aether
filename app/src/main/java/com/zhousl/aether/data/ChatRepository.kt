@@ -9,7 +9,6 @@ import androidx.room.withTransaction
 import com.zhousl.aether.data.chatdb.ChatHistoryDao
 import com.zhousl.aether.data.chatdb.ChatHistoryDatabase
 import com.zhousl.aether.data.chatdb.ChatMessageEntity
-import com.zhousl.aether.data.chatdb.ChatMessageJsonEntity
 import com.zhousl.aether.data.chatdb.ChatMessageSummaryEntity
 import com.zhousl.aether.data.chatdb.ChatMessageUsageStatisticsJsonEntity
 import com.zhousl.aether.data.chatdb.ChatSessionEntity
@@ -524,8 +523,11 @@ class ChatRepository(
         database.withTransaction {
             val existingMeta = chatHistoryDao.getMeta() ?: return@withTransaction
             if (existingMeta.workspaceFileRefsComplete) return@withTransaction
-            val refs = chatHistoryDao.getAllMessageJson()
-                .flatMap { row -> row.toWorkspaceFileRefs() }
+            val refs = chatHistoryDao.getSessions()
+                .map { session -> session.id }
+                .chunked(WorkspaceFileRefQueryChunkSize)
+                .flatMap { sessionIds -> chatHistoryDao.getMessageSummariesForSessions(sessionIds) }
+                .flatMap { summary -> summary.toWorkspaceFileRefs(chatHistoryDao) }
             chatHistoryDao.deleteAllWorkspaceFileRefs()
             if (refs.isNotEmpty()) {
                 chatHistoryDao.upsertWorkspaceFileRefs(refs)
@@ -534,16 +536,12 @@ class ChatRepository(
         }
     }
 
-    private fun ChatMessageJsonEntity.toWorkspaceFileRefs(): List<ChatWorkspaceFileRefEntity> {
-        val message = ChatMessageEntityMapper.toChatMessage(
-            ChatMessageEntity(
-                sessionId = sessionId,
-                id = id,
-                position = position,
-                messageJson = messageJson,
-            ),
-            position,
-        )
+    private suspend fun ChatMessageSummaryEntity.toWorkspaceFileRefs(
+        dao: ChatHistoryDao,
+    ): List<ChatWorkspaceFileRefEntity> {
+        val message = dao.loadMessageEntityInChunks(this)
+            ?.let { entity -> ChatMessageEntityMapper.toChatMessage(entity, entity.position) }
+            ?: ChatMessageEntityMapper.summaryToChatMessage(this)
         return message.collectWorkspaceFilePathsForIndex().map { path ->
             ChatWorkspaceFileRefEntity(
                 sessionId = sessionId,

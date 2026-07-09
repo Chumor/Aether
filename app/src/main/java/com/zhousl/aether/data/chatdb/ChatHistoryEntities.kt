@@ -71,13 +71,6 @@ data class ChatSessionMessageStatsEntity(
     val lastMessageAtMillis: Long?,
 )
 
-data class ChatMessageJsonEntity(
-    val sessionId: String,
-    val id: String,
-    val position: Int,
-    val messageJson: String,
-)
-
 data class ChatMessageUsageStatisticsJsonEntity(
     val sessionId: String,
     val messageJson: String,

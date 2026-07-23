@@ -118,3 +118,4 @@ data class ChatSessionSnapshot(
     val messages: List<ChatMessageEntity>,
     val workspaceFileRefs: List<ChatWorkspaceFileRefEntity> = emptyList(),
 )
+

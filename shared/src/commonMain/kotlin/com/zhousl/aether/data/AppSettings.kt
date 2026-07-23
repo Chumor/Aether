@@ -1,10 +1,21 @@
 package com.zhousl.aether.data
 
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.Locale
-import java.util.UUID
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
 
+@Serializable
 enum class AgentModeAuthorizationMethod(
     val storageValue: String,
     val displayName: String,
@@ -27,6 +38,7 @@ enum class AgentModeAuthorizationMethod(
     }
 }
 
+@Serializable
 enum class AppLanguage(
     val storageValue: String,
     val languageTag: String,
@@ -48,6 +60,7 @@ enum class AppLanguage(
     }
 }
 
+@Serializable
 enum class AppThemeMode(
     val storageValue: String,
 ) {
@@ -61,6 +74,7 @@ enum class AppThemeMode(
     }
 }
 
+@Serializable
 enum class AgentWorkspaceMode(
     val storageValue: String,
     val displayName: String,
@@ -80,6 +94,7 @@ enum class AgentWorkspaceMode(
     }
 }
 
+@Serializable
 enum class LocalRuntimeId(
     val storageValue: String,
     val displayName: String,
@@ -99,6 +114,7 @@ enum class LocalRuntimeId(
     }
 }
 
+@Serializable
 data class PackageProfileState(
     val profileId: String,
     val installed: Boolean = false,
@@ -106,11 +122,13 @@ data class PackageProfileState(
     val lastError: String = "",
 )
 
+@Serializable
 data class AlpineEnvironmentVariable(
     val name: String,
     val value: String,
 )
 
+@Serializable
 data class AppSettings(
     val piProviderId: String = DefaultPiProviderId,
     val providerConfigId: String = "",
@@ -123,7 +141,7 @@ data class AppSettings(
     val userAgent: String = AetherLlmUserAgent,
     val customHeaders: List<LlmCustomHeader> = emptyList(),
     val reasoningEffort: String = DefaultReasoningEffort,
-    val systemPrompt: String = "You are Aether, a local-first Android agent that can call tools and complete tasks on-device. Use available tools instead of guessing local state.",
+    val systemPrompt: String = platformDefaultSystemPrompt(),
     val tavilyApiKey: String = "",
     val tavilyBaseUrl: String = DefaultTavilyBaseUrl,
     val llmInactivityReconnectTimeoutSeconds: Int = DefaultLlmInactivityReconnectTimeoutSeconds,
@@ -156,11 +174,13 @@ data class AppSettings(
     val lastUpdateCheckAtMillis: Long = 0L,
 )
 
+@Serializable
 data class LlmCustomHeader(
     val name: String,
     val value: String,
 )
 
+@Serializable
 data class TermuxEnvironmentVariable(
     val name: String,
     val value: String,
@@ -179,7 +199,7 @@ val SupportedReasoningEfforts: List<String> = listOf(
 )
 
 fun normalizeReasoningEffort(value: String?): String =
-    value?.trim()?.lowercase(Locale.US)
+    value?.trim()?.lowercase()
         ?.let { value -> if (value == "none") "off" else value }
         ?.takeIf { it in SupportedReasoningEfforts }
         ?: DefaultReasoningEffort
@@ -192,10 +212,23 @@ private const val MaxLlmInactivityReconnectTimeoutSeconds = 3600
 const val OnboardingStarterPrompt = "Hi"
 const val AetherWebsiteUrl = "https://github.com/Zhou-Shilin"
 const val AetherPrivacyPolicyUrl = "https://github.com/Zhou-Shilin/Aether/wiki/Privacy-Policy"
+const val DefaultTavilyBaseUrl = "https://api.tavily.com/"
 
-fun defaultAppLanguage(
-    locale: Locale = Locale.getDefault(),
-): AppLanguage = if (locale.language.equals("zh", ignoreCase = true)) {
+private val AppSettingsJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
+fun serializeAppSettings(settings: AppSettings): String = AppSettingsJson.encodeToString(settings)
+
+fun parseAppSettings(value: String, fallback: AppSettings = AppSettings()): AppSettings =
+    if (value.isBlank()) fallback else runCatching {
+        AppSettingsJson.decodeFromString<AppSettings>(value)
+    }.getOrDefault(fallback)
+
+fun defaultAppLanguage(): AppLanguage = if (
+    platformLanguageTag().startsWith("zh", ignoreCase = true)
+) {
     AppLanguage.SimplifiedChinese
 } else {
     AppLanguage.English
@@ -264,7 +297,7 @@ fun shouldRevealFollowUpTourCard(
 // ──────────────────────────────────────────────────────────────────────────────
 
 data class LlmProviderConfig(
-    val id: String = UUID.randomUUID().toString(),
+    val id: String = platformRandomUuid(),
     val providerId: String,
     val name: String,
     val piProviderId: String,
@@ -282,81 +315,72 @@ data class LlmProviderConfig(
     val cachedModels: List<String> = emptyList(),
     val enabledModelIds: List<String> = cachedModels + manualModelIds,
     val isEnabled: Boolean = true,
-    val createdAtMillis: Long = System.currentTimeMillis(),
+    val createdAtMillis: Long = platformCurrentTimeMillis(),
     val updatedAtMillis: Long = createdAtMillis,
 )
 
-internal fun LlmProviderConfig.toJson(): JSONObject = JSONObject().apply {
-    put("id", id)
-    put("providerId", providerId)
-    put("name", name)
-    put("piProviderId", piProviderId)
-    put("authMethod", authMethod.storageValue)
-    put("apiKey", apiKey)
-    put("oauthCredentialJson", oauthCredentialJson)
-    put(
-        "providerEnvironmentVariables",
-        JSONArray().apply {
-            providerEnvironmentVariables.forEach { variable ->
-                put(
-                    JSONObject()
-                        .put("name", variable.name)
-                        .put("value", variable.value)
-                )
-            }
-        },
+fun LlmProviderConfig.toJsonObject(): JsonObject = JsonObject(
+    mapOf(
+        "id" to JsonPrimitive(id),
+        "providerId" to JsonPrimitive(providerId),
+        "name" to JsonPrimitive(name),
+        "piProviderId" to JsonPrimitive(piProviderId),
+        "authMethod" to JsonPrimitive(authMethod.storageValue),
+        "apiKey" to JsonPrimitive(apiKey),
+        "oauthCredentialJson" to JsonPrimitive(oauthCredentialJson),
+        "providerEnvironmentVariables" to providerEnvironmentVariables.toEnvironmentJsonArray(),
+        "baseUrl" to JsonPrimitive(baseUrl),
+        "modelId" to JsonPrimitive(modelId),
+        "userAgent" to JsonPrimitive(normalizeLlmUserAgent(userAgent)),
+        "manualModelIds" to manualModelIds.toStringJsonArray(),
+        "customHeaders" to customHeaders.toKotlinJsonArray(),
+        "cachedModels" to cachedModels.toStringJsonArray(),
+        "enabledModelIds" to enabledModelIds.toStringJsonArray(),
+        "isEnabled" to JsonPrimitive(isEnabled),
+        "createdAtMillis" to JsonPrimitive(createdAtMillis),
+        "updatedAtMillis" to JsonPrimitive(updatedAtMillis),
     )
-    put("baseUrl", baseUrl)
-    put("modelId", modelId)
-    put("userAgent", normalizeLlmUserAgent(userAgent))
-    put("manualModelIds", JSONArray().apply { manualModelIds.forEach(::put) })
-    put("customHeaders", customHeaders.toJsonArray())
-    put("cachedModels", JSONArray().apply { cachedModels.forEach(::put) })
-    put("enabledModelIds", JSONArray().apply { enabledModelIds.forEach(::put) })
-    put("isEnabled", isEnabled)
-    put("createdAtMillis", createdAtMillis)
-    put("updatedAtMillis", updatedAtMillis)
-}
+)
 
-internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
+fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
     if (rawValue.isBlank()) return emptyList()
     return runCatching {
-        val array = JSONArray(rawValue)
+        val array = Json.parseToJsonElement(rawValue).jsonArray
         buildList {
-            for (index in 0 until array.length()) {
-                val json = array.optJSONObject(index) ?: continue
-                val storedPiProviderId = json.optString("piProviderId").trim()
-                val storedBaseUrl = json.optString("baseUrl").trim()
+            array.forEachIndexed { index, element ->
+                val json = element as? JsonObject ?: return@forEachIndexed
+                val storedPiProviderId = json.string("piProviderId").trim()
+                val storedBaseUrl = json.string("baseUrl").trim()
                 val piProviderId = storedPiProviderId.ifBlank {
-                    inferLegacyPiProviderId(json.optString("providerType"), storedBaseUrl)
+                    inferLegacyPiProviderId(json.string("providerType"), storedBaseUrl)
                 }
                 val providerDefinition = PiProviderCatalog.resolve(piProviderId)
-                val providerName = json.optString("name").trim()
+                val providerName = json.string("name").trim()
                     .ifBlank { providerDefinition.displayName }
                 val baseUrl = storedBaseUrl.ifBlank { providerDefinition.defaultBaseUrl }
-                val modelId = if (json.has("modelId")) {
-                    json.optString("modelId").trim()
+                val modelId = if ("modelId" in json) {
+                    json.string("modelId").trim()
                 } else {
                     providerDefinition.defaultModelId
                 }
-                val enabledModelIds = json.optJSONArray("enabledModelIds").toStringListSafe()
-                val manualModelIds = if (json.has("manualModelIds")) {
-                    json.optJSONArray("manualModelIds").toStringListSafe()
+                val enabledModelIds = json.array("enabledModelIds").toStringListSafe()
+                val manualModelIds = if ("manualModelIds" in json) {
+                    json.array("manualModelIds").toStringListSafe()
                 } else {
                     listOf(modelId).filter(String::isNotBlank)
                 }
                 val cachedModels = normalizeStringList(
                     buildList {
-                        addAll(json.optJSONArray("cachedModels").toStringListSafe())
-                        if (!json.has("manualModelIds")) {
+                        addAll(json.array("cachedModels").toStringListSafe())
+                        if ("manualModelIds" !in json) {
                             removeAll(manualModelIds)
                         }
                     }
                 )
                 val availableModels = normalizeStringList(cachedModels + manualModelIds)
-                val parsedCustomHeaders = parseCustomHeaders(json.optJSONArray("customHeaders"))
-                val userAgent = if (json.has("userAgent")) {
-                    normalizeLlmUserAgent(json.optString("userAgent"))
+                val parsedCustomHeaders = parseCustomHeaders(json.array("customHeaders"))
+                val userAgent = if ("userAgent" in json) {
+                    normalizeLlmUserAgent(json.string("userAgent"))
                 } else {
                     normalizeLlmUserAgent(
                         parsedCustomHeaders.firstOrNull {
@@ -369,18 +393,18 @@ internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
                     .ifBlank { "${providerDefinition.id.sanitizeProviderId()}_${index + 1}" }
                 add(
                     LlmProviderConfig(
-                        id = json.optString("id").trim().ifBlank { UUID.randomUUID().toString() },
-                        providerId = json.optString("providerId").trim().ifBlank { inferredProviderId },
+                        id = json.string("id").trim().ifBlank { platformRandomUuid() },
+                        providerId = json.string("providerId").trim().ifBlank { inferredProviderId },
                         name = providerName,
                         piProviderId = piProviderId,
                         authMethod = ProviderAuthMethod.fromStorage(
-                            json.optString("authMethod"),
+                            json.string("authMethod"),
                             providerDefinition.defaultAuthMethod(),
                         ),
-                        apiKey = json.optString("apiKey"),
-                        oauthCredentialJson = json.optString("oauthCredentialJson"),
+                        apiKey = json.string("apiKey"),
+                        oauthCredentialJson = json.string("oauthCredentialJson"),
                         providerEnvironmentVariables = parseProviderEnvironmentVariables(
-                            json.optJSONArray("providerEnvironmentVariables"),
+                            json.array("providerEnvironmentVariables"),
                         ),
                         baseUrl = baseUrl,
                         modelId = modelId,
@@ -390,18 +414,18 @@ internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
                             it.name.equals("User-Agent", ignoreCase = true)
                         },
                         cachedModels = cachedModels,
-                        enabledModelIds = if (json.has("enabledModelIds")) {
+                        enabledModelIds = if ("enabledModelIds" in json) {
                             normalizeStringList(enabledModelIds.filter(availableModels::contains))
                         } else {
                             availableModels
                         },
-                        isEnabled = if (json.has("isEnabled")) {
-                            json.optBoolean("isEnabled", true)
+                        isEnabled = if ("isEnabled" in json) {
+                            json.boolean("isEnabled", true)
                         } else {
                             true
                         },
-                        createdAtMillis = json.optLong("createdAtMillis", System.currentTimeMillis()),
-                        updatedAtMillis = json.optLong("updatedAtMillis", System.currentTimeMillis()),
+                        createdAtMillis = json.long("createdAtMillis", platformCurrentTimeMillis()),
+                        updatedAtMillis = json.long("updatedAtMillis", platformCurrentTimeMillis()),
                     )
                 )
             }
@@ -409,62 +433,61 @@ internal fun parseProviderConfigs(rawValue: String): List<LlmProviderConfig> {
     }.getOrDefault(emptyList())
 }
 
-internal fun serializeProviderConfigs(configs: List<LlmProviderConfig>): String =
-    JSONArray().apply { configs.forEach { put(it.toJson()) } }.toString()
+fun serializeProviderConfigs(configs: List<LlmProviderConfig>): String =
+    JsonArray(configs.map(LlmProviderConfig::toJsonObject)).toString()
 
-internal fun List<LlmCustomHeader>.toJsonArray(): JSONArray = JSONArray().apply {
-    forEach { header ->
-        put(
-            JSONObject().apply {
-                put("name", header.name)
-                put("value", header.value)
-            }
-        )
-    }
-}
+fun List<LlmCustomHeader>.toKotlinJsonArray(): JsonArray = JsonArray(map { header ->
+    JsonObject(mapOf("name" to JsonPrimitive(header.name), "value" to JsonPrimitive(header.value)))
+})
 
-internal fun parseCustomHeaders(array: JSONArray?): List<LlmCustomHeader> {
+private fun List<PiProviderEnvironmentVariable>.toEnvironmentJsonArray(): JsonArray = JsonArray(map { variable ->
+    JsonObject(mapOf("name" to JsonPrimitive(variable.name), "value" to JsonPrimitive(variable.value)))
+})
+
+private fun List<String>.toStringJsonArray(): JsonArray = JsonArray(map(::JsonPrimitive))
+
+fun parseCustomHeaders(array: JsonArray?): List<LlmCustomHeader> {
     if (array == null) return emptyList()
     return buildList {
-        for (index in 0 until array.length()) {
-            val json = array.optJSONObject(index) ?: continue
-            val name = json.optString("name").trim()
-            if (name.isBlank()) continue
+        array.forEach { element ->
+            val json = element as? JsonObject ?: return@forEach
+            val name = json.string("name").trim()
+            if (name.isBlank()) return@forEach
             add(
                 LlmCustomHeader(
                     name = name,
-                    value = json.optString("value"),
+                    value = json.string("value"),
                 )
             )
         }
-    }.distinctBy { it.name.lowercase(Locale.US) }
+    }.distinctBy { it.name.lowercase() }
 }
 
-internal fun parseProviderEnvironmentVariables(
-    array: JSONArray?,
+fun parseProviderEnvironmentVariables(
+    array: JsonArray?,
 ): List<PiProviderEnvironmentVariable> {
     if (array == null) return emptyList()
     return buildList {
-        for (index in 0 until array.length()) {
-            val json = array.optJSONObject(index) ?: continue
-            val name = json.optString("name").trim()
-            if (name.isBlank()) continue
+        array.forEach { element ->
+            val json = element as? JsonObject ?: return@forEach
+            val name = json.string("name").trim()
+            if (name.isBlank()) return@forEach
             add(
                 PiProviderEnvironmentVariable(
                     name = name,
-                    value = json.optString("value"),
+                    value = json.string("value"),
                 )
             )
         }
-    }.distinctBy { it.name.uppercase(Locale.US) }
+    }.distinctBy { it.name.uppercase() }
 }
 
-private fun JSONArray?.toStringListSafe(): List<String> {
+private fun JsonArray?.toStringListSafe(): List<String> {
     if (this == null) return emptyList()
     return normalizeStringList(
         buildList {
-            for (index in 0 until length()) {
-                val value = optString(index).trim()
+            this@toStringListSafe.forEach { element ->
+                val value = element.jsonPrimitive.contentOrNull.orEmpty().trim()
                 if (value.isNotEmpty()) {
                     add(value)
                 }
@@ -484,7 +507,7 @@ private val ProviderIdPattern = Regex("^[a-z0-9_]+$")
 fun isValidProviderId(value: String): Boolean = ProviderIdPattern.matches(value.trim())
 
 fun String.sanitizeProviderId(): String =
-    lowercase(Locale.US)
+    lowercase()
         .replace(Regex("[^a-z0-9_]+"), "_")
         .trim('_')
 
@@ -617,11 +640,11 @@ fun List<ProviderModelOption>.sortedForAutomaticModelPurpose(
         .thenBy { it.modelId }
 )
 
-internal fun automaticModelPriority(
+fun automaticModelPriority(
     modelId: String,
     purpose: AutomaticModelPurpose,
 ): Int? {
-    val normalized = modelId.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "")
+    val normalized = modelId.lowercase().replace(Regex("[^a-z0-9]+"), "")
 
     return when (purpose) {
         AutomaticModelPurpose.Chat -> when {
@@ -668,3 +691,15 @@ internal fun automaticModelPriority(
         }
     }
 }
+
+private fun JsonObject.string(name: String): String =
+    this[name]?.jsonPrimitive?.contentOrNull.orEmpty()
+
+private fun JsonObject.array(name: String): JsonArray? =
+    this[name] as? JsonArray
+
+private fun JsonObject.boolean(name: String, defaultValue: Boolean): Boolean =
+    this[name]?.jsonPrimitive?.booleanOrNull ?: defaultValue
+
+private fun JsonObject.long(name: String, defaultValue: Long): Long =
+    this[name]?.jsonPrimitive?.longOrNull ?: defaultValue

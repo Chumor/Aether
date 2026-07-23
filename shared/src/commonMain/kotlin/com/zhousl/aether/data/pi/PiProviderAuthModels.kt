@@ -2,8 +2,10 @@ package com.zhousl.aether.data.pi
 
 import com.zhousl.aether.data.PiProviderEnvironmentVariable
 import com.zhousl.aether.data.ProviderAuthMethod
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 data class PiOAuthPromptOption(
     val id: String,
@@ -74,42 +76,45 @@ data class PiCoreSetupState(
     val output: String = "",
 )
 
-fun JSONObject.toPiOAuthPrompt(): PiOAuthPrompt = PiOAuthPrompt(
-    id = optString("prompt_id"),
-    type = optString("prompt_type"),
-    message = optString("message"),
-    placeholder = optString("placeholder"),
-    options = optJSONArray("options").toPiOAuthPromptOptions(),
+fun JsonObject.toPiOAuthPrompt(): PiOAuthPrompt = PiOAuthPrompt(
+    id = string("prompt_id"),
+    type = string("prompt_type"),
+    message = string("message"),
+    placeholder = string("placeholder"),
+    options = (get("options") as? JsonArray).toPiOAuthPromptOptions(),
 )
 
-fun JSONObject.toPiProviderEnvironmentVariables(): List<PiProviderEnvironmentVariable> =
-    optJSONObject("provider_env")?.let { environment ->
-        environment.keys().asSequence()
+fun JsonObject.toPiProviderEnvironmentVariables(): List<PiProviderEnvironmentVariable> =
+    (get("provider_env") as? JsonObject)?.let { environment ->
+        environment.keys
             .mapNotNull { name ->
                 name.trim()
                     .takeIf(String::isNotEmpty)
                     ?.let { normalizedName ->
                         PiProviderEnvironmentVariable(
                             name = normalizedName,
-                            value = environment.optString(name),
+                            value = environment.string(name),
                         )
                     }
             }
             .toList()
     }.orEmpty()
 
-private fun JSONArray?.toPiOAuthPromptOptions(): List<PiOAuthPromptOption> {
+private fun JsonArray?.toPiOAuthPromptOptions(): List<PiOAuthPromptOption> {
     if (this == null) return emptyList()
     return buildList {
-        for (index in 0 until length()) {
-            val option = optJSONObject(index) ?: continue
+        this@toPiOAuthPromptOptions.forEach { element ->
+            val option = element as? JsonObject ?: return@forEach
             add(
                 PiOAuthPromptOption(
-                    id = option.optString("id"),
-                    label = option.optString("label"),
-                    description = option.optString("description"),
+                    id = option.string("id"),
+                    label = option.string("label"),
+                    description = option.string("description"),
                 )
             )
         }
     }
 }
+
+private fun JsonObject.string(name: String): String =
+    get(name)?.jsonPrimitive?.contentOrNull.orEmpty()

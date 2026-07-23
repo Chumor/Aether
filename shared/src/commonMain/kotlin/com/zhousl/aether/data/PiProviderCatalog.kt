@@ -1,8 +1,8 @@
 package com.zhousl.aether.data
 
-import java.net.URI
-import java.util.Locale
+import kotlinx.serialization.Serializable
 
+@Serializable
 enum class ProviderAuthMethod(
     val storageValue: String,
 ) {
@@ -19,6 +19,7 @@ enum class ProviderAuthMethod(
     }
 }
 
+@Serializable
 data class PiProviderEnvironmentVariable(
     val name: String,
     val value: String,
@@ -111,7 +112,7 @@ object PiProviderCatalog {
         find(id) ?: providers.first { it.id == DefaultPiProviderId }
 }
 
-internal fun inferLegacyPiProviderId(
+fun inferLegacyPiProviderId(
     legacyProviderStorageValue: String?,
     baseUrl: String,
 ): String = when (legacyProviderStorageValue?.trim()) {
@@ -168,9 +169,15 @@ private fun custom(
     category = "Custom",
 )
 
-private fun hostOf(baseUrl: String): String = runCatching {
-    URI(baseUrl.trim()).host.orEmpty().lowercase(Locale.US)
-}.getOrDefault("")
+private fun hostOf(baseUrl: String): String {
+    val authority = baseUrl.trim()
+        .substringAfter("://", missingDelimiterValue = "")
+        .substringBefore('/')
+        .substringBefore('?')
+        .substringBefore('#')
+        .substringAfterLast('@')
+    return authority.substringBefore(':').lowercase()
+}
 
 private fun builtInProviderIdForHost(host: String): String? = when (host) {
     "api.openai.com" -> "openai"

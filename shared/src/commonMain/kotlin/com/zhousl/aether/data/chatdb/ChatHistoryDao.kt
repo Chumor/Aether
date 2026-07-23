@@ -26,6 +26,9 @@ interface ChatHistoryDao {
     @Query("SELECT COUNT(*) FROM chat_messages WHERE sessionId = :sessionId")
     suspend fun getMessageCountForSession(sessionId: String): Int
 
+    @Query("SELECT * FROM chat_messages WHERE sessionId = :sessionId ORDER BY position ASC")
+    suspend fun getMessagesForSession(sessionId: String): List<ChatMessageEntity>
+
     @Query("""
         SELECT sessionId, COUNT(*) AS messageCount, MAX(COALESCE(createdAtMillis, 0)) AS lastMessageAtMillis
         FROM chat_messages

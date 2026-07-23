@@ -1,0 +1,12 @@
+package com.zhousl.aether.platform
+
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+
+@Composable
+expect fun PlatformWebView(
+    url: String,
+    html: String = "",
+    onMessage: (String) -> Unit = {},
+    modifier: Modifier = Modifier,
+)

@@ -1,0 +1,63 @@
+name: Build iOS
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - refactor/multiplatform
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19.0"
+          cache: npm
+          cache-dependency-path: pi-bridge/package-lock.json
+
+      - name: Install iOS build tools
+        run: brew install llvm lld meson ninja xcodegen
+
+      - name: Test and build Pi Bridge
+        working-directory: pi-bridge
+        run: |
+          npm ci --ignore-scripts --legacy-peer-deps
+          npm test
+
+      - name: Test shared code
+        run: bash ./gradlew -Paether.sharedOnly=true :shared:iosSimulatorArm64Test
+
+      - name: Generate iOS project
+        run: scripts/bootstrap-ios.sh
+
+      - name: Build iPhone simulator app
+        run: |
+          xcodebuild \
+            -project iosApp/Aether.xcodeproj \
+            -scheme Aether \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Test iOS runtime and UI
+        run: |
+          xcodebuild test \
+            -project iosApp/Aether.xcodeproj \
+            -scheme Aether \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -only-testing:AetherRuntimeTests \
+            -only-testing:AetherUITests

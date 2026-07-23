@@ -4,7 +4,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
-import com.zhousl.aether.data.AppThemeMode
 
 data class AetherPalette(
     val background: Color,
@@ -31,7 +30,7 @@ data class AetherPalette(
     val scrim: Color,
 )
 
-internal val LightAetherPalette = AetherPalette(
+val LightAetherPalette = AetherPalette(
     background = Color(0xFFF7F7F3),
     backgroundGradientTop = Color(0xFFF3F1EA),
     surface = Color(0xFFFFFFFF),
@@ -56,7 +55,7 @@ internal val LightAetherPalette = AetherPalette(
     scrim = Color(0x22000000),
 )
 
-internal val DarkAetherPalette = AetherPalette(
+val DarkAetherPalette = AetherPalette(
     background = Color(0xFF151619),
     backgroundGradientTop = Color(0xFF1B1D22),
     surface = Color(0xFF1C1F23),
@@ -83,7 +82,7 @@ internal val DarkAetherPalette = AetherPalette(
 
 private var currentPalette by mutableStateOf(LightAetherPalette)
 
-internal fun updateAetherPalette(darkTheme: Boolean) {
+fun updateAetherPalette(darkTheme: Boolean) {
     val palette = if (darkTheme) {
         DarkAetherPalette
     } else {

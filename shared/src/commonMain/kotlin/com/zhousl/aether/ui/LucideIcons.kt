@@ -8,7 +8,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
-// Sidebar uses Lucide outlines, vendored locally to avoid forcing a toolchain upgrade.
+// Shared Aether surfaces use the same vendored Lucide outlines on Android and iOS.
 object LucideIcons {
     val Search: ImageVector
         get() {

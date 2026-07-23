@@ -66,7 +66,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
@@ -75,7 +74,15 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.zhousl.aether.R
+import com.zhousl.aether.data.platformCurrentTimeMillis
+import com.zhousl.aether.data.platformRandomUuid
+import com.zhousl.aether.shared.resources.Res
+import com.zhousl.aether.shared.resources.*
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.jetbrains.compose.resources.stringResource
 import com.zhousl.aether.data.LlmProviderConfig
 import com.zhousl.aether.data.LlmCustomHeader
 import com.zhousl.aether.data.PiProviderCatalog
@@ -93,8 +100,6 @@ import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
 import com.zhousl.aether.ui.theme.AetherPrimary
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
-import org.json.JSONObject
-import java.util.UUID
 
 private val ProviderFormPrimary = Color(0xFF5C5C5C)
 private val ProviderWizardEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
@@ -106,7 +111,7 @@ private const val OAuthFlowBrowser = "browser"
 private const val OAuthFlowDeviceCode = "device_code"
 
 @Stable
-class ProviderFormState internal constructor(
+class ProviderFormState constructor(
     private val existingConfig: LlmProviderConfig?,
     providerId: String,
     name: String,
@@ -343,7 +348,7 @@ class ProviderFormState internal constructor(
     }
 
     fun buildConfig(): LlmProviderConfig = LlmProviderConfig(
-        id = existingConfig?.id ?: UUID.randomUUID().toString(),
+        id = existingConfig?.id ?: platformRandomUuid(),
         providerId = providerId.trim().sanitizeProviderId(),
         name = name.trim().ifBlank { selectedDefinition.displayName },
         piProviderId = selectedDefinition.id,
@@ -371,7 +376,7 @@ class ProviderFormState internal constructor(
             .filter { it.isNotEmpty() && allModels.contains(it) }
             .distinct(),
         isEnabled = existingConfig?.isEnabled ?: true,
-        createdAtMillis = existingConfig?.createdAtMillis ?: System.currentTimeMillis(),
+        createdAtMillis = existingConfig?.createdAtMillis ?: platformCurrentTimeMillis(),
     )
 
     companion object {
@@ -446,9 +451,9 @@ fun ProviderConfigurationForm(
     ProviderAuthStateEffects(state, relevantAuthState)
     val providerIdAlreadyUsed = state.providerId.trim() in (existingProviderIds - setOf(state.buildConfig().providerId))
     val providerIdError = when {
-        state.providerId.isBlank() -> stringResource(R.string.provider_form_provider_id_required)
-        !isValidProviderId(state.providerId.trim()) -> stringResource(R.string.provider_form_provider_id_invalid)
-        providerIdAlreadyUsed -> stringResource(R.string.provider_form_provider_id_in_use)
+        state.providerId.isBlank() -> stringResource(Res.string.provider_form_provider_id_required)
+        !isValidProviderId(state.providerId.trim()) -> stringResource(Res.string.provider_form_provider_id_invalid)
+        providerIdAlreadyUsed -> stringResource(Res.string.provider_form_provider_id_in_use)
         else -> ""
     }
 
@@ -458,13 +463,13 @@ fun ProviderConfigurationForm(
     ) {
         ProviderFormCard(cardColor = cardColor) {
             ProviderFormTextField(
-                label = stringResource(R.string.provider_form_provider_name),
+                label = stringResource(Res.string.provider_form_provider_name),
                 value = state.name,
                 onValueChange = state::updateName,
             )
             ProviderFormDivider()
             ProviderFormTextField(
-                label = stringResource(R.string.provider_form_provider_id),
+                label = stringResource(Res.string.provider_form_provider_id),
                 value = state.providerId,
                 onValueChange = state::setProviderIdFromUser,
             )
@@ -481,7 +486,7 @@ fun ProviderConfigurationForm(
 
         ProviderFormCard(cardColor = cardColor) {
             ProviderFormDropdownField(
-                label = stringResource(R.string.provider_form_provider),
+                label = stringResource(Res.string.provider_form_provider),
                 selectedValue = selectedDefinition.displayName,
                 options = PiProviderCatalog.providers,
                 onSelected = state::applyProviderDefaults,
@@ -490,9 +495,9 @@ fun ProviderConfigurationForm(
 
         Text(
             text = if (selectedDefinition.isBuiltIn) {
-                stringResource(R.string.provider_form_pi_builtin_description)
+                stringResource(Res.string.provider_form_pi_builtin_description)
             } else {
-                stringResource(R.string.provider_form_pi_custom_description)
+                stringResource(Res.string.provider_form_pi_custom_description)
             },
             style = MaterialTheme.typography.bodySmall,
             color = AetherOnSurfaceVariant,
@@ -510,7 +515,7 @@ fun ProviderConfigurationForm(
         when (state.authMethod) {
             ProviderAuthMethod.ApiKey -> ProviderFormCard(cardColor = cardColor) {
                 ProviderFormTextField(
-                    label = stringResource(R.string.provider_form_api_key),
+                    label = stringResource(Res.string.provider_form_api_key),
                     value = state.apiKey,
                     onValueChange = { state.apiKey = it },
                     isSecret = true,
@@ -536,7 +541,7 @@ fun ProviderConfigurationForm(
             )
 
             ProviderAuthMethod.Ambient -> Text(
-                text = stringResource(R.string.provider_form_ambient_auth_description),
+                text = stringResource(Res.string.provider_form_ambient_auth_description),
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherOnSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp),
@@ -550,7 +555,7 @@ fun ProviderConfigurationForm(
             )
             ProviderFormDivider()
             ProviderFormTextField(
-                label = stringResource(R.string.provider_form_manual_model_ids),
+                label = stringResource(Res.string.provider_form_manual_model_ids),
                 value = state.modelId,
                 onValueChange = { state.modelId = it },
             )
@@ -584,7 +589,7 @@ fun ProviderConfigurationForm(
             )
             ProviderFormDivider()
             ProviderFormTextField(
-                label = stringResource(R.string.provider_form_user_agent),
+                label = stringResource(Res.string.provider_form_user_agent),
                 value = state.userAgent,
                 onValueChange = { state.userAgent = it },
             )
@@ -602,9 +607,9 @@ fun ProviderConfigurationForm(
                 state.authMethod == ProviderAuthMethod.ApiKey &&
                 selectedDefinition.supportsApiKey
             ) {
-                stringResource(R.string.provider_form_model_picker_api_key_hint)
+                stringResource(Res.string.provider_form_model_picker_api_key_hint)
             } else {
-                stringResource(R.string.provider_form_model_picker_refresh_hint)
+                stringResource(Res.string.provider_form_model_picker_refresh_hint)
             },
             style = MaterialTheme.typography.bodySmall,
             color = AetherOnSurfaceVariant,
@@ -643,7 +648,7 @@ private fun ProviderAuthStateEffects(
     }
 }
 
-internal fun applyProviderAuthResult(
+fun applyProviderAuthResult(
     state: ProviderFormState,
     authState: PiProviderAuthState,
 ) {
@@ -689,7 +694,7 @@ fun ProviderAuthenticationSetup(
     ) {
         Text(
             text = stringResource(
-                R.string.provider_add_configure_provider,
+                Res.string.provider_add_configure_provider,
                 definition.displayName,
             ),
             style = MaterialTheme.typography.titleMedium,
@@ -698,9 +703,9 @@ fun ProviderAuthenticationSetup(
         )
         Text(
             text = when (state.authMethod) {
-                ProviderAuthMethod.ApiKey -> stringResource(R.string.provider_add_api_key_guidance)
-                ProviderAuthMethod.OAuth -> stringResource(R.string.provider_add_oauth_guidance)
-                ProviderAuthMethod.Ambient -> stringResource(R.string.provider_form_ambient_auth_description)
+                ProviderAuthMethod.ApiKey -> stringResource(Res.string.provider_add_api_key_guidance)
+                ProviderAuthMethod.OAuth -> stringResource(Res.string.provider_add_oauth_guidance)
+                ProviderAuthMethod.Ambient -> stringResource(Res.string.provider_form_ambient_auth_description)
             },
             style = MaterialTheme.typography.bodyMedium,
             color = AetherOnSurfaceVariant,
@@ -728,7 +733,7 @@ fun ProviderAuthenticationSetup(
                     ProviderFormCard(cardColor = cardColor) {
                         ProviderFormTextField(
                             label = stringResource(
-                                R.string.provider_add_provider_api_key,
+                                Res.string.provider_add_provider_api_key,
                                 definition.displayName,
                             ),
                             value = state.apiKey,
@@ -820,7 +825,7 @@ private fun ProviderApiKeyLoginField(
         ) {
             Text(
                 text = stringResource(
-                    R.string.provider_add_provider_api_key,
+                    Res.string.provider_add_provider_api_key,
                     definition.displayName,
                 ),
                 style = MaterialTheme.typography.bodySmall,
@@ -830,8 +835,8 @@ private fun ProviderApiKeyLoginField(
                 text = when {
                     authState?.errorMessage?.isNotBlank() == true -> authState.errorMessage
                     authState?.statusMessage?.isNotBlank() == true -> authState.statusMessage
-                    configured -> stringResource(R.string.provider_add_api_key_configured)
-                    else -> stringResource(R.string.provider_add_api_key_not_configured)
+                    configured -> stringResource(Res.string.provider_add_api_key_configured)
+                    else -> stringResource(Res.string.provider_add_api_key_not_configured)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (authState?.errorMessage?.isNotBlank() == true) {
@@ -843,9 +848,9 @@ private fun ProviderApiKeyLoginField(
             ProviderActionRow(
                 icon = Icons.Rounded.Key,
                 label = when {
-                    authState?.isRunning == true -> stringResource(R.string.provider_add_waiting_for_input)
-                    configured -> stringResource(R.string.provider_add_reconfigure_api_key)
-                    else -> stringResource(R.string.provider_add_configure_credentials)
+                    authState?.isRunning == true -> stringResource(Res.string.provider_add_waiting_for_input)
+                    configured -> stringResource(Res.string.provider_add_reconfigure_api_key)
+                    else -> stringResource(Res.string.provider_add_configure_credentials)
                 },
                 onClick = onStartLogin,
                 enabled = authState?.isRunning != true,
@@ -853,7 +858,7 @@ private fun ProviderApiKeyLoginField(
             if (configured) {
                 ProviderActionRow(
                     icon = Icons.Rounded.Delete,
-                    label = stringResource(R.string.provider_add_remove_api_key),
+                    label = stringResource(Res.string.provider_add_remove_api_key),
                     onClick = onDisconnect,
                     enabled = true,
                     trailingIcon = null,
@@ -877,7 +882,7 @@ private fun ProviderAuthPromptDialog(
         containerColor = AetherSurface,
         title = {
             Text(
-                text = stringResource(R.string.provider_form_oauth_prompt_title),
+                text = stringResource(Res.string.provider_form_oauth_prompt_title),
                 color = AetherOnSurface,
             )
         },
@@ -904,7 +909,7 @@ private fun ProviderAuthPromptDialog(
                 } else {
                     ProviderFormTextField(
                         label = prompt.placeholder.ifBlank {
-                            stringResource(R.string.provider_form_oauth_prompt_value)
+                            stringResource(Res.string.provider_form_oauth_prompt_value)
                         },
                         value = promptValue,
                         onValueChange = { promptValue = it },
@@ -919,7 +924,7 @@ private fun ProviderAuthPromptDialog(
                 TextButton(
                     onClick = { onSubmitPrompt(prompt.id, promptValue, false) },
                 ) {
-                    Text(stringResource(R.string.common_continue))
+                    Text(stringResource(Res.string.common_continue))
                 }
             }
         },
@@ -927,7 +932,7 @@ private fun ProviderAuthPromptDialog(
             TextButton(
                 onClick = { onSubmitPrompt(prompt.id, "", true) },
             ) {
-                Text(stringResource(R.string.common_cancel))
+                Text(stringResource(Res.string.common_cancel))
             }
         },
     )
@@ -1011,7 +1016,7 @@ fun AddProviderWizard(
                 Column {
                     Text(
                         text = stringResource(
-                            R.string.provider_add_step,
+                            Res.string.provider_add_step,
                             animatedStage.ordinal + 1,
                             AddProviderStage.entries.size,
                         ),
@@ -1022,13 +1027,13 @@ fun AddProviderWizard(
                     Text(
                         text = when (animatedStage) {
                             AddProviderStage.Authentication ->
-                                stringResource(R.string.provider_add_choose_auth_title)
+                                stringResource(Res.string.provider_add_choose_auth_title)
                             AddProviderStage.Provider ->
-                                stringResource(R.string.provider_add_choose_provider_title)
+                                stringResource(Res.string.provider_add_choose_provider_title)
                             AddProviderStage.Credentials ->
-                                stringResource(R.string.provider_add_credentials_title)
+                                stringResource(Res.string.provider_add_credentials_title)
                             AddProviderStage.Models ->
-                                stringResource(R.string.provider_add_models_title)
+                                stringResource(Res.string.provider_add_models_title)
                         },
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold,
@@ -1038,14 +1043,14 @@ fun AddProviderWizard(
                 when (animatedStage) {
             AddProviderStage.Authentication -> {
                 Text(
-                    text = stringResource(R.string.provider_add_choose_auth_description),
+                    text = stringResource(Res.string.provider_add_choose_auth_description),
                     style = MaterialTheme.typography.bodyMedium,
                     color = AetherOnSurfaceVariant,
                 )
                 ProviderWizardChoiceRow(
                     icon = Icons.Rounded.VerifiedUser,
-                    title = stringResource(R.string.provider_add_subscription),
-                    subtitle = stringResource(R.string.provider_add_subscription_description),
+                    title = stringResource(Res.string.provider_add_subscription),
+                    subtitle = stringResource(Res.string.provider_add_subscription_description),
                     onClick = {
                         selectedAuthMethodName = ProviderAuthMethod.OAuth.name
                         providerSearch = ""
@@ -1055,8 +1060,8 @@ fun AddProviderWizard(
                 )
                 ProviderWizardChoiceRow(
                     icon = Icons.Rounded.Key,
-                    title = stringResource(R.string.provider_add_api_key),
-                    subtitle = stringResource(R.string.provider_add_api_key_description),
+                    title = stringResource(Res.string.provider_add_api_key),
+                    subtitle = stringResource(Res.string.provider_add_api_key_description),
                     onClick = {
                         selectedAuthMethodName = ProviderAuthMethod.ApiKey.name
                         providerSearch = ""
@@ -1066,8 +1071,8 @@ fun AddProviderWizard(
                 )
                 ProviderWizardChoiceRow(
                     icon = Icons.Rounded.Cloud,
-                    title = stringResource(R.string.provider_add_environment),
-                    subtitle = stringResource(R.string.provider_add_environment_description),
+                    title = stringResource(Res.string.provider_add_environment),
+                    subtitle = stringResource(Res.string.provider_add_environment_description),
                     onClick = {
                         selectedAuthMethodName = ProviderAuthMethod.Ambient.name
                         providerSearch = ""
@@ -1089,7 +1094,7 @@ fun AddProviderWizard(
                 )
                 if (matchingProviders.isEmpty()) {
                     Text(
-                        text = stringResource(R.string.provider_add_no_matching_providers),
+                        text = stringResource(Res.string.provider_add_no_matching_providers),
                         style = MaterialTheme.typography.bodyMedium,
                         color = AetherOnSurfaceVariant,
                         modifier = Modifier.padding(vertical = 12.dp),
@@ -1121,7 +1126,7 @@ fun AddProviderWizard(
                         }
                 }
                 ProviderWizardSecondaryButton(
-                    label = stringResource(R.string.common_back),
+                    label = stringResource(Res.string.common_back),
                     onClick = { stageName = AddProviderStage.Authentication.name },
                 )
             }
@@ -1139,7 +1144,7 @@ fun AddProviderWizard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     ProviderWizardSecondaryButton(
-                        label = stringResource(R.string.common_back),
+                        label = stringResource(Res.string.common_back),
                         onClick = {
                             onClearAuthState()
                             stageName = AddProviderStage.Provider.name
@@ -1148,9 +1153,9 @@ fun AddProviderWizard(
                     )
                     ProviderWizardPrimaryButton(
                         label = if (isLoadingModels) {
-                            stringResource(R.string.onboarding_loading_models)
+                            stringResource(Res.string.onboarding_loading_models)
                         } else {
-                            stringResource(R.string.common_continue)
+                            stringResource(Res.string.common_continue)
                         },
                         enabled = state.isAuthenticationConfigured() && !isLoadingModels,
                         isLoading = isLoadingModels,
@@ -1170,7 +1175,7 @@ fun AddProviderWizard(
             AddProviderStage.Models -> {
                 Text(
                     text = stringResource(
-                        R.string.provider_add_models_description,
+                        Res.string.provider_add_models_description,
                         state.selectedDefinition.displayName,
                     ),
                     style = MaterialTheme.typography.bodyMedium,
@@ -1178,7 +1183,7 @@ fun AddProviderWizard(
                 )
                 ProviderFormCard(cardColor = AetherSurfaceHigh) {
                     ProviderFormTextField(
-                        label = stringResource(R.string.provider_form_manual_model_ids),
+                        label = stringResource(Res.string.provider_form_manual_model_ids),
                         value = state.modelId,
                         onValueChange = { state.modelId = it },
                     )
@@ -1200,22 +1205,22 @@ fun AddProviderWizard(
                 }
                 ProviderWizardSecondaryButton(
                     label = if (showAdvanced) {
-                        stringResource(R.string.provider_add_hide_advanced)
+                        stringResource(Res.string.provider_add_hide_advanced)
                     } else {
-                        stringResource(R.string.provider_add_show_advanced)
+                        stringResource(Res.string.provider_add_show_advanced)
                     },
                     onClick = { showAdvanced = !showAdvanced },
                 )
                 if (showAdvanced) {
                     ProviderFormCard(cardColor = AetherSurfaceHigh) {
                         ProviderFormTextField(
-                            label = stringResource(R.string.provider_form_provider_name),
+                            label = stringResource(Res.string.provider_form_provider_name),
                             value = state.name,
                             onValueChange = state::updateName,
                         )
                         ProviderFormDivider()
                         ProviderFormTextField(
-                            label = stringResource(R.string.provider_form_provider_id),
+                            label = stringResource(Res.string.provider_form_provider_id),
                             value = state.providerId,
                             onValueChange = state::setProviderIdFromUser,
                         )
@@ -1235,7 +1240,7 @@ fun AddProviderWizard(
                         )
                         ProviderFormDivider()
                         ProviderFormTextField(
-                            label = stringResource(R.string.provider_form_user_agent),
+                            label = stringResource(Res.string.provider_form_user_agent),
                             value = state.userAgent,
                             onValueChange = { state.userAgent = it },
                         )
@@ -1253,12 +1258,12 @@ fun AddProviderWizard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     ProviderWizardSecondaryButton(
-                        label = stringResource(R.string.common_back),
+                        label = stringResource(Res.string.common_back),
                         onClick = { stageName = AddProviderStage.Credentials.name },
                         modifier = Modifier.weight(1f),
                     )
                     ProviderWizardPrimaryButton(
-                        label = stringResource(R.string.common_save),
+                        label = stringResource(Res.string.common_save),
                         enabled = state.isValid(existingProviderIds),
                         onClick = { onSave(state.buildConfig()) },
                         modifier = Modifier.weight(1f),
@@ -1273,13 +1278,13 @@ fun AddProviderWizard(
 
 @Composable
 private fun providerAuthMethodDescription(method: ProviderAuthMethod): String = when (method) {
-    ProviderAuthMethod.OAuth -> stringResource(R.string.provider_add_subscription_provider_description)
-    ProviderAuthMethod.ApiKey -> stringResource(R.string.provider_add_api_key_provider_description)
-    ProviderAuthMethod.Ambient -> stringResource(R.string.provider_add_environment_provider_description)
+    ProviderAuthMethod.OAuth -> stringResource(Res.string.provider_add_subscription_provider_description)
+    ProviderAuthMethod.ApiKey -> stringResource(Res.string.provider_add_api_key_provider_description)
+    ProviderAuthMethod.Ambient -> stringResource(Res.string.provider_add_environment_provider_description)
 }
 
 @Composable
-internal fun ProviderWizardChoiceRow(
+fun ProviderWizardChoiceRow(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
@@ -1373,7 +1378,7 @@ private fun ProviderWizardSearchField(
                 Box {
                     if (value.isBlank()) {
                         Text(
-                            text = stringResource(R.string.provider_add_search_placeholder),
+                            text = stringResource(Res.string.provider_add_search_placeholder),
                             style = MaterialTheme.typography.bodyLarge,
                             color = AetherOnSurfaceVariant.copy(alpha = 0.65f),
                         )
@@ -1513,7 +1518,7 @@ private fun providerFormStateSaver(
     },
 )
 
-internal fun parseManualModelIds(value: String): List<String> =
+fun parseManualModelIds(value: String): List<String> =
     normalizeModelIds(value.split('\n', ',', ';').map(String::trim))
 
 private fun normalizeModelIds(values: List<String>): List<String> =
@@ -1548,7 +1553,7 @@ private fun ProviderBaseUrlField(
     resetToDefaultWhenBlank: Boolean = false,
 ) {
     ProviderFormTextField(
-        label = stringResource(R.string.provider_form_base_url),
+        label = stringResource(Res.string.provider_form_base_url),
         value = state.baseUrl,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         onValueChange = { value ->
@@ -1635,9 +1640,9 @@ private fun ProviderFormTextField(
                                 },
                                 contentDescription = stringResource(
                                     if (passwordVisible) {
-                                        R.string.common_hide_password
+                                        Res.string.common_hide_password
                                     } else {
-                                        R.string.common_show_password
+                                        Res.string.common_show_password
                                     }
                                 ),
                                 tint = AetherOnSurfaceVariant,
@@ -1684,7 +1689,7 @@ private fun ProviderFormDropdownField(
             )
             Icon(
                 imageVector = Icons.Rounded.ArrowDropDown,
-                contentDescription = stringResource(R.string.provider_form_choose_provider),
+                contentDescription = stringResource(Res.string.provider_form_choose_provider),
                 tint = AetherOnSurfaceVariant,
             )
         }
@@ -1738,7 +1743,7 @@ private fun ProviderAuthMethodField(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = stringResource(R.string.provider_form_authentication),
+            text = stringResource(Res.string.provider_form_authentication),
             style = MaterialTheme.typography.bodySmall,
             color = AetherOnSurfaceVariant,
         )
@@ -1748,9 +1753,9 @@ private fun ProviderAuthMethodField(
         ) {
             methods.forEach { method ->
                 val label = when (method) {
-                    ProviderAuthMethod.ApiKey -> stringResource(R.string.provider_form_auth_api_key)
-                    ProviderAuthMethod.OAuth -> stringResource(R.string.provider_form_auth_oauth)
-                    ProviderAuthMethod.Ambient -> stringResource(R.string.provider_form_auth_ambient)
+                    ProviderAuthMethod.ApiKey -> stringResource(Res.string.provider_form_auth_api_key)
+                    ProviderAuthMethod.OAuth -> stringResource(Res.string.provider_form_auth_oauth)
+                    ProviderAuthMethod.Ambient -> stringResource(Res.string.provider_form_auth_ambient)
                 }
                 ProviderModelListActionButton(
                     label = label,
@@ -1778,12 +1783,12 @@ private fun ProviderOAuthField(
         "openai-codex" -> listOf(
             Triple(
                 Icons.Rounded.Language,
-                R.string.provider_form_oauth_browser_login,
+                Res.string.provider_form_oauth_browser_login,
                 OAuthFlowBrowser,
             ),
             Triple(
                 Icons.Rounded.Key,
-                R.string.provider_form_oauth_device_code_login,
+                Res.string.provider_form_oauth_device_code_login,
                 OAuthFlowDeviceCode,
             ),
         )
@@ -1791,7 +1796,7 @@ private fun ProviderOAuthField(
         "github-copilot" -> listOf(
             Triple(
                 Icons.Rounded.Key,
-                R.string.provider_form_oauth_device_code_login,
+                Res.string.provider_form_oauth_device_code_login,
                 OAuthFlowDeviceCode,
             )
         )
@@ -1799,7 +1804,7 @@ private fun ProviderOAuthField(
         else -> listOf(
             Triple(
                 Icons.Rounded.Language,
-                R.string.provider_form_oauth_browser_login,
+                Res.string.provider_form_oauth_browser_login,
                 OAuthFlowBrowser,
             )
         )
@@ -1812,7 +1817,7 @@ private fun ProviderOAuthField(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = stringResource(R.string.provider_form_oauth_title, definition.displayName),
+                text = stringResource(Res.string.provider_form_oauth_title, definition.displayName),
                 style = MaterialTheme.typography.bodySmall,
                 color = AetherOnSurfaceVariant,
             )
@@ -1822,10 +1827,10 @@ private fun ProviderOAuthField(
                     oauthState?.isRunning == true && oauthState.statusMessage.isNotBlank() ->
                         oauthState.statusMessage
                     credentialJson.isNotBlank() && accountLabel.isNotBlank() ->
-                        stringResource(R.string.provider_form_oauth_connected_as, accountLabel)
+                        stringResource(Res.string.provider_form_oauth_connected_as, accountLabel)
                     credentialJson.isNotBlank() ->
-                        stringResource(R.string.provider_form_oauth_connected)
-                    else -> stringResource(R.string.provider_form_oauth_not_connected)
+                        stringResource(Res.string.provider_form_oauth_connected)
+                    else -> stringResource(Res.string.provider_form_oauth_not_connected)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (oauthState?.errorMessage?.isNotBlank() == true) {
@@ -1851,7 +1856,7 @@ private fun ProviderOAuthField(
                         color = AetherOnSurface,
                     )
                     Text(
-                        text = stringResource(R.string.common_copy),
+                        text = stringResource(Res.string.common_copy),
                         style = MaterialTheme.typography.labelLarge,
                         color = ProviderFormPrimary,
                     )
@@ -1861,7 +1866,7 @@ private fun ProviderOAuthField(
                 ProviderActionRow(
                     icon = icon,
                     label = if (oauthState?.isRunning == true) {
-                        stringResource(R.string.provider_form_oauth_waiting)
+                        stringResource(Res.string.provider_form_oauth_waiting)
                     } else {
                         stringResource(labelResource)
                     },
@@ -1872,7 +1877,7 @@ private fun ProviderOAuthField(
             if (credentialJson.isNotBlank()) {
                 ProviderActionRow(
                     icon = Icons.Rounded.Delete,
-                    label = stringResource(R.string.provider_form_oauth_disconnect),
+                    label = stringResource(Res.string.provider_form_oauth_disconnect),
                     onClick = onDisconnect,
                     enabled = true,
                     trailingIcon = null,
@@ -1882,12 +1887,14 @@ private fun ProviderOAuthField(
     }
 }
 
-internal fun oauthAccountLabel(credentialJson: String): String =
+fun oauthAccountLabel(credentialJson: String): String =
     runCatching {
-        val credential = JSONObject(credentialJson)
+        val credential = Json.parseToJsonElement(credentialJson).jsonObject
         listOf("email", "accountName", "username", "login", "accountId")
             .firstNotNullOfOrNull { key ->
-                credential.optString(key).trim().takeIf(String::isNotBlank)
+                credential[key]?.jsonPrimitive?.contentOrNull
+                    ?.trim()
+                    ?.takeIf(String::isNotBlank)
             }
     }.getOrNull().orEmpty()
 
@@ -1955,16 +1962,16 @@ private fun ProviderModelListField(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(R.string.provider_form_model_list),
+                    text = stringResource(Res.string.provider_form_model_list),
                     style = MaterialTheme.typography.bodySmall,
                     color = AetherOnSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = if (models.isEmpty()) {
-                        stringResource(R.string.provider_form_no_models_loaded)
+                        stringResource(Res.string.provider_form_no_models_loaded)
                     } else {
-                        stringResource(R.string.provider_form_models_enabled_count, enabledModelIds.size, models.size)
+                        stringResource(Res.string.provider_form_models_enabled_count, enabledModelIds.size, models.size)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = AetherOnSurface,
@@ -1980,7 +1987,7 @@ private fun ProviderModelListField(
                 IconButton(onClick = onFetchModels) {
                     Icon(
                         imageVector = Icons.Rounded.Refresh,
-                        contentDescription = stringResource(R.string.provider_form_fetch_models),
+                        contentDescription = stringResource(Res.string.provider_form_fetch_models),
                         tint = ProviderFormPrimary,
                     )
                 }
@@ -1994,13 +2001,13 @@ private fun ProviderModelListField(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 ProviderModelListActionButton(
-                    label = stringResource(R.string.provider_form_select_all_models),
+                    label = stringResource(Res.string.provider_form_select_all_models),
                     onClick = { onSetAllModelsEnabled(true) },
                     enabled = enabledModelIds.size < models.size,
                     modifier = Modifier.weight(1f),
                 )
                 ProviderModelListActionButton(
-                    label = stringResource(R.string.provider_form_clear_all_models),
+                    label = stringResource(Res.string.provider_form_clear_all_models),
                     onClick = { onSetAllModelsEnabled(false) },
                     enabled = enabledModelIds.isNotEmpty(),
                     modifier = Modifier.weight(1f),
@@ -2081,13 +2088,13 @@ private fun ProviderCustomHeadersField(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(R.string.provider_form_custom_request_headers),
+                    text = stringResource(Res.string.provider_form_custom_request_headers),
                     style = MaterialTheme.typography.bodySmall,
                     color = AetherOnSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = if (headers.isEmpty()) stringResource(R.string.common_optional) else stringResource(R.string.provider_form_headers_configured_count, headers.size),
+                    text = if (headers.isEmpty()) stringResource(Res.string.common_optional) else stringResource(Res.string.provider_form_headers_configured_count, headers.size),
                     style = MaterialTheme.typography.bodyMedium,
                     color = AetherOnSurface,
                 )
@@ -2095,7 +2102,7 @@ private fun ProviderCustomHeadersField(
             IconButton(onClick = onAddHeader) {
                 Icon(
                     imageVector = Icons.Rounded.Add,
-                    contentDescription = stringResource(R.string.provider_form_add_header),
+                    contentDescription = stringResource(Res.string.provider_form_add_header),
                     tint = ProviderFormPrimary,
                 )
             }
@@ -2136,16 +2143,16 @@ private fun ProviderEnvironmentVariablesField(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(R.string.provider_form_provider_environment),
+                    text = stringResource(Res.string.provider_form_provider_environment),
                     style = MaterialTheme.typography.bodySmall,
                     color = AetherOnSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = if (variables.isEmpty()) {
-                        stringResource(R.string.common_optional)
+                        stringResource(Res.string.common_optional)
                     } else {
-                        stringResource(R.string.provider_form_environment_configured_count, variables.size)
+                        stringResource(Res.string.provider_form_environment_configured_count, variables.size)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = AetherOnSurface,
@@ -2154,7 +2161,7 @@ private fun ProviderEnvironmentVariablesField(
             IconButton(onClick = onAddVariable) {
                 Icon(
                     imageVector = Icons.Rounded.Add,
-                    contentDescription = stringResource(R.string.provider_form_add_environment),
+                    contentDescription = stringResource(Res.string.provider_form_add_environment),
                     tint = ProviderFormPrimary,
                 )
             }
@@ -2170,7 +2177,7 @@ private fun ProviderEnvironmentVariablesField(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         ProviderFormTextField(
-                            label = stringResource(R.string.provider_form_environment_name),
+                            label = stringResource(Res.string.provider_form_environment_name),
                             value = variable.name,
                             onValueChange = { name ->
                                 onUpdateVariable(index, name, variable.value)
@@ -2178,7 +2185,7 @@ private fun ProviderEnvironmentVariablesField(
                             modifier = Modifier.weight(0.48f),
                         )
                         ProviderFormTextField(
-                            label = stringResource(R.string.provider_form_environment_value),
+                            label = stringResource(Res.string.provider_form_environment_value),
                             value = variable.value,
                             onValueChange = { value ->
                                 onUpdateVariable(index, variable.name, value)
@@ -2188,7 +2195,7 @@ private fun ProviderEnvironmentVariablesField(
                         IconButton(onClick = { onRemoveVariable(index) }) {
                             Icon(
                                 imageVector = Icons.Rounded.Delete,
-                                contentDescription = stringResource(R.string.provider_form_remove_environment),
+                                contentDescription = stringResource(Res.string.provider_form_remove_environment),
                                 tint = AetherOnSurfaceVariant,
                             )
                         }
@@ -2212,13 +2219,13 @@ private fun ProviderCustomHeaderRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ProviderFormTextField(
-            label = stringResource(R.string.provider_form_header_name),
+            label = stringResource(Res.string.provider_form_header_name),
             value = header.name,
             onValueChange = onNameChange,
             modifier = Modifier.weight(0.42f),
         )
         ProviderFormTextField(
-            label = stringResource(R.string.provider_form_header_value),
+            label = stringResource(Res.string.provider_form_header_value),
             value = header.value,
             onValueChange = onValueChange,
             modifier = Modifier.weight(0.58f),
@@ -2226,9 +2233,10 @@ private fun ProviderCustomHeaderRow(
         IconButton(onClick = onRemove) {
             Icon(
                 imageVector = Icons.Rounded.Delete,
-                contentDescription = stringResource(R.string.provider_form_remove_header),
+                contentDescription = stringResource(Res.string.provider_form_remove_header),
                 tint = AetherOnSurfaceVariant,
             )
         }
     }
 }
+

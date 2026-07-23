@@ -212,6 +212,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":shared"))
     implementation(project(":terminal-view"))
 
     implementation(libs.androidx.core.ktx)

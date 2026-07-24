@@ -173,7 +173,7 @@ class AetherViewModel(
     init {
         registerCoreModServices()
         refreshTermuxSetup()
-        refreshAlpineSetup()
+        refreshAlpineSetup(startPiIfReady = false)
         refreshRootSetup()
 
         viewModelScope.launch {
@@ -524,7 +524,7 @@ class AetherViewModel(
         bashTool.setEnvironmentVariables(snapshot.settings.termuxEnvironmentVariables)
     }
 
-    fun refreshAlpineSetup() {
+    fun refreshAlpineSetup(startPiIfReady: Boolean = false) {
         viewModelScope.launch {
             val setupState = withContext(Dispatchers.IO) {
                 runtime.alpineRuntime.inspectSetup()
@@ -566,7 +566,9 @@ class AetherViewModel(
                         }
                     }
                 }
-                refreshPiCoreSetup()
+                if (startPiIfReady) {
+                    refreshPiCoreSetup()
+                }
             } else {
                 _uiState.update {
                     it.copy(
@@ -617,6 +619,15 @@ class AetherViewModel(
             }
             _uiState.update { current -> current.copy(alpineSetupState = setupState) }
             if (setupState.isReady) {
+                _uiState.update { current ->
+                    current.copy(
+                        piCoreSetupState = current.piCoreSetupState.copy(
+                            isChecking = false,
+                            activity = PiCoreSetupActivity.None,
+                            bytesPerSecond = 0L,
+                        ),
+                    )
+                }
                 refreshPiCoreSetup()
             } else {
                 _uiState.update { current ->
@@ -1053,6 +1064,7 @@ class AetherViewModel(
     }
 
     fun openDeveloperAlpineSetupPreview() {
+        developerAlpineSetupPreviewJob?.cancel()
         _uiState.update { current ->
             current.copy(
                 currentScreen = AppScreen.Onboarding,
@@ -1062,6 +1074,7 @@ class AetherViewModel(
                 developerAlpineSetupPreviewState = PiCoreSetupState(),
             )
         }
+        restartDeveloperAlpineSetupPreview()
     }
 
     fun restartDeveloperAlpineSetupPreview() {
@@ -1099,6 +1112,13 @@ class AetherViewModel(
 
             update(PiCoreSetupPhase.CheckingAlpine, output = "Starting Alpine setup preview...\n")
             delay(700L)
+            update(
+                phase = PiCoreSetupPhase.CheckingAlpine,
+                activity = PiCoreSetupActivity.Extracting,
+                bytesPerSecond = 18L * 1024L * 1024L,
+                output = "Preparing Alpine runtime files...\n",
+            )
+            delay(900L)
             val extractionEntries = listOf(
                 "bin/busybox",
                 "etc/alpine-release",

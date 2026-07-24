@@ -4,7 +4,6 @@ import com.zhousl.aether.data.PiExtensionLoadOptions
 import com.zhousl.aether.data.AetherDiagnosticLogger
 import com.zhousl.aether.data.DiagnosticRedactor
 import com.zhousl.aether.runtime.AlpineRuntime
-import com.zhousl.aether.runtime.AlpineSetupActivity
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -579,24 +578,13 @@ class PiKernelBridge(
         onSetupProgress: (PiCoreSetupUpdate) -> Unit,
     ) {
         onSetupProgress(PiCoreSetupUpdate(PiCoreSetupPhase.CheckingAlpine))
-        val setup = alpineRuntime.initialize { progress ->
-            onSetupProgress(
-                PiCoreSetupUpdate(
-                    phase = PiCoreSetupPhase.CheckingAlpine,
-                    activity = when (progress.activity) {
-                        AlpineSetupActivity.Extracting -> PiCoreSetupActivity.Extracting
-                        AlpineSetupActivity.Downloading -> PiCoreSetupActivity.Downloading
-                        AlpineSetupActivity.Installing -> PiCoreSetupActivity.None
-                        AlpineSetupActivity.None -> PiCoreSetupActivity.None
-                    },
-                    bytesPerSecond = progress.bytesPerSecond,
-                    output = progress.output,
-                )
-            )
-        }
+        // Require explicit Alpine initialize; never download/install here.
+        val setup = alpineRuntime.inspectSetup()
         if (!setup.isReady) {
             throw PiBridgeException(
-                setup.detail.ifBlank { "Alpine runtime is not ready for the Pi bridge." },
+                setup.detail.ifBlank {
+                    "Initialize Alpine before starting the agent runtime."
+                },
                 code = "alpine_not_ready",
             )
         }

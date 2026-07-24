@@ -1056,8 +1056,8 @@ private fun AlpineRuntimeStep(
                     TourActionRow(
                         primaryLabel = if (piCoreSetupState.isChecking) {
                             stringResource(R.string.onboarding_pi_setup_working)
-                        } else stringResource(R.string.common_retry),
-                        onPrimary = onRefresh,
+                        } else stringResource(R.string.settings_initialize),
+                        onPrimary = if (piCoreSetupState.isChecking) onRefresh else onInitialize,
                         primaryEnabled = !piCoreSetupState.isChecking,
                         primaryLoading = piCoreSetupState.isChecking,
                         secondaryLabel = stringResource(R.string.common_back),
@@ -1065,9 +1065,7 @@ private fun AlpineRuntimeStep(
                     )
                 }
 
-                LocalRuntimeIssue.UnsupportedAbi,
-                LocalRuntimeIssue.MissingAssets,
-                LocalRuntimeIssue.Failed -> if (required) {
+                LocalRuntimeIssue.UnsupportedAbi -> if (required) {
                     TourActionRow(
                         primaryLabel = stringResource(R.string.common_refresh),
                         onPrimary = onRefresh,
@@ -1078,6 +1076,44 @@ private fun AlpineRuntimeStep(
                     TourActionRow(
                         primaryLabel = stringResource(R.string.common_refresh),
                         onPrimary = onRefresh,
+                        secondaryLabel = stringResource(R.string.common_skip),
+                        onSecondary = onContinue,
+                    )
+                }
+
+                LocalRuntimeIssue.MissingAssets -> if (required) {
+                    TourActionRow(
+                        primaryLabel = stringResource(R.string.common_refresh),
+                        onPrimary = onRefresh,
+                        secondaryLabel = stringResource(R.string.common_back),
+                        onSecondary = onBack,
+                    )
+                } else {
+                    TourActionRow(
+                        primaryLabel = stringResource(R.string.common_refresh),
+                        onPrimary = onRefresh,
+                        secondaryLabel = stringResource(R.string.common_skip),
+                        onSecondary = onContinue,
+                    )
+                }
+
+                LocalRuntimeIssue.Failed -> if (required) {
+                    TourActionRow(
+                        primaryLabel = if (piCoreSetupState.isChecking) {
+                            stringResource(R.string.onboarding_pi_setup_working)
+                        } else {
+                            stringResource(R.string.common_retry)
+                        },
+                        onPrimary = if (piCoreSetupState.isChecking) onRefresh else onInitialize,
+                        primaryEnabled = !piCoreSetupState.isChecking,
+                        primaryLoading = piCoreSetupState.isChecking,
+                        secondaryLabel = stringResource(R.string.common_back),
+                        onSecondary = onBack,
+                    )
+                } else {
+                    TourActionRow(
+                        primaryLabel = stringResource(R.string.common_retry),
+                        onPrimary = onInitialize,
                         secondaryLabel = stringResource(R.string.common_skip),
                         onSecondary = onContinue,
                     )

@@ -99,7 +99,9 @@ class AlpineRuntime(
         onProgress: (AlpineSetupProgress) -> Unit = {},
     ): LocalRuntimeSetupState = withContext(Dispatchers.IO) {
         inspectSetup().let { state ->
-            if (state.issue != LocalRuntimeIssue.NotInstalled &&
+            if (
+                state.issue != LocalRuntimeIssue.NotInstalled &&
+                state.issue != LocalRuntimeIssue.Failed &&
                 state.issue != LocalRuntimeIssue.MissingAssets
             ) {
                 return@withContext state

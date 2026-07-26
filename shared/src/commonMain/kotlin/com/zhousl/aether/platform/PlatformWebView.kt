@@ -8,5 +8,7 @@ expect fun PlatformWebView(
     url: String,
     html: String = "",
     onMessage: (String) -> Unit = {},
+    transparentBackground: Boolean = false,
+    scrollEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 )

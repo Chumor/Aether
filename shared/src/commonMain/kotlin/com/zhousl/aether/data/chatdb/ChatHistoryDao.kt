@@ -2,12 +2,29 @@ package com.zhousl.aether.data.chatdb
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
 @Dao
 interface ChatHistoryDao {
+    @Transaction
+    suspend fun replaceAll(
+        sessions: List<ChatSessionEntity>,
+        messages: List<ChatMessageEntity>,
+        workspaceFileRefs: List<ChatWorkspaceFileRefEntity>,
+        meta: ChatStateMetaEntity,
+    ) {
+        deleteAllWorkspaceFileRefs()
+        deleteAllMessages()
+        deleteAllSessions()
+        if (sessions.isNotEmpty()) upsertSessions(sessions)
+        if (messages.isNotEmpty()) upsertMessages(messages)
+        if (workspaceFileRefs.isNotEmpty()) upsertWorkspaceFileRefs(workspaceFileRefs)
+        upsertMeta(meta)
+    }
+
     @Query("SELECT * FROM chat_sessions ORDER BY sortOrder ASC")
     fun observeSessions(): Flow<List<ChatSessionEntity>>
 

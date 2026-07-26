@@ -60,14 +60,14 @@ private val typography = Typography(
         fontWeight = FontWeight.SemiBold,
         fontSize = 34.sp,
         lineHeight = 40.sp,
-        letterSpacing = 0.sp,
+        letterSpacing = (-0.9).sp,
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 29.sp,
         lineHeight = 36.sp,
-        letterSpacing = 0.sp,
+        letterSpacing = (-0.5).sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,

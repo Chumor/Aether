@@ -55,9 +55,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -327,7 +324,11 @@ private fun SharedDrawerSessionRow(
     val newChatTitle = stringResource(Res.string.common_new_chat)
     var menuExpanded by remember { mutableStateOf(false) }
     var isRenaming by remember { mutableStateOf(false) }
-    var titleValue by remember(session.id, session.title) { mutableStateOf(session.title.ifBlank { newChatTitle }) }
+    var renameFieldHadFocus by remember { mutableStateOf(false) }
+    var renameFocusRequest by remember { mutableIntStateOf(0) }
+    var titleValue by remember(session.id, session.title, newChatTitle) {
+        mutableStateOf(session.title.ifBlank { newChatTitle })
+    }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -337,11 +338,13 @@ private fun SharedDrawerSessionRow(
         keyboard?.hide()
     }
 
-    LaunchedEffect(isRenaming) {
-        if (isRenaming) {
+    LaunchedEffect(renameFocusRequest, isRenaming) {
+        if (renameFocusRequest > 0 && isRenaming) {
             delay(260)
-            focusRequester.requestFocus()
-            keyboard?.show()
+            if (isRenaming) {
+                focusRequester.requestFocus()
+                keyboard?.show()
+            }
         }
     }
 
@@ -375,13 +378,13 @@ private fun SharedDrawerSessionRow(
                     modifier = Modifier
                         .weight(1f)
                         .focusRequester(focusRequester)
-                        .onPreviewKeyEvent {
-                            if (it.key == Key.Enter) {
+                        .onFocusChanged { state ->
+                            if (state.isFocused) {
+                                renameFieldHadFocus = true
+                            } else if (renameFieldHadFocus && isRenaming) {
                                 commitRename()
-                                true
-                            } else false
+                            }
                         }
-                        .onFocusChanged { if (!it.isFocused && isRenaming) commitRename() },
                 )
             } else {
                 Text(
@@ -416,7 +419,10 @@ private fun SharedDrawerSessionRow(
             onDismiss = { menuExpanded = false },
             onRename = {
                 menuExpanded = false
+                titleValue = session.title.ifBlank { newChatTitle }
+                renameFieldHadFocus = false
                 isRenaming = true
+                renameFocusRequest += 1
             },
             onExport = {
                 menuExpanded = false
@@ -445,7 +451,11 @@ private fun SharedDrawerActionMenu(
         alignment = Alignment.TopEnd,
         offset = IntOffset(0, 34),
         onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
+        properties = PopupProperties(
+            focusable = true,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+        ),
     ) {
         AnimatedVisibility(
             visibleState = visibility,

@@ -1,10 +1,5 @@
 # Third-party notices
 
-## Multiplatform Markdown Renderer
-
-Copyright Mike Penz and contributors. Licensed under the Apache License 2.0.
-Source: https://github.com/mikepenz/multiplatform-markdown-renderer
-
 ## OpenMinis/ish-arm64
 
 Aether's iOS runtime integrates [OpenMinis/ish-arm64](https://github.com/OpenMinis/ish-arm64)

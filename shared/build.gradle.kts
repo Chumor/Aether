@@ -39,11 +39,12 @@ kotlin {
             implementation(libs.androidx.sqlite.bundled)
             implementation(libs.androidx.datastore.preferences.core)
             implementation(libs.okio)
-            implementation(libs.multiplatform.markdown.renderer.m3)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.client.websockets)
             implementation(libs.ktor.serialization.kotlinx.json)
+            implementation(libs.coil.compose)
+            implementation(libs.coil.svg)
         }
         androidMain.dependencies {
             implementation(libs.ktor.client.okhttp)

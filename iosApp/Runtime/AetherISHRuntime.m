@@ -63,7 +63,7 @@ static NSString *const AetherISHErrorDomain = @"com.baimoqilin.aether.ish";
 @property(nonatomic) dispatch_queue_t queue;
 @property(nonatomic) dispatch_queue_t outputQueue;
 @property(nonatomic) NSMutableDictionary<NSNumber *, AetherISHProcess *> *processes;
-@property(nonatomic) BOOL initialized;
+@property(nonatomic, readwrite, getter=isInitialized) BOOL initialized;
 @property(nonatomic) struct task *initTask;
 - (void)processExited:(int)processId code:(int)code signal:(int)signal;
 - (void)performGuestOperation:(dispatch_block_t)operation;
@@ -540,6 +540,10 @@ static void AetherISHDie(const char *message) {
 }
 
 - (NSData *)readFile:(NSString *)path error:(NSError **)error {
+    return [self readFile:path maximumBytes:NSUIntegerMax error:error];
+}
+
+- (NSData *)readFile:(NSString *)path maximumBytes:(NSUInteger)maximumBytes error:(NSError **)error {
     __block NSData *result = nil;
     __block NSError *operationError = nil;
     [self performGuestOperation:^{
@@ -557,6 +561,39 @@ static void AetherISHDie(const char *message) {
                 break;
             }
             if (count == 0) break;
+            if ((NSUInteger)count > maximumBytes - MIN(contents.length, maximumBytes)) {
+                operationError = AetherISHError(_EFBIG, @"Guest file exceeds the allowed size.");
+                break;
+            }
+            [contents appendBytes:buffer length:(NSUInteger)count];
+        }
+        fd_close(fd);
+        if (!operationError) result = [contents copy];
+    }];
+    if (error) *error = operationError;
+    return result;
+}
+
+- (NSData *)readFilePrefix:(NSString *)path maximumBytes:(NSUInteger)maximumBytes error:(NSError **)error {
+    __block NSData *result = nil;
+    __block NSError *operationError = nil;
+    [self performGuestOperation:^{
+        struct fd *fd = generic_open(path.UTF8String, O_RDONLY_, 0);
+        if (IS_ERR(fd)) {
+            operationError = AetherISHError(PTR_ERR(fd), @"Unable to open guest file.");
+            return;
+        }
+        NSMutableData *contents = [NSMutableData data];
+        uint8_t buffer[8192];
+        while (contents.length < maximumBytes) {
+            size_t remaining = maximumBytes - contents.length;
+            size_t requested = MIN(sizeof(buffer), remaining);
+            ssize_t count = fd->ops->read(fd, buffer, requested);
+            if (count < 0) {
+                operationError = AetherISHError(count, @"Unable to read guest file.");
+                break;
+            }
+            if (count == 0) break;
             [contents appendBytes:buffer length:(NSUInteger)count];
         }
         fd_close(fd);
@@ -567,6 +604,14 @@ static void AetherISHDie(const char *message) {
 }
 
 - (BOOL)writeFile:(NSString *)path data:(NSData *)data executable:(BOOL)executable error:(NSError **)error {
+    return [self writeFile:path data:data executable:executable progress:nil error:error];
+}
+
+- (BOOL)writeFile:(NSString *)path
+             data:(NSData *)data
+       executable:(BOOL)executable
+         progress:(AetherISHFileWriteProgressBlock)progress
+            error:(NSError **)error {
     __block NSError *operationError = nil;
     [self performGuestOperation:^{
         struct fd *fd = generic_open(path.UTF8String, O_WRONLY_ | O_CREAT_ | O_TRUNC_, executable ? 0755 : 0644);
@@ -576,14 +621,18 @@ static void AetherISHDie(const char *message) {
         }
         const uint8_t *cursor = data.bytes;
         NSUInteger remaining = data.length;
+        NSUInteger bytesCopied = 0;
         while (remaining > 0) {
-            ssize_t count = fd->ops->write(fd, cursor, remaining);
+            size_t requested = MIN(remaining, (NSUInteger)(64 * 1024));
+            ssize_t count = fd->ops->write(fd, cursor, requested);
             if (count <= 0) {
                 operationError = AetherISHError(count, @"Unable to write complete guest file.");
                 break;
             }
             cursor += count;
             remaining -= (NSUInteger)count;
+            bytesCopied += (NSUInteger)count;
+            if (progress) progress(bytesCopied);
         }
         fd_close(fd);
     }];

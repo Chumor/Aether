@@ -14,6 +14,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.json.JsonPrimitive
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSBundle
@@ -34,25 +35,44 @@ actual val platformNativeTerminalAvailable: Boolean = true
 actual fun PlatformTerminalSurface(
     runtime: MultiplatformLocalRuntime,
     interruptSignal: Int,
+    inputEvent: PlatformTerminalInputEvent?,
+    darkTheme: Boolean,
+    onTitleChanged: (String) -> Unit,
+    onReady: () -> Unit,
+    onError: (String) -> Unit,
     modifier: Modifier,
 ) {
-    val bridge = remember(runtime) { IosHtermBridge() }
+    val bridge = remember(runtime, darkTheme) { IosHtermBridge(onTitleChanged, darkTheme) }
     LaunchedEffect(runtime, bridge) {
-        runtime.initialize()
-        val process = runtime.startProcess(
-            RuntimeProcessSpec(
-                executable = "/bin/sh",
+        try {
+            runtime.initialize()
+            val process = runtime.startProcess(
+                RuntimeProcessSpec(
+                    executable = "/bin/sh",
                 arguments = listOf("-l"),
-                environment = mapOf("TERM" to "xterm-256color", "HOME" to runtime.homeDirectory),
+                environment = mapOf(
+                    "HOME" to runtime.homeDirectory,
+                    "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "AETHER_RUNTIME" to "alpine",
+                    "AETHER_HOST_WORKSPACE" to runtime.workspaceRoot,
+                    "PS1" to "aether-alpine:\\w# ",
+                    "TERM" to "xterm-256color",
+                    "COLORTERM" to "truecolor",
+                ),
                 workingDirectory = runtime.homeDirectory,
-                interactiveTerminal = true,
+                    interactiveTerminal = true,
+                )
             )
-        )
-        bridge.attach(process)
-        coroutineScope {
-            launch { process.stdout.collect(bridge::write) }
-            launch { process.stderr.collect(bridge::write) }
-            process.awaitExit()
+            bridge.attach(process)
+            onReady()
+            coroutineScope {
+                launch { process.stdout.collect(bridge::write) }
+                launch { process.stderr.collect(bridge::write) }
+                process.awaitExit()
+            }
+        } catch (failure: Throwable) {
+            if (failure is CancellationException) throw failure
+            onError(failure.message ?: "Unable to start Alpine terminal.")
         }
     }
     DisposableEffect(bridge) {
@@ -60,6 +80,13 @@ actual fun PlatformTerminalSurface(
     }
     LaunchedEffect(interruptSignal) {
         if (interruptSignal > 0) bridge.interrupt()
+    }
+    LaunchedEffect(inputEvent?.sequence) {
+        inputEvent?.let { event ->
+            if (event.text.isNotEmpty()) bridge.send(event.text)
+            event.key?.let { key -> bridge.sendKey(key, event.controlDown, event.altDown) }
+            if (event.requestFocus) bridge.focus()
+        }
     }
     UIKitView(
         modifier = modifier,
@@ -69,7 +96,10 @@ actual fun PlatformTerminalSurface(
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private class IosHtermBridge : NSObject(), WKScriptMessageHandlerProtocol {
+private class IosHtermBridge(
+    private val onTitleChanged: (String) -> Unit,
+    private val darkTheme: Boolean,
+) : NSObject(), WKScriptMessageHandlerProtocol {
     private val scope = kotlinx.coroutines.MainScope()
     private var process: RuntimeProcess? = null
     private var loaded = false
@@ -110,6 +140,17 @@ private class IosHtermBridge : NSObject(), WKScriptMessageHandlerProtocol {
         process?.signal(RuntimeProcessSignal.Interrupt)
     }
 
+    suspend fun send(text: String) {
+        process?.writeStdin(text.encodeToByteArray())
+    }
+
+    fun sendKey(key: PlatformTerminalKey, controlDown: Boolean, altDown: Boolean) {
+        webView.evaluateJavaScript(
+            "exports.sendKey(${JsonPrimitive(key.name)},$controlDown,$altDown)",
+            null,
+        )
+    }
+
     fun close() {
         val running = process
         process = null
@@ -124,8 +165,10 @@ private class IosHtermBridge : NSObject(), WKScriptMessageHandlerProtocol {
         when (didReceiveScriptMessage.name) {
             "load" -> {
                 loaded = true
+                val foregroundColor = if (darkTheme) "#ffffff" else "#000000"
+                val backgroundColor = if (darkTheme) "#000000" else "#ffffff"
                 webView.evaluateJavaScript(
-                    "exports.updateStyle({foregroundColor:'#ececf1',backgroundColor:'#151517',fontFamily:'ui-monospace, Menlo, monospace',fontSize:14,colorPaletteOverrides:{},blinkCursor:true,cursorShape:'BLOCK'});term.scrollPort_.screen_.contentEditable=true;term.focus()",
+                    "exports.updateStyle({foregroundColor:'$foregroundColor',backgroundColor:'$backgroundColor',fontFamily:'JetBrains Mono, ui-monospace, Menlo, monospace',fontSize:12,colorPaletteOverrides:{},blinkCursor:true,cursorShape:'BLOCK'});term.scrollPort_.screen_.contentEditable=true;term.focus()",
                     null,
                 )
                 val buffered = pending.toList()
@@ -136,6 +179,12 @@ private class IosHtermBridge : NSObject(), WKScriptMessageHandlerProtocol {
                 val text = didReceiveScriptMessage.body as? String ?: return
                 val target = process ?: return
                 scope.launch { target.writeStdin(text.encodeToByteArray()) }
+            }
+            "propUpdate" -> {
+                val values = didReceiveScriptMessage.body as? List<*> ?: return
+                if (values.getOrNull(0) == "title") {
+                    onTitleChanged(values.getOrNull(1) as? String ?: "")
+                }
             }
             "resize" -> {
                 val target = process ?: return

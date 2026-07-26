@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 typedef void (^AetherISHProgressBlock)(NSString *phase, NSString *detail, double fraction);
+typedef void (^AetherISHFileWriteProgressBlock)(NSUInteger bytesCopied);
 typedef void (^AetherISHCompletionBlock)(NSError * _Nullable error);
 typedef void (^AetherISHOutputBlock)(NSData *bytes);
 typedef void (^AetherISHExitBlock)(int exitCode, int signal);
@@ -10,6 +11,8 @@ typedef void (^AetherISHExitBlock)(int exitCode, int signal);
 @interface AetherISHRuntime : NSObject
 
 + (instancetype)sharedRuntime;
+
+@property(nonatomic, readonly, getter=isInitialized) BOOL initialized;
 
 - (void)initializeWithProgress:(AetherISHProgressBlock)progress
                     completion:(AetherISHCompletionBlock)completion;
@@ -31,7 +34,18 @@ typedef void (^AetherISHExitBlock)(int exitCode, int signal);
 
 - (BOOL)fileExists:(NSString *)path;
 - (nullable NSData *)readFile:(NSString *)path error:(NSError **)error;
+- (nullable NSData *)readFile:(NSString *)path
+                 maximumBytes:(NSUInteger)maximumBytes
+                        error:(NSError **)error;
+- (nullable NSData *)readFilePrefix:(NSString *)path
+                       maximumBytes:(NSUInteger)maximumBytes
+                              error:(NSError **)error;
 - (BOOL)writeFile:(NSString *)path data:(NSData *)data executable:(BOOL)executable error:(NSError **)error;
+- (BOOL)writeFile:(NSString *)path
+             data:(NSData *)data
+       executable:(BOOL)executable
+         progress:(nullable AetherISHFileWriteProgressBlock)progress
+            error:(NSError **)error;
 - (BOOL)createDirectories:(NSString *)path error:(NSError **)error;
 - (BOOL)removePath:(NSString *)path recursive:(BOOL)recursive error:(NSError **)error;
 - (BOOL)bindHostPath:(NSString *)hostPath guestPath:(NSString *)guestPath readOnly:(BOOL)readOnly error:(NSError **)error;

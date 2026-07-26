@@ -1,7 +1,9 @@
 package com.zhousl.aether.platform
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.interop.UIKitView
 import platform.Foundation.NSURL
@@ -15,6 +17,7 @@ import platform.WebKit.WKUserScript
 import platform.WebKit.WKUserScriptInjectionTime
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.CoreGraphics.CGRectMake
+import platform.UIKit.UIColor
 import platform.darwin.NSObject
 
 @Composable
@@ -23,14 +26,20 @@ actual fun PlatformWebView(
     url: String,
     html: String,
     onMessage: (String) -> Unit,
+    transparentBackground: Boolean,
+    scrollEnabled: Boolean,
     modifier: Modifier,
 ) {
-    key(url, html) {
+    val currentOnMessage by rememberUpdatedState(onMessage)
+    key(url, html, transparentBackground, scrollEnabled) {
         UIKitView(
             modifier = modifier,
             factory = {
                 val userContent = WKUserContentController().apply {
-                    addScriptMessageHandler(AetherWebMessageHandler(onMessage), name = "Aether")
+                    addScriptMessageHandler(
+                        AetherWebMessageHandler { message -> currentOnMessage(message) },
+                        name = "Aether",
+                    )
                     addUserScript(
                         WKUserScript(
                             source = "window.Aether={postMessage:function(message){window.webkit.messageHandlers.Aether.postMessage(message);}};",
@@ -47,6 +56,13 @@ actual fun PlatformWebView(
                     },
                 ).apply {
                     allowsBackForwardNavigationGestures = true
+                    opaque = !transparentBackground
+                    if (transparentBackground) {
+                        backgroundColor = UIColor.clearColor
+                        scrollView.backgroundColor = UIColor.clearColor
+                    }
+                    scrollView.scrollEnabled = scrollEnabled
+                    scrollView.bounces = scrollEnabled
                     if (url.isNotBlank()) {
                         NSURL.URLWithString(url)?.let { loadRequest(NSURLRequest(it)) }
                     } else if (html.isNotBlank()) {

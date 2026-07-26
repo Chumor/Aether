@@ -15,6 +15,13 @@ class IosAlpineRuntime(
     override val workspaceRoot: String = "/workspace"
     override val fileSystem: RuntimeFileSystem = IosRuntimeFileSystem(host)
 
+    override suspend fun isReady(): Boolean = suspendCancellableCoroutine { continuation ->
+        host.isRuntimeReady(object : NativeBooleanResultListener {
+            override fun onSuccess(value: Boolean) = continuation.resume(value)
+            override fun onError(message: String) = continuation.resumeFailure(message)
+        })
+    }
+
     override suspend fun initialize(onProgress: (RuntimeSetupProgress) -> Unit) {
         suspendCancellableCoroutine { continuation ->
             var output = ""
@@ -55,6 +62,13 @@ class IosAlpineRuntime(
                 }
             })
         }
+    }
+
+    override suspend fun reset() = suspendCancellableCoroutine { continuation ->
+        host.resetRuntime(object : NativeUnitResultListener {
+            override fun onSuccess() = continuation.resume(Unit)
+            override fun onError(message: String) = continuation.resumeFailure(message)
+        })
     }
 
     private companion object {
@@ -146,8 +160,37 @@ private class IosRuntimeFileSystem(
         })
     }
 
+    override suspend fun read(path: String, maximumBytes: Long): ByteArray =
+        suspendCancellableCoroutine { continuation ->
+            host.readFile(path, maximumBytes, object : NativeBytesResultListener {
+                override fun onSuccess(value: ByteArray) = continuation.resume(value)
+                override fun onError(message: String) = continuation.resumeFailure(message)
+            })
+        }
+
+    override suspend fun readPrefix(path: String, maximumBytes: Long): ByteArray =
+        suspendCancellableCoroutine { continuation ->
+            host.readFilePrefix(path, maximumBytes, object : NativeBytesResultListener {
+                override fun onSuccess(value: ByteArray) = continuation.resume(value)
+                override fun onError(message: String) = continuation.resumeFailure(message)
+            })
+        }
+
     override suspend fun write(path: String, content: ByteArray, executable: Boolean) = unitCall { listener ->
         host.writeFile(path, content, executable, listener)
+    }
+
+    override suspend fun writeWithProgress(
+        path: String,
+        content: ByteArray,
+        executable: Boolean,
+        onProgress: (Long) -> Unit,
+    ) = suspendCancellableCoroutine { continuation ->
+        host.writeFileWithProgress(path, content, executable, object : NativeFileWriteListener {
+            override fun onProgress(bytesCopied: Long) = onProgress(bytesCopied)
+            override fun onSuccess() = continuation.resume(Unit)
+            override fun onError(message: String) = continuation.resumeFailure(message)
+        })
     }
 
     override suspend fun remove(path: String, recursive: Boolean) = unitCall { listener ->

@@ -1,18 +1,60 @@
 import Foundation
 import UIKit
+import PhotosUI
 import UniformTypeIdentifiers
+import QuickLook
+import Darwin
 import AetherShared
 
-final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDelegate {
+final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDelegate, PHPickerViewControllerDelegate, QLPreviewControllerDataSource {
     static let shared = AetherRuntimeHost()
 
     private let runtime = AetherISHRuntime.shared()
     private let operations = DispatchQueue(label: "com.baimoqilin.aether.runtime-host")
     private var initialized = false
     private var filePickerListener: NativePickedFileListener?
+    private var filesPickerListener: NativePickedFilesListener?
+    private var directoryPickerListener: NativePickedDirectoryListener?
+    private var fileExportListener: NativeFileExportListener?
+    private var fileExportURL: URL?
+    private var previewURL: URL?
+
+    private let maximumPickedDirectoryEntries = 4_096
+    private let maximumPickedDirectoryEntryBytes = 16 * 1024 * 1024
+    private let maximumPickedDirectoryBytes = 128 * 1024 * 1024
+
+    func isRuntimeReady(listener: NativeBooleanResultListener) {
+        operations.async { [self] in
+            do {
+                try purgePendingAlpineReset()
+                let applicationSupport = try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                let root = applicationSupport.appendingPathComponent("AetherAlpine", isDirectory: true)
+                let hasData = FileManager.default.fileExists(
+                    atPath: root.appendingPathComponent("data", isDirectory: true).path
+                )
+                let hasDatabase = FileManager.default.fileExists(
+                    atPath: root.appendingPathComponent("meta.db", isDirectory: false).path
+                )
+                onMain { listener.onSuccess(value: hasData && hasDatabase) }
+            } catch {
+                onMain { listener.onError(message: error.localizedDescription) }
+            }
+        }
+    }
 
     func initialize(listener: NativeRuntimeInitializationListener) {
         operations.async { [self] in
+            do {
+                try purgePendingAlpineReset()
+            } catch {
+                onMain { listener.onError(message: error.localizedDescription) }
+                return
+            }
             if initialized {
                 onMain { listener.onReady() }
                 return
@@ -35,6 +77,30 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         }
     }
 
+    func resetRuntime(listener: NativeUnitResultListener) {
+        operations.async { [self] in
+            do {
+                let root = try alpineRuntimeRootURL()
+                let marker = try alpineResetMarkerURL()
+                if runtime.isInitialized {
+                    try Data().write(to: marker, options: .atomic)
+                    complete { listener.onSuccess() }
+                } else {
+                    if FileManager.default.fileExists(atPath: root.path) {
+                        try FileManager.default.removeItem(at: root)
+                    }
+                    if FileManager.default.fileExists(atPath: marker.path) {
+                        try FileManager.default.removeItem(at: marker)
+                    }
+                    initialized = false
+                    complete { listener.onSuccess() }
+                }
+            } catch {
+                complete { listener.onError(message: error.localizedDescription) }
+            }
+        }
+    }
+
     private func finishInitialization(listener: NativeRuntimeInitializationListener) {
         operations.async { [self] in
             do {
@@ -54,37 +120,72 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
                 return
             }
 
-            onMain { listener.onProgress(phase: "node", detail: "Checking Node 22", fraction: 0.82) }
-            let command = "node --version 2>/dev/null | grep -q '^v22\\.' || apk add --no-cache nodejs npm"
-            let pid = runtime.startExecutable(
-                "/bin/sh",
-                arguments: ["-c", command],
-                environment: [:],
-                workingDirectory: "/root",
-                pseudoTerminal: false,
-                remoteDebuggingPipe: false,
-                standardOutput: { data in
-                    self.forwardSetupOutput(data, listener: listener)
-                },
-                standardError: { data in
-                    self.forwardSetupOutput(data, listener: listener)
-                },
-                exit: { code, _ in
-                    guard code == 0 else {
-                        self.onMain { listener.onError(message: "Unable to install Node 22 in Alpine (exit \(code)).") }
-                        return
-                    }
-                    self.operations.async {
-                        self.initialized = true
-                        self.onMain {
-                            listener.onProgress(phase: "ready", detail: "Alpine is ready", fraction: 1.0)
-                            listener.onReady()
-                        }
-                    }
+            checkNode(listener: listener)
+        }
+    }
+
+    private func checkNode(listener: NativeRuntimeInitializationListener) {
+        onMain {
+            listener.onProgress(phase: "checking_node", detail: "Checking Node 22", fraction: 0.82)
+        }
+        let pid = runtime.startExecutable(
+            "/bin/sh",
+            arguments: ["-c", "node --version 2>/dev/null | grep -q '^v22\\.'"],
+            environment: [:],
+            workingDirectory: "/root",
+            pseudoTerminal: false,
+            remoteDebuggingPipe: false,
+            standardOutput: { _ in },
+            standardError: { _ in },
+            exit: { code, _ in
+                if code == 0 {
+                    self.markRuntimeReady(listener: listener)
+                } else {
+                    self.installNode(listener: listener)
                 }
-            )
-            if pid < 0 {
-                onMain { listener.onError(message: "Unable to start Alpine package setup (\(pid)).") }
+            }
+        )
+        if pid < 0 {
+            onMain { listener.onError(message: "Unable to check Node 22 in Alpine (\(pid)).") }
+        }
+    }
+
+    private func installNode(listener: NativeRuntimeInitializationListener) {
+        onMain {
+            listener.onProgress(phase: "installing_node", detail: "Installing Node 22", fraction: 0.84)
+        }
+        let pid = runtime.startExecutable(
+            "/bin/sh",
+            arguments: ["-c", "apk add --no-cache nodejs npm"],
+            environment: [:],
+            workingDirectory: "/root",
+            pseudoTerminal: false,
+            remoteDebuggingPipe: false,
+            standardOutput: { data in
+                self.forwardSetupOutput(data, listener: listener)
+            },
+            standardError: { data in
+                self.forwardSetupOutput(data, listener: listener)
+            },
+            exit: { code, _ in
+                guard code == 0 else {
+                    self.onMain { listener.onError(message: "Unable to install Node 22 in Alpine (exit \(code)).") }
+                    return
+                }
+                self.markRuntimeReady(listener: listener)
+            }
+        )
+        if pid < 0 {
+            onMain { listener.onError(message: "Unable to start Alpine package setup (\(pid)).") }
+        }
+    }
+
+    private func markRuntimeReady(listener: NativeRuntimeInitializationListener) {
+        operations.async {
+            self.initialized = true
+            self.onMain {
+                listener.onProgress(phase: "ready", detail: "Alpine is ready", fraction: 1.0)
+                listener.onReady()
             }
         }
     }
@@ -173,10 +274,71 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         }
     }
 
+    func readFile(path: String, maximumBytes: Int64, listener: NativeBytesResultListener) {
+        operations.async { [self] in
+            do {
+                guard maximumBytes >= 0, maximumBytes <= Int64(Int.max) else {
+                    throw NSError(
+                        domain: "com.baimoqilin.aether.runtime-host",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Invalid file size limit."]
+                    )
+                }
+                let data = try runtime.readFile(path, maximumBytes: UInt(maximumBytes))
+                complete { listener.onSuccess(value_: data.kotlinByteArray) }
+            } catch {
+                complete { listener.onError(message: error.localizedDescription) }
+            }
+        }
+    }
+
+    func readFilePrefix(path: String, maximumBytes: Int64, listener: NativeBytesResultListener) {
+        operations.async { [self] in
+            do {
+                guard maximumBytes >= 0, maximumBytes <= Int64(Int.max) else {
+                    throw NSError(
+                        domain: "com.baimoqilin.aether.runtime-host",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Invalid file size limit."]
+                    )
+                }
+                let data = try runtime.readFilePrefix(path, maximumBytes: UInt(maximumBytes))
+                complete { listener.onSuccess(value_: data.kotlinByteArray) }
+            } catch {
+                complete { listener.onError(message: error.localizedDescription) }
+            }
+        }
+    }
+
     func writeFile(path: String, bytes: KotlinByteArray, executable: Bool, listener: NativeUnitResultListener) {
         operations.async { [self] in
             complete(listener: listener) {
                 try runtime.writeFile(path, data: bytes.data, executable: executable)
+            }
+        }
+    }
+
+    func writeFileWithProgress(
+        path: String,
+        bytes: KotlinByteArray,
+        executable: Bool,
+        listener: NativeFileWriteListener
+    ) {
+        operations.async { [self] in
+            do {
+                try runtime.writeFile(
+                    path,
+                    data: bytes.data,
+                    executable: executable,
+                    progress: { bytesCopied in
+                        complete {
+                            listener.onProgress(bytesCopied: Int64(bytesCopied))
+                        }
+                    }
+                )
+                complete { listener.onSuccess() }
+            } catch {
+                complete { listener.onError(message: error.localizedDescription) }
             }
         }
     }
@@ -197,7 +359,7 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
 
     func pickFile(imagesOnly: Bool, listener: NativePickedFileListener) {
         onMain { [self] in
-            guard filePickerListener == nil else {
+            guard !hasActiveDocumentPicker else {
                 listener.onError(message: "Another file picker is already open.")
                 return
             }
@@ -214,9 +376,62 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         }
     }
 
+    func pickFiles(imagesOnly: Bool, listener: NativePickedFilesListener) {
+        onMain { [self] in
+            guard !hasActiveDocumentPicker else {
+                listener.onError(message: "Another file picker is already open.")
+                return
+            }
+            guard let presenter = topViewController() else {
+                listener.onError(message: "Unable to present the file picker.")
+                return
+            }
+            filesPickerListener = listener
+            if imagesOnly {
+                var configuration = PHPickerConfiguration(photoLibrary: .shared())
+                configuration.filter = .images
+                configuration.selectionLimit = 0
+                configuration.preferredAssetRepresentationMode = .current
+                let picker = PHPickerViewController(configuration: configuration)
+                picker.delegate = self
+                presenter.present(picker, animated: true)
+            } else {
+                let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+                picker.delegate = self
+                picker.allowsMultipleSelection = true
+                presenter.present(picker, animated: true)
+            }
+        }
+    }
+
+    func pickDirectory(listener: NativePickedDirectoryListener) {
+        onMain { [self] in
+            guard !hasActiveDocumentPicker else {
+                listener.onError(message: "Another file picker is already open.")
+                return
+            }
+            guard let presenter = topViewController() else {
+                listener.onError(message: "Unable to present the folder picker.")
+                return
+            }
+            directoryPickerListener = listener
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: true)
+            picker.delegate = self
+            picker.allowsMultipleSelection = false
+            presenter.present(picker, animated: true)
+        }
+    }
+
     func openUrl(url: String) -> Bool {
         guard let target = URL(string: url), UIApplication.shared.canOpenURL(target) else { return false }
         onMain { UIApplication.shared.open(target) }
+        return true
+    }
+
+    func terminateApplication() -> Bool {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            exit(EXIT_SUCCESS)
+        }
         return true
     }
 
@@ -242,32 +457,302 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         return true
     }
 
+    func shareFile(name: String, mimeType: String, bytes: KotlinByteArray) -> Bool {
+        guard let presenter = topViewController(), let url = temporaryFile(name: name, bytes: bytes.data) else {
+            return false
+        }
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = presenter.view
+            popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.maxY - 1, width: 1, height: 1)
+        }
+        presenter.present(controller, animated: true)
+        return true
+    }
+
+    func exportFile(name: String, mimeType: String, bytes: KotlinByteArray, listener: NativeFileExportListener) {
+        onMain { [self] in
+            guard !hasActiveDocumentPicker else {
+                listener.onError(message: "Another file picker is already open.")
+                return
+            }
+            guard let presenter = topViewController(), let url = temporaryFile(name: name, bytes: bytes.data) else {
+                listener.onError(message: "Unable to prepare the file for export.")
+                return
+            }
+            fileExportListener = listener
+            fileExportURL = url
+            let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+            picker.delegate = self
+            presenter.present(picker, animated: true)
+        }
+    }
+
+    func previewFile(name: String, mimeType: String, bytes: KotlinByteArray) -> Bool {
+        guard let presenter = topViewController(), let url = temporaryFile(name: name, bytes: bytes.data) else {
+            return false
+        }
+        previewURL = url
+        let controller = QLPreviewController()
+        controller.dataSource = self
+        presenter.present(controller, animated: true)
+        return true
+    }
+
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int { previewURL == nil ? 0 : 1 }
+
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        previewURL! as NSURL
+    }
+
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        guard let listener = takeFilePickerListener() else { return }
-        guard let url = urls.first else {
-            listener.onCancelled()
+        if let listener = takeFileExportListener() {
+            listener.onCompleted()
             return
         }
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        if let listener = takeDirectoryPickerListener() {
+            guard let url = urls.first else {
+                listener.onCancelled()
+                return
+            }
+            do {
+                try readPickedDirectory(url, listener: listener)
+            } catch {
+                listener.onError(message: error.localizedDescription)
+            }
+            return
+        }
+        if let listener = takeFilePickerListener() {
+            guard let url = urls.first else {
+                listener.onCancelled()
+                return
+            }
+            do {
+                let file = try readPickedFile(url)
+                listener.onSelected(name: file.name, mimeType: file.mimeType, bytes: file.data.kotlinByteArray)
+            } catch {
+                listener.onError(message: error.localizedDescription)
+            }
+            return
+        }
+        guard let listener = takeFilesPickerListener() else { return }
         do {
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            let mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
-                ?? "application/octet-stream"
-            listener.onSelected(name: url.lastPathComponent, mimeType: mimeType, bytes: data.kotlinByteArray)
+            for url in urls {
+                let file = try readPickedFile(url)
+                listener.onSelected(name: file.name, mimeType: file.mimeType, bytes: file.data.kotlinByteArray)
+            }
+            listener.onCompleted()
         } catch {
             listener.onError(message: error.localizedDescription)
         }
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        takeFilePickerListener()?.onCancelled()
+        if let listener = takeFileExportListener() { listener.onCancelled() }
+        else if let listener = takeFilePickerListener() { listener.onCancelled() }
+        else if let listener = takeFilesPickerListener() { listener.onCancelled() }
+        else { takeDirectoryPickerListener()?.onCancelled() }
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let listener = takeFilesPickerListener() else { return }
+        guard !results.isEmpty else {
+            listener.onCancelled()
+            return
+        }
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var selected = Array<(name: String, mimeType: String, data: Data)?>(repeating: nil, count: results.count)
+        var firstError: Error?
+        for (index, result) in results.enumerated() {
+            let provider = result.itemProvider
+            guard let typeIdentifier = provider.registeredTypeIdentifiers.first(where: {
+                UTType($0)?.conforms(to: .image) == true
+            }) else {
+                firstError = RuntimeHostError.operationFailed("The selected item is not a supported image.")
+                continue
+            }
+            group.enter()
+            provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { [weak self] data, error in
+                defer { group.leave() }
+                lock.lock()
+                defer { lock.unlock() }
+                if let error {
+                    if firstError == nil { firstError = error }
+                    return
+                }
+                guard let self, let data else {
+                    if firstError == nil {
+                        firstError = RuntimeHostError.operationFailed("Unable to read the selected image.")
+                    }
+                    return
+                }
+                let type = UTType(typeIdentifier)
+                var name = provider.suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if name.isEmpty { name = "image" }
+                if URL(fileURLWithPath: name).pathExtension.isEmpty,
+                   let fileExtension = type?.preferredFilenameExtension {
+                    name += ".\(fileExtension)"
+                }
+                selected[index] = (
+                    name: name,
+                    mimeType: type?.preferredMIMEType ?? "image/*",
+                    data: data
+                )
+            }
+        }
+        group.notify(queue: .main) {
+            if let firstError {
+                listener.onError(message: firstError.localizedDescription)
+                return
+            }
+            for file in selected.compactMap({ $0 }) {
+                listener.onSelected(
+                    name: file.name,
+                    mimeType: file.mimeType,
+                    bytes: file.data.kotlinByteArray
+                )
+            }
+            listener.onCompleted()
+        }
     }
 
     private func takeFilePickerListener() -> NativePickedFileListener? {
         let listener = filePickerListener
         filePickerListener = nil
         return listener
+    }
+
+    private func takeFilesPickerListener() -> NativePickedFilesListener? {
+        let listener = filesPickerListener
+        filesPickerListener = nil
+        return listener
+    }
+
+    private func takeDirectoryPickerListener() -> NativePickedDirectoryListener? {
+        let listener = directoryPickerListener
+        directoryPickerListener = nil
+        return listener
+    }
+
+    private var hasActiveDocumentPicker: Bool {
+        filePickerListener != nil || filesPickerListener != nil || directoryPickerListener != nil || fileExportListener != nil
+    }
+
+    private func takeFileExportListener() -> NativeFileExportListener? {
+        let listener = fileExportListener
+        fileExportListener = nil
+        if let url = fileExportURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        fileExportURL = nil
+        return listener
+    }
+
+    private func readPickedFile(_ url: URL) throws -> (name: String, mimeType: String, data: Data) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        return (
+            url.lastPathComponent,
+            UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream",
+            data
+        )
+    }
+
+    private func readPickedDirectory(_ root: URL, listener: NativePickedDirectoryListener) throws {
+        let scoped = root.startAccessingSecurityScopedResource()
+        defer { if scoped { root.stopAccessingSecurityScopedResource() } }
+
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        var enumerationError: Error?
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: keys,
+            options: [.skipsPackageDescendants],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
+            }
+        ) else {
+            throw NSError(
+                domain: "com.baimoqilin.aether.file-picker",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to read the selected folder."]
+            )
+        }
+
+        var files: [(url: URL, relativePath: String, size: Int)] = []
+        var totalBytes = 0
+        for case let fileURL as URL in enumerator {
+            let values = try fileURL.resourceValues(forKeys: Set(keys))
+            guard values.isRegularFile == true else { continue }
+            let relativePath = String(fileURL.path.dropFirst(root.path.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !relativePath.isEmpty,
+                  !relativePath.split(separator: "/").contains("..") else {
+                continue
+            }
+            let size = values.fileSize ?? 0
+            guard size <= maximumPickedDirectoryEntryBytes else {
+                throw NSError(
+                    domain: "com.baimoqilin.aether.file-picker",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "A file in the selected folder is too large: \(relativePath)"]
+                )
+            }
+            files.append((fileURL, relativePath, size))
+            guard files.count <= maximumPickedDirectoryEntries else {
+                throw NSError(
+                    domain: "com.baimoqilin.aether.file-picker",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "The selected folder contains too many files."]
+                )
+            }
+            totalBytes += size
+            guard totalBytes <= maximumPickedDirectoryBytes else {
+                throw NSError(
+                    domain: "com.baimoqilin.aether.file-picker",
+                    code: 5,
+                    userInfo: [NSLocalizedDescriptionKey: "The selected folder is too large."]
+                )
+            }
+        }
+        if let enumerationError { throw enumerationError }
+
+        for file in files.sorted(by: { $0.relativePath < $1.relativePath }) {
+            let data = try Data(contentsOf: file.url, options: .mappedIfSafe)
+            guard data.count <= maximumPickedDirectoryEntryBytes else {
+                throw NSError(
+                    domain: "com.baimoqilin.aether.file-picker",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "A file in the selected folder is too large: \(file.relativePath)"]
+                )
+            }
+            let mimeType = UTType(filenameExtension: file.url.pathExtension)?.preferredMIMEType
+                ?? "application/octet-stream"
+            listener.onSelected(
+                relativePath: file.relativePath,
+                mimeType: mimeType,
+                bytes: data.kotlinByteArray
+            )
+        }
+        listener.onCompleted(name: root.lastPathComponent)
+    }
+
+    private func temporaryFile(name: String, bytes: Data) -> URL? {
+        let safeName = name.replacingOccurrences(of: "/", with: "-")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AetherSharedFiles", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent(safeName)
+            try bytes.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
     }
 
     private func topViewController() -> UIViewController? {
@@ -291,6 +776,44 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         let workspace = support.appendingPathComponent("Workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         return workspace
+    }
+
+    private func alpineRuntimeRootURL() throws -> URL {
+        let applicationSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return applicationSupport.appendingPathComponent("AetherAlpine", isDirectory: true)
+    }
+
+    private func alpineResetMarkerURL() throws -> URL {
+        let applicationSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return applicationSupport.appendingPathComponent(".AetherAlpineResetPending", isDirectory: false)
+    }
+
+    private func purgePendingAlpineReset() throws {
+        let marker = try alpineResetMarkerURL()
+        guard FileManager.default.fileExists(atPath: marker.path) else { return }
+        guard !runtime.isInitialized else {
+            throw NSError(
+                domain: "com.baimoqilin.aether.runtime-host",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Restart Aether to finish resetting Alpine."]
+            )
+        }
+        let root = try alpineRuntimeRootURL()
+        if FileManager.default.fileExists(atPath: root.path) {
+            try FileManager.default.removeItem(at: root)
+        }
+        try FileManager.default.removeItem(at: marker)
+        initialized = false
     }
 
     private func chromeRuntimeURL() throws -> URL {

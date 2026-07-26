@@ -44,6 +44,9 @@ targets:
       - path: ../third_party/ish-arm64/app/terminal/term.css
         group: Resources
         buildPhase: resources
+      - path: ../app/src/main/assets/fonts/JetBrainsMono-Regular.ttf
+        group: Resources
+        buildPhase: resources
       - path: PrivacyInfo.xcprivacy
         buildPhase: resources
       - path: ../THIRD_PARTY_NOTICES.md

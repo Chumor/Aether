@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		07AEC078B1B8425CB1626CF8 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2BD629A3C6EC0E3B2B729E35 /* JetBrainsMono-Regular.ttf */; };
 		08CF4E928C8BE1C146193EAC /* LICENSE.md in Resources */ = {isa = PBXBuildFile; fileRef = 6FB4FBD38ACC21BB9B40C297 /* LICENSE.md */; };
 		0B54DD41A9AC30FF012B8ABC /* libiconv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 3727F800A2CD973EBC5B5911 /* libiconv.tbd */; };
 		1E011A81B7404737A35E9B0E /* fakefs.c in Sources */ = {isa = PBXBuildFile; fileRef = 1A2D0B8F33C4B5DA0835EC57 /* fakefs.c */; };
@@ -74,6 +75,7 @@
 		1A2D0B8F33C4B5DA0835EC57 /* fakefs.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; name = fakefs.c; path = "../third_party/ish-arm64/tools/fakefs.c"; sourceTree = "<group>"; };
 		29B6EB078F2DEC7743342A7D /* term.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = term.js; path = "../../third_party/ish-arm64/app/terminal/term.js"; sourceTree = "<group>"; };
 		2A7004BB95C901F53D40B60B /* AetherRuntimeHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AetherRuntimeHost.swift; sourceTree = "<group>"; };
+		2BD629A3C6EC0E3B2B729E35 /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; name = "JetBrainsMono-Regular.ttf"; path = "../../app/src/main/assets/fonts/JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
 		307932EC76CB1B3E8230BE0B /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; name = LICENSE; path = ../LICENSE; sourceTree = "<group>"; };
 		3727F800A2CD973EBC5B5911 /* libiconv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libiconv.tbd; path = usr/lib/libiconv.tbd; sourceTree = SDKROOT; };
 		3F9CE49F90FFFE2756A65915 /* hterm_all.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = hterm_all.js; path = "../../third_party/ish-arm64/deps/libapps/hterm/dist/js/hterm_all.js"; sourceTree = "<group>"; };
@@ -162,6 +164,7 @@
 				6F2AD441F3F77B9427B06061 /* Runtime */,
 				A28E41D7474D6ABA5E0A522A /* fetch-polyfill.js */,
 				3F9CE49F90FFFE2756A65915 /* hterm_all.js */,
+				2BD629A3C6EC0E3B2B729E35 /* JetBrainsMono-Regular.ttf */,
 				DFA930739D10E3CD3E0B3416 /* term.css */,
 				D2CEF5D43AF93EE3708D9567 /* term.html */,
 				29B6EB078F2DEC7743342A7D /* term.js */,
@@ -396,6 +399,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				37B3E506D9D519C3E2362C26 /* .gitkeep in Resources */,
+				07AEC078B1B8425CB1626CF8 /* JetBrainsMono-Regular.ttf in Resources */,
 				8C67241097C756D2BC0EBD70 /* LICENSE in Resources */,
 				3573907620374C94427D23CD /* LICENSE.IOS in Resources */,
 				08CF4E928C8BE1C146193EAC /* LICENSE.md in Resources */,

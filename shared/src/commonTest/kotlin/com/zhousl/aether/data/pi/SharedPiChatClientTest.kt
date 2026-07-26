@@ -6,8 +6,10 @@ import com.zhousl.aether.runtime.RuntimeProcess
 import com.zhousl.aether.runtime.RuntimeProcessExit
 import com.zhousl.aether.runtime.RuntimeProcessSignal
 import com.zhousl.aether.runtime.SharedPiBridgeClient
+import com.zhousl.aether.runtime.SharedExtensionLoadOptions
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
@@ -27,6 +29,13 @@ import kotlinx.serialization.json.put
 
 class SharedPiChatClientTest {
     @Test
+    fun modelConfigUsesReliabilityTimeoutAndAndroidBounds() {
+        assertEquals("30000", testProvider().toSharedPiModelConfig(1)["timeout_ms"].toString())
+        assertEquals("90000", testProvider().toSharedPiModelConfig(90_000)["timeout_ms"].toString())
+        assertEquals("3600000", testProvider().toSharedPiModelConfig(Int.MAX_VALUE)["timeout_ms"].toString())
+    }
+
+    @Test
     fun sendsMultimodalContentAndParsesUsage() = runTest {
         val process = ChatProtocolProcess()
         val bridge = SharedPiBridgeClient(
@@ -42,6 +51,9 @@ class SharedPiChatClientTest {
                     role = "user",
                     text = "describe",
                     images = listOf(SharedPiImage("image/png", "AQID")),
+                    providerPayload = buildJsonObject {
+                        put("provider", "persisted-provider")
+                    },
                 )
             ),
             sessionId = "session-1",
@@ -53,9 +65,19 @@ class SharedPiChatClientTest {
         assertEquals("text", content[0].jsonObject["type"]!!.jsonPrimitive.content)
         assertEquals("image/png", content[1].jsonObject["mime_type"]!!.jsonPrimitive.content)
         assertEquals("AQID", content[1].jsonObject["data"]!!.jsonPrimitive.content)
+        assertEquals(
+            "persisted-provider",
+            payload["messages"]!!.jsonArray.single().jsonObject["provider_payload"]!!
+                .jsonObject["provider"]!!.jsonPrimitive.content,
+        )
         assertEquals(7, result.usage.inputTokens)
         assertEquals(11, result.usage.outputTokens)
         assertEquals(18, result.usage.totalTokens)
+        assertTrue(result.usageAvailable)
+        val providerPayload = Json.parseToJsonElement(result.providerPayloadJson).jsonObject
+        assertEquals("assistant", providerPayload["piAssistantMessage"]!!.jsonObject["role"]!!.jsonPrimitive.content)
+        assertEquals("response-1", providerPayload["responseId"]!!.jsonPrimitive.content)
+        assertEquals(1, providerPayload["usage"]!!.jsonObject["request_count"]!!.jsonPrimitive.content.toInt())
         bridge.close()
     }
 
@@ -72,7 +94,151 @@ class SharedPiChatClientTest {
 
         val payload = process.requests.single()["payload"]!!.jsonObject
         assertEquals("session-2", payload["session_id"]!!.jsonPrimitive.content)
-        assertEquals("change direction", payload["message"]!!.jsonObject["text"]!!.jsonPrimitive.content)
+        val content = payload["message"]!!.jsonObject["content"]!!.jsonArray
+        assertEquals("text", content.single().jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("change direction", content.single().jsonObject["text"]!!.jsonPrimitive.content)
+        bridge.close()
+    }
+
+    @Test
+    fun rejectedInjectedSteerContinuesAsFollowUpInTheSameRun() = runTest {
+        val process = ChatProtocolProcess(steerAccepted = false)
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        var pending = listOf(SharedPiChatMessage("user", "late direction"))
+
+        val result = SharedPiChatClient(bridge).runTurn(
+            config = testProvider(),
+            messages = listOf(SharedPiChatMessage("user", "start")),
+            sessionId = "session-follow-up",
+            pollInjectedUserMessages = {
+                pending.also { pending = emptyList() }
+            },
+        )
+
+        assertEquals(listOf("run_turn", "steer", "follow_up"), process.requests.map {
+            it["type"]!!.jsonPrimitive.content
+        })
+        assertEquals("continued", result.assistantText)
+        val followUpPayload = process.requests.last()["payload"]!!.jsonObject
+        assertEquals("session-follow-up", followUpPayload["session_id"]!!.jsonPrimitive.content)
+        assertEquals(
+            "late direction",
+            followUpPayload["message"]!!.jsonObject["content"]!!.jsonArray.single()
+                .jsonObject["text"]!!.jsonPrimitive.content,
+        )
+        bridge.close()
+    }
+
+    @Test
+    fun sendsPersistedExtensionLoadOptionsWithEveryTurn() = runTest {
+        val process = ChatProtocolProcess()
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+            extensionLoadOptionsProvider = {
+                SharedExtensionLoadOptions(
+                    disabledExtensionPaths = setOf("/root/.aether/extensions/local.ts"),
+                    disabledPackageSources = setOf("npm:disabled-extension"),
+                )
+            },
+        )
+
+        SharedPiChatClient(bridge).runTurn(
+            config = testProvider(),
+            messages = listOf(SharedPiChatMessage("user", "hello")),
+            sessionId = "session-options",
+        )
+
+        val payload = process.requests.single()["payload"]!!.jsonObject
+        assertEquals(
+            "/root/.aether/extensions/local.ts",
+            payload["disabled_extension_paths"]!!.jsonArray.single().jsonPrimitive.content,
+        )
+        assertEquals(
+            "npm:disabled-extension",
+            payload["disabled_package_sources"]!!.jsonArray.single().jsonPrimitive.content,
+        )
+        bridge.close()
+    }
+
+    @Test
+    fun returnsAndPersistsRefreshedOAuthCredential() = runTest {
+        val credential = buildJsonObject {
+            put("type", "oauth")
+            put("access", "new-access-token")
+            put("refresh", "refresh-token")
+        }
+        val process = ChatProtocolProcess(oauthCredential = credential)
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val updates = mutableListOf<Pair<String, String>>()
+        val client = SharedPiChatClient(
+            bridge = bridge,
+            onOAuthCredentialUpdated = { configId, credentialJson ->
+                updates += configId to credentialJson
+            },
+        )
+
+        val result = client.runTurn(
+            config = testProvider().copy(id = "oauth-config"),
+            messages = listOf(SharedPiChatMessage("user", "hello")),
+            sessionId = "oauth-session",
+        )
+
+        assertEquals(credential.toString(), result.updatedOauthCredentialJson)
+        assertEquals(listOf("oauth-config" to credential.toString()), updates)
+        bridge.close()
+    }
+
+    @Test
+    fun dispatchesProviderReasoningSummaryDeltasSeparately() = runTest {
+        val process = ChatProtocolProcess(reasoningSummaryDelta = "Checking inputs")
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val rawDeltas = mutableListOf<String>()
+        val summaryDeltas = mutableListOf<String>()
+
+        SharedPiChatClient(bridge).runTurn(
+            config = testProvider(),
+            messages = listOf(SharedPiChatMessage("user", "hello")),
+            sessionId = "summary-session",
+            onAssistantReasoningDelta = rawDeltas::add,
+            onAssistantReasoningSummaryDelta = summaryDeltas::add,
+        )
+
+        assertEquals(listOf("Checking inputs"), rawDeltas)
+        assertEquals(listOf("Checking inputs"), summaryDeltas)
+        bridge.close()
+    }
+
+    @Test
+    fun reportsAndroidStreamingStatusesAndClearsThemAtCompletion() = runTest {
+        val process = ChatProtocolProcess(assistantErrorEvent = "provider disconnected")
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val statuses = mutableListOf<SharedPiStreamingStatus?>()
+
+        SharedPiChatClient(bridge).runTurn(
+            config = testProvider(),
+            messages = listOf(SharedPiChatMessage("user", "hello")),
+            sessionId = "status-session",
+            onStreamingStatus = statuses::add,
+        )
+
+        assertEquals("Thinking", statuses[0]?.text)
+        assertEquals("Aether is working on this turn.", statuses[0]?.detail)
+        assertEquals("Agent engine error", statuses[1]?.text)
+        assertEquals("provider disconnected", statuses[1]?.detail)
+        assertNull(statuses[2])
         bridge.close()
     }
 }
@@ -82,7 +248,12 @@ private class SingleProcessTransport(private val process: RuntimeProcess) : PiBr
     override suspend fun stop() = Unit
 }
 
-private class ChatProtocolProcess : RuntimeProcess {
+private class ChatProtocolProcess(
+    private val reasoningSummaryDelta: String? = null,
+    private val assistantErrorEvent: String? = null,
+    private val oauthCredential: JsonObject? = null,
+    private val steerAccepted: Boolean = true,
+) : RuntimeProcess {
     private val output = Channel<ByteArray>(Channel.UNLIMITED)
     val requests = mutableListOf<JsonObject>()
     override val pid: Int = 21
@@ -95,16 +266,44 @@ private class ChatProtocolProcess : RuntimeProcess {
         val id = request["id"]!!.jsonPrimitive.content
         val type = request["type"]!!.jsonPrimitive.content
         val payload = if (type == "steer") {
-            buildJsonObject { put("accepted", true) }
+            buildJsonObject { put("accepted", steerAccepted) }
         } else {
             buildJsonObject {
-                put("assistant_text", "done")
+                put("assistant_text", if (type == "follow_up") "continued" else "done")
+                put("assistant_message", buildJsonObject {
+                    put("role", "assistant")
+                    put("content", JsonArray(emptyList()))
+                })
+                put("provider", "test-provider")
+                put("model", "test-model")
+                put("response_id", "response-1")
+                put("stop_reason", "stop")
+                oauthCredential?.let { put("oauth_credential", it) }
                 put("usage", buildJsonObject {
                     put("input_tokens", 7)
                     put("output_tokens", 11)
                     put("total_tokens", 18)
                 })
             }
+        }
+        reasoningSummaryDelta?.takeIf { type == "run_turn" }?.let { delta ->
+            output.send((buildJsonObject {
+                put("type", "event")
+                put("id", id)
+                put("event", "assistant_reasoning_delta")
+                put("payload", buildJsonObject {
+                    put("delta", delta)
+                    put("kind", "summary")
+                })
+            }.toString() + "\n").encodeToByteArray())
+        }
+        assistantErrorEvent?.takeIf { type == "run_turn" }?.let { error ->
+            output.send((buildJsonObject {
+                put("type", "event")
+                put("id", id)
+                put("event", "assistant_error")
+                put("payload", buildJsonObject { put("error_message", error) })
+            }.toString() + "\n").encodeToByteArray())
         }
         output.send((buildJsonObject {
             put("type", "response")

@@ -43,7 +43,21 @@ fun ProviderBrandIconBadge(
     }
 }
 
-private fun providerBrandIconRes(providerId: String): DrawableResource = when (providerId) {
+@Composable
+internal fun ProviderBrandIcon(
+    providerId: String,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+) {
+    Image(
+        painter = painterResource(providerBrandIconRes(providerId)),
+        contentDescription = contentDescription,
+        modifier = modifier,
+        contentScale = ContentScale.Fit,
+    )
+}
+
+internal fun providerBrandIconRes(providerId: String): DrawableResource = when (providerId) {
     "amazon-bedrock" -> Res.drawable.provider_amazon_bedrock
     "ant-ling" -> Res.drawable.provider_ant_ling
     "anthropic" -> Res.drawable.provider_anthropic
@@ -81,4 +95,3 @@ private fun providerBrandIconRes(providerId: String): DrawableResource = when (p
     "zai-coding-cn" -> Res.drawable.provider_zai_coding_cn
     else -> Res.drawable.provider_openai_compatible
 }
-

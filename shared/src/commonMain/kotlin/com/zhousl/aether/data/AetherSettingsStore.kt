@@ -16,7 +16,8 @@ data class SharedPersistedSettings(
     val appSettings: AppSettings = AppSettings(),
 ) {
     val activeProviderConfig: LlmProviderConfig?
-        get() = providerConfigs.firstOrNull { it.id == activeProviderConfigId }
+        get() = providerConfigs.firstOrNull { it.id == activeProviderConfigId && it.isEnabled }
+            ?: providerConfigs.firstOrNull { it.isEnabled }
             ?: providerConfigs.firstOrNull()
 }
 
@@ -54,7 +55,40 @@ class AetherSettingsStore(
             val updated = current.filterNot { it.id == config.id } + config
             preferences[ProviderConfigs] = serializeProviderConfigs(updated)
             preferences[ActiveProviderConfigId] = config.id
-            preferences[OnboardingCompletedVersion] = CurrentOnboardingVersion
+        }
+    }
+
+    suspend fun saveProviders(
+        configs: List<LlmProviderConfig>,
+        activeProviderConfigId: String,
+    ) {
+        dataStore.edit { preferences ->
+            val normalized = configs.distinctBy(LlmProviderConfig::id)
+            preferences[ProviderConfigs] = serializeProviderConfigs(normalized)
+            preferences[ActiveProviderConfigId] = activeProviderConfigId
+                .takeIf { id -> normalized.any { it.id == id } }
+                ?: normalized.firstOrNull()?.id.orEmpty()
+        }
+    }
+
+    suspend fun setActiveProvider(configId: String) {
+        dataStore.edit { preferences ->
+            val configs = parseProviderConfigs(preferences[ProviderConfigs].orEmpty())
+            if (configs.any { it.id == configId && it.isEnabled }) {
+                preferences[ActiveProviderConfigId] = configId
+            }
+        }
+    }
+
+    suspend fun deleteProvider(configId: String) {
+        dataStore.edit { preferences ->
+            val updated = parseProviderConfigs(preferences[ProviderConfigs].orEmpty())
+                .filterNot { it.id == configId }
+            preferences[ProviderConfigs] = serializeProviderConfigs(updated)
+            if (preferences[ActiveProviderConfigId] == configId) {
+                preferences[ActiveProviderConfigId] = updated.firstOrNull { it.isEnabled }?.id
+                    ?: updated.firstOrNull()?.id.orEmpty()
+            }
         }
     }
 
@@ -80,6 +114,38 @@ class AetherSettingsStore(
                     onboardingCompletedVersion = CurrentOnboardingVersion,
                 )
             )
+        }
+    }
+
+    suspend fun markOnboardingSeen() {
+        dataStore.edit { preferences ->
+            val current = parseAppSettings(preferences[AppSettingsJson].orEmpty())
+            preferences[AppSettingsJson] = serializeAppSettings(
+                current.copy(onboardingSeenVersion = CurrentOnboardingVersion)
+            )
+        }
+    }
+
+    suspend fun acceptPrivacyPolicy() {
+        dataStore.edit { preferences ->
+            val current = parseAppSettings(preferences[AppSettingsJson].orEmpty())
+            val updated = current.copy(privacyPolicyAccepted = true)
+            preferences[AppSettingsJson] = serializeAppSettings(updated)
+        }
+    }
+
+    suspend fun replaceAll(persisted: SharedPersistedSettings) {
+        dataStore.edit { preferences ->
+            preferences[ProviderConfigs] = serializeProviderConfigs(persisted.providerConfigs)
+            preferences[ActiveProviderConfigId] = persisted.activeProviderConfigId
+            preferences[OnboardingCompletedVersion] = persisted.onboardingCompletedVersion
+            preferences[AppSettingsJson] = serializeAppSettings(persisted.appSettings)
+            preferences[Language] = persisted.appSettings.language.storageValue
+            preferences[ThemeMode] = persisted.appSettings.themeMode.storageValue
+            preferences[SystemPrompt] = persisted.appSettings.systemPrompt
+            preferences[ReasoningEffort] = normalizeReasoningEffort(persisted.appSettings.reasoningEffort)
+            preferences[TavilyApiKey] = persisted.appSettings.tavilyApiKey
+            preferences[TavilyBaseUrl] = normalizeTavilyBaseUrl(persisted.appSettings.tavilyBaseUrl)
         }
     }
 

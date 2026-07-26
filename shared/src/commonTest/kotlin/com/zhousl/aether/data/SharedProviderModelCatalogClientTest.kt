@@ -45,7 +45,7 @@ class SharedProviderModelCatalogClientTest {
             respond("{}")
         }
         val catalog = Json.parseToJsonElement(
-            """{"providers":[{"id":"anthropic","models":[{"id":"claude-a"},{"id":"claude-b"}]}]}""",
+            """{"providers":[{"id":"anthropic","models":[{"id":"claude-a","reasoning":true,"thinking_levels":["off","low","high","unknown"],"thinking_level_clamps":{"max":"high","invalid":"low"}},{"id":"claude-b"}]}]}""",
         ) as JsonObject
         val result = SharedProviderModelCatalogClient(engine).fetchModels(
             customConfig(
@@ -57,6 +57,8 @@ class SharedProviderModelCatalogClientTest {
         )
 
         assertEquals(listOf("claude-a", "claude-b"), result.models)
+        assertEquals(listOf("off", "low", "high"), result.thinkingLevelsByModel["claude-a"])
+        assertEquals(mapOf("max" to "high"), result.thinkingLevelClampsByModel["claude-a"])
         assertFalse(networkCalled)
     }
 

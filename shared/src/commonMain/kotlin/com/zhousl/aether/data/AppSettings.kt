@@ -266,10 +266,16 @@ fun AppSettings.isOnboardingComplete(
     onboardingVersion: Int = CurrentOnboardingVersion,
 ): Boolean = onboardingCompletedVersion >= onboardingVersion
 
-fun AppSettings.isProviderSetupValid(): Boolean {
+private fun isProviderSetupValid(
+    piProviderId: String,
+    authMethod: ProviderAuthMethod,
+    apiKey: String,
+    baseUrl: String,
+    oauthCredentialJson: String,
+): Boolean {
     val definition = PiProviderCatalog.resolve(piProviderId)
     if ((definition.requiresBaseUrl || !definition.isBuiltIn) && baseUrl.trim().isEmpty()) return false
-    return when (providerAuthMethod) {
+    return when (authMethod) {
         ProviderAuthMethod.ApiKey ->
             !definition.isBuiltIn ||
                 (definition.supportsApiKey && apiKey.isNotBlank())
@@ -281,6 +287,14 @@ fun AppSettings.isProviderSetupValid(): Boolean {
             definition.supportsAmbientAuth
     }
 }
+
+fun AppSettings.isProviderSetupValid(): Boolean = isProviderSetupValid(
+    piProviderId = piProviderId,
+    authMethod = providerAuthMethod,
+    apiKey = apiKey,
+    baseUrl = baseUrl,
+    oauthCredentialJson = oauthCredentialJson,
+)
 
 fun shouldMarkOnboardingCompleted(
     settings: AppSettings,
@@ -317,6 +331,14 @@ data class LlmProviderConfig(
     val isEnabled: Boolean = true,
     val createdAtMillis: Long = platformCurrentTimeMillis(),
     val updatedAtMillis: Long = createdAtMillis,
+)
+
+fun LlmProviderConfig.isSharedProviderSetupValid(): Boolean = isProviderSetupValid(
+    piProviderId = piProviderId,
+    authMethod = authMethod,
+    apiKey = apiKey,
+    baseUrl = baseUrl,
+    oauthCredentialJson = oauthCredentialJson,
 )
 
 fun LlmProviderConfig.toJsonObject(): JsonObject = JsonObject(

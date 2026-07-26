@@ -141,14 +141,39 @@ class SharedChromeManager(
 
 class SharedCompositeHostTools(
     private val delegates: List<SharedHostToolExecutor>,
-) : SharedHostToolExecutor {
+) : SharedSessionAwareHostToolExecutor {
     override val definitions: JsonArray
         get() = JsonArray(delegates.flatMap { it.definitions })
 
+    override fun definitions(sessionId: String): JsonArray = JsonArray(
+        delegates.flatMap { delegate ->
+            if (delegate is SharedSessionAwareHostToolExecutor) {
+                delegate.definitions(sessionId)
+            } else {
+                delegate.definitions
+            }
+        },
+    )
+
     override suspend fun execute(name: String, arguments: JsonObject): SharedHostToolResult {
+        val sessionId = arguments.sharedHostToolSessionId()
         val delegate = delegates.firstOrNull { candidate ->
-            candidate.definitions.any { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull == name }
-        } ?: return SharedHostToolResult("{\"error\":\"Unknown host tool\"}", true)
+            val definitions = if (candidate is SharedSessionAwareHostToolExecutor) {
+                candidate.definitions(sessionId)
+            } else {
+                candidate.definitions
+            }
+            definitions.any {
+                (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
+                    ?.equals(name, ignoreCase = true) == true
+            }
+        } ?: return SharedHostToolResult(
+            buildJsonObject {
+                put("ok", false)
+                put("error", "Unknown tool '$name'.")
+            }.toString(),
+            true,
+        )
         return delegate.execute(name, arguments)
     }
 }

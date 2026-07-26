@@ -40,7 +40,28 @@ interface RuntimeFileSystem {
     suspend fun exists(path: String): Boolean
     suspend fun createDirectories(path: String)
     suspend fun read(path: String): ByteArray
+    suspend fun read(path: String, maximumBytes: Long): ByteArray {
+        require(maximumBytes >= 0) { "maximumBytes must not be negative." }
+        return read(path).also { bytes ->
+            require(bytes.size.toLong() <= maximumBytes) { "File exceeds the allowed size." }
+        }
+    }
+    suspend fun readPrefix(path: String, maximumBytes: Long): ByteArray {
+        require(maximumBytes >= 0) { "maximumBytes must not be negative." }
+        if (maximumBytes == 0L) return ByteArray(0)
+        val bytes = read(path)
+        return bytes.copyOf(minOf(bytes.size.toLong(), maximumBytes).toInt())
+    }
     suspend fun write(path: String, content: ByteArray, executable: Boolean = false)
+    suspend fun writeWithProgress(
+        path: String,
+        content: ByteArray,
+        executable: Boolean = false,
+        onProgress: (Long) -> Unit,
+    ) {
+        write(path, content, executable)
+        onProgress(content.size.toLong())
+    }
     suspend fun remove(path: String, recursive: Boolean = false)
     suspend fun bindHostDirectory(hostPath: String, guestPath: String, readOnly: Boolean = false)
 }
@@ -57,7 +78,11 @@ interface MultiplatformLocalRuntime {
     val workspaceRoot: String
     val fileSystem: RuntimeFileSystem
 
+    suspend fun isReady(): Boolean = fileSystem.exists("/etc/alpine-release")
     suspend fun initialize(onProgress: (RuntimeSetupProgress) -> Unit = {})
+    suspend fun reset() {
+        throw UnsupportedOperationException("This runtime cannot be reset.")
+    }
     suspend fun startProcess(spec: RuntimeProcessSpec): RuntimeProcess
 }
 

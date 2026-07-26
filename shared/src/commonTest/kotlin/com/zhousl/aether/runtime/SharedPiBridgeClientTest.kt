@@ -51,6 +51,28 @@ class SharedPiBridgeClientTest {
         assertEquals("complete", response["status"]?.jsonPrimitive?.content)
         client.close()
     }
+
+    @Test
+    fun reportsBridgeSetupPhasesWhileStartingAndPinging() = runTest {
+        val process = ProtocolFakeProcess()
+        val client = SharedPiBridgeClient(
+            transport = FakeBridgeTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val phases = mutableListOf<PiBridgeSetupPhase>()
+
+        client.ping { phases += it }
+
+        assertEquals(
+            listOf(
+                PiBridgeSetupPhase.PreparingBridge,
+                PiBridgeSetupPhase.StartingBridge,
+                PiBridgeSetupPhase.VerifyingBridge,
+            ),
+            phases,
+        )
+        client.close()
+    }
 }
 
 private class FakeBridgeTransport(

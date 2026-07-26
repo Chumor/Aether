@@ -1,6 +1,8 @@
 package com.zhousl.aether.runtime
 
 import com.zhousl.aether.data.platformRandomUuid
+import com.zhousl.aether.data.platformCurrentTimeMillis
+import com.zhousl.aether.data.SharedDiagnosticLogger
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -30,9 +32,18 @@ class PiBridgeRequestException(
     val code: String = "pi_bridge_error",
 ) : IllegalStateException(message)
 
+enum class PiBridgeSetupPhase {
+    PreparingBridge,
+    StartingBridge,
+    VerifyingBridge,
+}
+
 class SharedPiBridgeClient(
     private val transport: PiBridgeTransport,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val extensionLoadOptionsProvider: suspend () -> SharedExtensionLoadOptions = {
+        SharedExtensionLoadOptions()
+    },
 ) {
     private data class PendingRequest(
         val response: CompletableDeferred<JsonObject>,
@@ -47,7 +58,16 @@ class SharedPiBridgeClient(
     private var process: RuntimeProcess? = null
     private var readerJob: Job? = null
 
-    suspend fun ping(): JsonObject = request("ping", timeoutMillis = 15_000)
+    suspend fun ping(
+        onSetupProgress: (PiBridgeSetupPhase) -> Unit = {},
+    ): JsonObject = request(
+        type = "ping",
+        timeoutMillis = 15_000,
+        onSetupProgress = onSetupProgress,
+    )
+
+    internal suspend fun extensionLoadOptions(): SharedExtensionLoadOptions =
+        extensionLoadOptionsProvider()
 
     suspend fun listProviders(): JsonObject =
         request("list_providers", timeoutMillis = 15_000)
@@ -89,13 +109,45 @@ class SharedPiBridgeClient(
             timeoutMillis = 15_000,
         )
 
+    suspend fun listExtensions(sessionId: String): JsonObject =
+        request(
+            type = "list_extensions",
+            payload = extensionSessionPayload(sessionId, extensionLoadOptions()),
+            timeoutMillis = 30_000,
+            abortOnCancellation = false,
+        )
+
+    suspend fun reloadExtensions(sessionId: String): JsonObject =
+        request(
+            type = "reload_extensions",
+            payload = extensionSessionPayload(sessionId, extensionLoadOptions()),
+            timeoutMillis = 10 * 60_000L,
+            abortOnCancellation = false,
+        )
+
+    suspend fun invokeExtensionCommand(
+        sessionId: String,
+        command: String,
+        args: String = "",
+    ): JsonObject = request(
+        type = "invoke_extension_command",
+        payload = buildJsonObject {
+            put("session_id", sessionId)
+            put("command", command)
+            put("args", args)
+            extensionLoadOptions().toPayload().forEach { (key, value) -> put(key, value) }
+        },
+        timeoutMillis = 10 * 60_000L,
+        abortOnCancellation = false,
+    )
+
     suspend fun listExtensionPackages(): JsonObject =
         request("list_extension_packages", timeoutMillis = 30_000, abortOnCancellation = false)
 
     suspend fun installExtensionPackage(source: String): JsonObject =
         request(
             type = "install_extension_package",
-            payload = buildJsonObject { put("source", source) },
+            payload = extensionPackagePayload(source, extensionLoadOptions()),
             timeoutMillis = 10 * 60_000L,
             abortOnCancellation = false,
         )
@@ -103,7 +155,7 @@ class SharedPiBridgeClient(
     suspend fun updateExtensionPackage(source: String): JsonObject =
         request(
             type = "update_extension_package",
-            payload = buildJsonObject { put("source", source) },
+            payload = extensionPackagePayload(source, extensionLoadOptions()),
             timeoutMillis = 10 * 60_000L,
             abortOnCancellation = false,
         )
@@ -111,17 +163,24 @@ class SharedPiBridgeClient(
     suspend fun removeExtensionPackage(source: String): JsonObject =
         request(
             type = "remove_extension_package",
-            payload = buildJsonObject { put("source", source) },
+            payload = extensionPackagePayload(source, extensionLoadOptions()),
             timeoutMillis = 10 * 60_000L,
             abortOnCancellation = false,
         )
+
+    suspend fun reloadAllExtensions(): JsonObject = request(
+        type = "reload_all_extensions",
+        payload = extensionLoadOptions().toPayload(),
+        timeoutMillis = 10 * 60_000L,
+        abortOnCancellation = false,
+    )
 
     suspend fun getAetherExtensions(
         context: JsonObject = JsonObject(emptyMap()),
         onEvent: suspend (String, JsonObject) -> Unit = { _, _ -> },
     ): JsonObject = request(
         type = "get_aether_extensions",
-        payload = aetherExtensionPayload(context),
+        payload = aetherExtensionPayload(context, extensionLoadOptions()),
         timeoutMillis = 10 * 60_000L,
         onEvent = onEvent,
         abortOnCancellation = false,
@@ -132,7 +191,7 @@ class SharedPiBridgeClient(
         onEvent: suspend (String, JsonObject) -> Unit = { _, _ -> },
     ): JsonObject = request(
         type = "reload_aether_extensions",
-        payload = aetherExtensionPayload(context),
+        payload = aetherExtensionPayload(context, extensionLoadOptions()),
         timeoutMillis = 10 * 60_000L,
         onEvent = onEvent,
         abortOnCancellation = false,
@@ -151,6 +210,7 @@ class SharedPiBridgeClient(
             put("action", action)
             put("args", args)
             put("context", context)
+            extensionLoadOptions().toPayload().forEach { (key, value) -> put(key, value) }
         },
         timeoutMillis = 10 * 60_000L,
         onEvent = onEvent,
@@ -168,6 +228,7 @@ class SharedPiBridgeClient(
             put("event", event)
             put("data", data)
             put("context", context)
+            extensionLoadOptions().toPayload().forEach { (key, value) -> put(key, value) }
         },
         timeoutMillis = 10 * 60_000L,
         onEvent = onEvent,
@@ -196,9 +257,34 @@ class SharedPiBridgeClient(
         timeoutMillis: Long = 10 * 60_000L,
         onEvent: suspend (String, JsonObject) -> Unit = { _, _ -> },
         abortOnCancellation: Boolean = type in setOf("run_turn", "complete_once", "follow_up", "login_provider"),
+        onSetupProgress: (PiBridgeSetupPhase) -> Unit = {},
     ): JsonObject {
-        val activeProcess = ensureStarted()
         val requestId = "$type-${platformRandomUuid()}"
+        val startedAtMillis = platformCurrentTimeMillis()
+        SharedDiagnosticLogger.event(
+            category = "pi_bridge",
+            event = "request_start",
+            details = mapOf("requestId" to requestId, "type" to type),
+        )
+        val activeProcess = try {
+            ensureStarted {
+                onSetupProgress(PiBridgeSetupPhase.PreparingBridge)
+                onSetupProgress(PiBridgeSetupPhase.StartingBridge)
+            }
+        } catch (failure: Throwable) {
+            SharedDiagnosticLogger.event(
+                category = "pi_bridge",
+                event = "request_start_failed",
+                level = "error",
+                details = mapOf(
+                    "requestId" to requestId,
+                    "type" to type,
+                    "error" to failure.message.orEmpty(),
+                ),
+            )
+            throw failure
+        }
+        onSetupProgress(PiBridgeSetupPhase.VerifyingBridge)
         val deferred = CompletableDeferred<JsonObject>()
         val events = Channel<Pair<String, JsonObject>>(Channel.UNLIMITED)
         val eventJob = scope.launch {
@@ -216,7 +302,17 @@ class SharedPiBridgeClient(
             writeMutex.withLock {
                 activeProcess.writeStdin(BridgeFrameCodec().encode(frame))
             }
-            return withTimeout(timeoutMillis) { deferred.await() }
+            return withTimeout(timeoutMillis) { deferred.await() }.also {
+                SharedDiagnosticLogger.event(
+                    category = "pi_bridge",
+                    event = "request_end",
+                    details = mapOf(
+                        "requestId" to requestId,
+                        "type" to type,
+                        "durationMillis" to (platformCurrentTimeMillis() - startedAtMillis).toString(),
+                    ),
+                )
+            }
         } catch (throwable: Throwable) {
             if (abortOnCancellation && throwable is CancellationException) {
                 runCatching {
@@ -228,6 +324,17 @@ class SharedPiBridgeClient(
                     )
                 }
             }
+            SharedDiagnosticLogger.event(
+                category = "pi_bridge",
+                event = if (throwable is CancellationException) "request_cancelled" else "request_failed",
+                level = if (throwable is CancellationException) "info" else "error",
+                details = mapOf(
+                    "requestId" to requestId,
+                    "type" to type,
+                    "durationMillis" to (platformCurrentTimeMillis() - startedAtMillis).toString(),
+                    "error" to throwable.message.orEmpty(),
+                ),
+            )
             throw throwable
         } finally {
             stateMutex.withLock { pending.remove(requestId) }
@@ -252,14 +359,23 @@ class SharedPiBridgeClient(
         scope.cancel()
     }
 
-    private suspend fun ensureStarted(): RuntimeProcess {
+    private suspend fun ensureStarted(
+        onStarting: () -> Unit = {},
+    ): RuntimeProcess {
         stateMutex.withLock { process?.let { return it } }
+        onStarting()
+        SharedDiagnosticLogger.event("pi_bridge", "process_start")
         val started = transport.start()
         stateMutex.withLock {
             process?.let { return it }
             process = started
             readerJob = scope.launch { readFrames(started) }
         }
+        SharedDiagnosticLogger.event(
+            category = "pi_bridge",
+            event = "process_started",
+            details = mapOf("pid" to started.pid.toString()),
+        )
         return started
     }
 
@@ -270,9 +386,25 @@ class SharedPiBridgeClient(
                 codec.append(chunk).forEach { dispatchFrame(it) }
             }
             val exit = activeProcess.awaitExit()
+            SharedDiagnosticLogger.event(
+                category = "pi_bridge",
+                event = "process_exit",
+                level = if (exit.exitCode == 0) "info" else "error",
+                details = mapOf(
+                    "pid" to activeProcess.pid.toString(),
+                    "exitCode" to exit.exitCode.toString(),
+                    "signal" to exit.signalNumber.toString(),
+                ),
+            )
             failAll("Pi Bridge exited with code ${exit.exitCode}.")
         } catch (throwable: Throwable) {
             if (throwable !is CancellationException) {
+                SharedDiagnosticLogger.event(
+                    category = "pi_bridge",
+                    event = "process_read_failed",
+                    level = "error",
+                    details = mapOf("error" to throwable.message.orEmpty()),
+                )
                 failAll(throwable.message ?: "Pi Bridge output failed.")
             }
         } finally {
@@ -330,10 +462,28 @@ class SharedPiBridgeClient(
     }
 }
 
-private fun aetherExtensionPayload(context: JsonObject): JsonObject = buildJsonObject {
-    put("disabled_extension_paths", buildJsonArray {})
-    put("disabled_package_sources", buildJsonArray {})
+private fun aetherExtensionPayload(
+    context: JsonObject,
+    options: SharedExtensionLoadOptions,
+): JsonObject = buildJsonObject {
+    options.toPayload().forEach { (key, value) -> put(key, value) }
     put("context", context)
+}
+
+private fun extensionSessionPayload(
+    sessionId: String,
+    options: SharedExtensionLoadOptions,
+): JsonObject = buildJsonObject {
+    put("session_id", sessionId)
+    options.toPayload().forEach { (key, value) -> put(key, value) }
+}
+
+private fun extensionPackagePayload(
+    source: String,
+    options: SharedExtensionLoadOptions,
+): JsonObject = buildJsonObject {
+    put("source", source)
+    options.toPayload().forEach { (key, value) -> put(key, value) }
 }
 
 private fun JsonObject.string(name: String): String =

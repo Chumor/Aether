@@ -29,11 +29,15 @@
     <string name="message_no_text_to_compact">没有可压缩的文本。</string>
     <string name="message_configure_provider_before_compacting">压缩前请先配置提供方。</string>
     <string name="message_compaction_failed">压缩失败：%1$s</string>
+    <string name="message_compaction_empty_response">压缩返回了空响应。</string>
+    <string name="message_no_provider_configured">尚未配置模型提供方。请前往“设置 &gt; 提供方”添加。</string>
+    <string name="message_export_conversation_failed">无法导出此对话。</string>
     <string name="message_installed_skill">已安装技能：%1$s</string>
     <string name="message_install_skill_failed">无法安装技能：%1$s</string>
     <string name="message_aether_up_to_date">Aether 已是最新版本。</string>
     <string name="message_update_check_failed">无法检查更新：%1$s</string>
     <string name="message_fetch_models_failed">获取模型失败：%1$s</string>
+    <string name="message_refresh_mcp_failed">刷新 MCP 工具失败：%1$s</string>
     <string name="common_more">更多</string>
     <string name="common_close">关闭</string>
     <string name="common_skip">跳过</string>
@@ -129,6 +133,14 @@
     <string name="chat_help_me_write_chip">帮我写</string>
     <string name="chat_summarize_file_chip">总结文件</string>
     <string name="chat_thinking">思考中</string>
+    <string name="chat_responding">正在回复</string>
+    <string name="chat_working">正在处理</string>
+    <string name="chat_stopped">已停止</string>
+    <string name="chat_interrupted">已中断</string>
+    <string name="chat_request_failed">请求失败。</string>
+    <string name="chat_export_title">Aether 会话</string>
+    <string name="chat_aether_file">Aether 文件</string>
+    <string name="chat_attach_file_failed">无法添加附件。</string>
     <string name="chat_context_compacted">上下文已压缩</string>
     <string name="chat_compacting_context">正在压缩上下文</string>
     <string name="chat_compact_thread_context">压缩此对话上下文</string>
@@ -242,7 +254,7 @@
     <string name="settings_request_timeout">请求超时</string>
     <string name="settings_stdio">标准输入输出</string>
     <string name="settings_update_mcp_server_description">更新此 MCP 服务器的传输配置和快捷操作来源。</string>
-    <string name="settings_add_mcp_server_page_description">添加用于远程 API 的 HTTP 服务器，或用于本地 Termux 进程的 stdio 服务器。</string>
+    <string name="settings_add_mcp_server_page_description">添加用于远程 API 的 HTTP 服务器，或用于本地进程的 stdio 服务器。</string>
     <string name="settings_server_name">服务器名称</string>
     <string name="settings_server_url">服务器 URL</string>
     <string name="settings_optional_headers_hint">可选请求头，每行一个 KEY=VALUE。</string>
@@ -312,6 +324,7 @@
     <string name="statistics_overview">概览</string>
     <string name="statistics_total_tokens">总 token</string>
     <string name="statistics_sessions">会话数</string>
+    <string name="statistics_messages">消息数</string>
     <string name="statistics_average_speed">平均速度</string>
     <string name="statistics_average_latency">平均延迟</string>
     <string name="statistics_daily_token_usage">每日 token 用量</string>
@@ -492,6 +505,10 @@
     <string name="provider_form_oauth_connected_as">已授权账号：%1$s</string>
     <string name="provider_form_oauth_not_connected">连接订阅账户后继续。</string>
     <string name="provider_form_oauth_waiting">等待授权</string>
+    <string name="provider_form_credentials_waiting">正在等待凭据。</string>
+    <string name="provider_form_api_key_configured">API 密钥已配置。</string>
+    <string name="provider_form_complete_authorization_browser">请在浏览器中完成授权。</string>
+    <string name="provider_form_enter_device_code_browser">请在浏览器中输入设备代码。</string>
     <string name="provider_form_oauth_connect">连接账户</string>
     <string name="provider_form_oauth_reconnect">重新连接</string>
     <string name="provider_form_oauth_disconnect">断开连接</string>
@@ -558,6 +575,8 @@
 
     <!-- Markdown -->
     <string name="attachment_file_preview_unavailable">此文件类型无法预览。</string>
+    <string name="attachment_preview_failed">无法预览此附件。</string>
+    <string name="attachment_preview_too_large">此附件过大，无法载入预览。</string>
     <string name="attachment_preview_truncated">为了便于阅读，预览内容已截断。</string>
     <string name="attachment_type_photo">照片</string>
     <string name="attachment_type_file">文件</string>
@@ -666,6 +685,7 @@
     <!-- Conversation -->
     <string name="tool_invocation_command">命令</string>
     <string name="tool_invocation_result">结果</string>
+    <string name="tool_invocation_arguments">参数</string>
     <string name="tool_invocation_exit_code">退出代码：%1$d</string>
     <string name="branch_steer_current_run">引导当前运行</string>
     <string name="branch_queue_next_turn">排队下一轮</string>
@@ -828,6 +848,8 @@
     <string name="settings_ready">已就绪</string>
     <string name="settings_initialize">初始化</string>
     <string name="settings_reset_alpine_data">重置 Alpine 数据</string>
+    <string name="settings_reset_alpine_data_warning">这会移除 Aether 管理的 Alpine 数据、Skills、MCP 配置和已安装环境预设状态，且无法撤销。</string>
+    <string name="common_reset">重置</string>
     <string name="settings_use_as_default_runtime">设为默认运行环境</string>
     <string name="settings_environment_presets">快捷环境配置</string>
     <string name="settings_environment_presets_description">按需安装工具链。每个预设都可以独立安装和跟踪状态。</string>
@@ -842,6 +864,8 @@
     <string name="settings_alpine_status_missing_assets">当前构建尚未包含 Alpine 运行环境资源。</string>
     <string name="settings_alpine_status_failed">Alpine 需要修复或重置。</string>
     <string name="settings_alpine_status_not_ready">Alpine 尚未就绪。</string>
+    <string name="settings_alpine_rootfs_unavailable">Alpine 根文件系统不可用。</string>
+    <string name="settings_alpine_installing_packages">正在安装软件包</string>
     <string name="settings_runtime_defaults_description">选择工具未指定 environment 参数时使用的运行环境。Agent 仍然可以显式选择 Termux 或 Alpine。</string>
     <string name="settings_runtime_termux_ready_subtitle">手机侧命令桥接与 Agent Mode workspace。</string>
     <string name="settings_runtime_termux_unavailable_subtitle">先配置 Termux，才能设为默认运行环境。</string>
@@ -950,6 +974,7 @@
     <string name="alpine_title">Alpine</string>
     <string name="alpine_preparing">正在准备本地运行环境</string>
     <string name="alpine_ready">Alpine 已就绪</string>
+    <string name="alpine_setup_step_progress">第 %1$d/5 步 - %2$d%%</string>
     <string name="runtime_setup_details">详情</string>
     <string name="runtime_setup_details_title">安装详情</string>
     <string name="runtime_setup_waiting_for_output">正在等待安装输出...</string>
@@ -992,6 +1017,8 @@
     <string name="extensions_subtitle">Pi 与 Aether 脚本扩展</string>
     <string name="mcp_subtitle">HTTP 与 Alpine stdio 服务器</string>
     <string name="alpine_subtitle">终端、Node 与本地工具已就绪</string>
+    <string name="terminal_title">终端</string>
+    <string name="terminal_subtitle">Alpine Shell</string>
     <string name="statistics_subtitle">用量、Token 与响应速度</string>
     <string name="tour_title">新手引导</string>
     <string name="tour_subtitle">重新进行 Aether 设置</string>
@@ -1008,7 +1035,15 @@
     <string name="settings_total_tokens_value">共 %1$s token</string>
     <string name="settings_recorded_turns_value">已记录 %1$d 轮</string>
     <string name="settings_data_imported">应用数据已导入</string>
-    <string name="settings_data_import_failed">无法导入应用数据</string>
+    <string name="settings_data_exported">应用数据已导出</string>
+    <string name="settings_data_import_failed">无法导入设置</string>
+    <string name="settings_data_export_failed">无法打开系统分享面板</string>
+    <string name="settings_app_data_share_title">Aether 应用数据</string>
+    <string name="settings_app_data_export_filename">aether-data.json</string>
+    <string name="settings_author_name">Zhou-Shilin</string>
+    <string name="statistics_average_turn">平均单轮</string>
+    <string name="statistics_cached_input">缓存输入</string>
+    <string name="statistics_token_share_value">%1$s · %2$d%%</string>
     <string name="runtime_setup_message">让我们准备 Aether 本地工具使用的 Alpine 工作空间。</string>
     <string name="runtime_setup_ready_message">Alpine、Node 22 与本地工作空间已就绪。</string>
     <string name="common_stop">停止</string>

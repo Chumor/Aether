@@ -29,11 +29,15 @@
     <string name="message_no_text_to_compact">There is no text to compact.</string>
     <string name="message_configure_provider_before_compacting">Configure a provider before compacting.</string>
     <string name="message_compaction_failed">Compaction failed: %1$s</string>
+    <string name="message_compaction_empty_response">Compaction returned an empty response.</string>
+    <string name="message_no_provider_configured">No provider is configured. Open Settings &gt; Providers to add one.</string>
+    <string name="message_export_conversation_failed">Unable to export this conversation.</string>
     <string name="message_installed_skill">Installed skill: %1$s</string>
     <string name="message_install_skill_failed">Couldn\'t install skill: %1$s</string>
     <string name="message_aether_up_to_date">Aether is up to date.</string>
     <string name="message_update_check_failed">Couldn\'t check for updates: %1$s</string>
     <string name="message_fetch_models_failed">Failed to fetch models: %1$s</string>
+    <string name="message_refresh_mcp_failed">Failed to refresh MCP tools: %1$s</string>
     <string name="common_more">More</string>
     <string name="common_close">Close</string>
     <string name="common_skip">Skip</string>
@@ -129,6 +133,14 @@
     <string name="chat_help_me_write_chip">Help me write</string>
     <string name="chat_summarize_file_chip">Summarize file</string>
     <string name="chat_thinking">Thinking</string>
+    <string name="chat_responding">Responding</string>
+    <string name="chat_working">Working</string>
+    <string name="chat_stopped">Stopped</string>
+    <string name="chat_interrupted">Interrupted</string>
+    <string name="chat_request_failed">The request failed.</string>
+    <string name="chat_export_title">Aether session</string>
+    <string name="chat_aether_file">Aether file</string>
+    <string name="chat_attach_file_failed">Unable to attach file.</string>
     <string name="chat_context_compacted">Context compacted</string>
     <string name="chat_compacting_context">Compacting context</string>
     <string name="chat_compact_thread_context">"Compact this thread's context"</string>
@@ -243,7 +255,7 @@
     <string name="settings_request_timeout">Request timeout</string>
     <string name="settings_stdio">Stdio</string>
     <string name="settings_update_mcp_server_description">Update the transport config and quick action source for this MCP server.</string>
-    <string name="settings_add_mcp_server_page_description">Add an HTTP server for remote APIs or a stdio server for local Termux processes.</string>
+    <string name="settings_add_mcp_server_page_description">Add an HTTP server for remote APIs or a stdio server for local processes.</string>
     <string name="settings_server_name">Server name</string>
     <string name="settings_server_url">Server URL</string>
     <string name="settings_optional_headers_hint">Optional headers, one KEY=VALUE per line.</string>
@@ -313,6 +325,7 @@
     <string name="statistics_overview">Overview</string>
     <string name="statistics_total_tokens">Total tokens</string>
     <string name="statistics_sessions">Sessions</string>
+    <string name="statistics_messages">Messages</string>
     <string name="statistics_average_speed">Avg speed</string>
     <string name="statistics_average_latency">Avg latency</string>
     <string name="statistics_daily_token_usage">Daily token usage</string>
@@ -494,6 +507,10 @@
     <string name="provider_form_oauth_connected_as">Connected as %1$s</string>
     <string name="provider_form_oauth_not_connected">Connect your subscription account to continue.</string>
     <string name="provider_form_oauth_waiting">Waiting for authorization</string>
+    <string name="provider_form_credentials_waiting">Waiting for credentials.</string>
+    <string name="provider_form_api_key_configured">API key configured.</string>
+    <string name="provider_form_complete_authorization_browser">Complete authorization in your browser.</string>
+    <string name="provider_form_enter_device_code_browser">Enter the device code in your browser.</string>
     <string name="provider_form_oauth_connect">Connect account</string>
     <string name="provider_form_oauth_reconnect">Reconnect account</string>
     <string name="provider_form_oauth_disconnect">Disconnect</string>
@@ -560,6 +577,8 @@
 
     <!-- Markdown -->
     <string name="attachment_file_preview_unavailable">Preview unavailable for this file type.</string>
+    <string name="attachment_preview_failed">Unable to preview this attachment.</string>
+    <string name="attachment_preview_too_large">This attachment is too large to load into the preview.</string>
     <string name="attachment_preview_truncated">Preview truncated for readability.</string>
     <string name="attachment_type_photo">Photo</string>
     <string name="attachment_type_file">File</string>
@@ -668,6 +687,7 @@
     <!-- Conversation -->
     <string name="tool_invocation_command">Command</string>
     <string name="tool_invocation_result">Result</string>
+    <string name="tool_invocation_arguments">Arguments</string>
     <string name="tool_invocation_exit_code">Exit code: %1$d</string>
     <string name="branch_steer_current_run">Steer current run</string>
     <string name="branch_queue_next_turn">Queue next turn</string>
@@ -830,6 +850,8 @@
     <string name="settings_ready">Ready</string>
     <string name="settings_initialize">Initialize</string>
     <string name="settings_reset_alpine_data">Reset Alpine data</string>
+    <string name="settings_reset_alpine_data_warning">This removes Aether-managed Alpine data, Skills, MCP configuration, and installed environment preset state. This cannot be undone.</string>
+    <string name="common_reset">Reset</string>
     <string name="settings_use_as_default_runtime">Use as default runtime</string>
     <string name="settings_environment_presets">Environment presets</string>
     <string name="settings_environment_presets_description">Install only the toolchains you need. Each preset can be installed and tracked independently.</string>
@@ -844,6 +866,8 @@
     <string name="settings_alpine_status_missing_assets">This build does not include Alpine runtime assets yet.</string>
     <string name="settings_alpine_status_failed">Alpine needs repair or reset.</string>
     <string name="settings_alpine_status_not_ready">Alpine is not ready.</string>
+    <string name="settings_alpine_rootfs_unavailable">Alpine root filesystem is unavailable.</string>
+    <string name="settings_alpine_installing_packages">Installing packages</string>
     <string name="settings_runtime_defaults_description">Choose where tools run when a request omits the environment parameter. Agent calls can still explicitly select Termux or Alpine.</string>
     <string name="settings_runtime_termux_ready_subtitle">Android-side command bridge and Agent Mode workspace.</string>
     <string name="settings_runtime_termux_unavailable_subtitle">Configure Termux before selecting it as default.</string>
@@ -952,6 +976,7 @@
     <string name="alpine_title">Alpine</string>
     <string name="alpine_preparing">Preparing local runtime</string>
     <string name="alpine_ready">Alpine is ready</string>
+    <string name="alpine_setup_step_progress">Step %1$d/5 - %2$d%%</string>
     <string name="runtime_setup_details">Details</string>
     <string name="runtime_setup_details_title">Installation details</string>
     <string name="runtime_setup_waiting_for_output">Waiting for installation output...</string>
@@ -994,6 +1019,8 @@
     <string name="extensions_subtitle">Pi and Aether script extensions</string>
     <string name="mcp_subtitle">HTTP and Alpine stdio servers</string>
     <string name="alpine_subtitle">Ready for terminal, Node, and local tools</string>
+    <string name="terminal_title">Terminal</string>
+    <string name="terminal_subtitle">Alpine shell</string>
     <string name="statistics_subtitle">Usage, tokens, and response speed</string>
     <string name="tour_title">Get started tour</string>
     <string name="tour_subtitle">Replay Aether setup</string>
@@ -1010,7 +1037,15 @@
     <string name="settings_total_tokens_value">%1$s total tokens</string>
     <string name="settings_recorded_turns_value">%1$d recorded turns</string>
     <string name="settings_data_imported">App data imported</string>
-    <string name="settings_data_import_failed">Couldn&apos;t import app data</string>
+    <string name="settings_data_exported">App data exported</string>
+    <string name="settings_data_import_failed">Couldn&apos;t import settings</string>
+    <string name="settings_data_export_failed">Couldn&apos;t open the share sheet</string>
+    <string name="settings_app_data_share_title">Aether app data</string>
+    <string name="settings_app_data_export_filename">aether-data.json</string>
+    <string name="settings_author_name">Zhou-Shilin</string>
+    <string name="statistics_average_turn">Average turn</string>
+    <string name="statistics_cached_input">Cached input</string>
+    <string name="statistics_token_share_value">%1$s · %2$d%%</string>
     <string name="runtime_setup_message">Let&apos;s prepare the Alpine workspace used by Aether&apos;s local tools.</string>
     <string name="runtime_setup_ready_message">Alpine, Node 22, and the local workspace are ready.</string>
     <string name="common_stop">Stop</string>

@@ -11,6 +11,11 @@ actual val platformNativeTerminalAvailable: Boolean = false
 actual fun PlatformTerminalSurface(
     runtime: MultiplatformLocalRuntime,
     interruptSignal: Int,
+    inputEvent: PlatformTerminalInputEvent?,
+    darkTheme: Boolean,
+    onTitleChanged: (String) -> Unit,
+    onReady: () -> Unit,
+    onError: (String) -> Unit,
     modifier: Modifier,
 ) {
     Box(modifier)

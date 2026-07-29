@@ -149,7 +149,7 @@ class SharedAgentManagementTools(
         val prompt = arguments.string("prompt").trim().ifBlank {
             "Describe the image and answer any relevant details needed for the task."
         }
-        val result = completionClient.runTurn(
+        val result = completionClient.completeOnce(
             config = provider,
             messages = listOf(
                 SharedPiChatMessage(
@@ -158,8 +158,6 @@ class SharedAgentManagementTools(
                     images = listOf(SharedPiImage(mimeType, bytes.encodeAgentBase64())),
                 )
             ),
-            sessionId = "aether-image-${platformRandomUuid()}",
-            workspaceDirectory = runtime.workspaceRoot,
             systemPrompt = "You are an image analysis helper for an Android coding agent. Answer only with observations and conclusions grounded in the image and the prompt.",
             reasoning = "off",
             timeoutMillis = settings().llmInactivityReconnectTimeoutSeconds

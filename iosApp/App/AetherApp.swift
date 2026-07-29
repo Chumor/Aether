@@ -2,8 +2,19 @@ import SwiftUI
 import UIKit
 import AetherShared
 
+private final class AetherAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        AetherRuntimeHost.shared.registerBackgroundExecution()
+        return true
+    }
+}
+
 @main
 struct AetherIOSApp: App {
+    @UIApplicationDelegateAdaptor(AetherAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {

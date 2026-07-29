@@ -36,6 +36,11 @@ interface RuntimeProcess {
     suspend fun resize(columns: Int, rows: Int) = Unit
 }
 
+class RuntimeProcessStdinException(
+    val processId: Int,
+    message: String = "Runtime process $processId rejected stdin.",
+) : IllegalStateException(message)
+
 interface RuntimeFileSystem {
     suspend fun exists(path: String): Boolean
     suspend fun createDirectories(path: String)

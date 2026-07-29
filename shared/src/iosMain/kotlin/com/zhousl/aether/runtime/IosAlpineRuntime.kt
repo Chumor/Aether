@@ -3,6 +3,7 @@ package com.zhousl.aether.runtime
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -73,11 +74,15 @@ class IosAlpineRuntime(
 
     private companion object {
         const val MaxSetupOutputCharacters = 120_000
+        const val RuntimeStderrBufferChunks = 64
     }
 
     override suspend fun startProcess(spec: RuntimeProcessSpec): RuntimeProcess {
         val stdout = Channel<ByteArray>(Channel.UNLIMITED)
-        val stderr = Channel<ByteArray>(Channel.UNLIMITED)
+        val stderr = Channel<ByteArray>(
+            capacity = RuntimeStderrBufferChunks,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
         val exit = CompletableDeferred<RuntimeProcessExit>()
         val listener = object : NativeRuntimeProcessListener {
             override fun onStdout(bytes: ByteArray) {
@@ -125,7 +130,9 @@ private class IosRuntimeProcess(
     override val pid: Int = processId.toInt()
 
     override suspend fun writeStdin(bytes: ByteArray) {
-        check(host.writeStdin(pid.toLong(), bytes)) { "Alpine process $pid rejected stdin." }
+        if (!host.writeStdin(pid.toLong(), bytes)) {
+            throw RuntimeProcessStdinException(pid, "Alpine process $pid rejected stdin.")
+        }
     }
 
     override suspend fun closeStdin() = host.closeStdin(pid.toLong())

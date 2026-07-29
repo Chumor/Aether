@@ -85,6 +85,26 @@ class SharedPiChatClient(
     private val onOAuthCredentialUpdated: suspend (providerConfigId: String, credentialJson: String) -> Unit =
         { _, _ -> },
 ) {
+    suspend fun completeOnce(
+        config: LlmProviderConfig,
+        messages: List<SharedPiChatMessage>,
+        systemPrompt: String = platformDefaultSystemPrompt(),
+        reasoning: String = "off",
+        timeoutMillis: Int = 360_000,
+    ): SharedPiTurnResult {
+        val response = bridge.request(
+            type = "complete_once",
+            payload = buildJsonObject {
+                put("model_config", config.toSharedPiModelConfig(timeoutMillis))
+                put("system_prompt", systemPrompt.ifBlank { platformDefaultSystemPrompt() })
+                put("messages", messages.toPiMessages())
+                put("stream", false)
+                put("reasoning", reasoning)
+            },
+        )
+        return response.toSharedPiTurnResult(config)
+    }
+
     suspend fun steer(
         sessionId: String,
         message: SharedPiChatMessage,
@@ -188,6 +208,7 @@ class SharedPiChatClient(
                     var resolvedResponse = bridge.request(
                         type = "run_turn",
                         payload = payload,
+                        timeoutMillis = null,
                         onEvent = eventHandler,
                     )
                     forwardInjectedMessages()
@@ -200,6 +221,7 @@ class SharedPiChatClient(
                                 put("session_id", resolvedSessionId)
                                 put("message", injected.toPiMessage())
                             },
+                            timeoutMillis = null,
                             onEvent = eventHandler,
                         )
                     }
@@ -212,8 +234,14 @@ class SharedPiChatClient(
         } finally {
             onStreamingStatus(null)
         }
-        val usage = response["usage"] as? JsonObject ?: JsonObject(emptyMap())
-        val updatedOauthCredentialJson = (response["oauth_credential"] as? JsonObject)
+        return response.toSharedPiTurnResult(config)
+    }
+
+    private suspend fun JsonObject.toSharedPiTurnResult(
+        config: LlmProviderConfig,
+    ): SharedPiTurnResult {
+        val usage = this["usage"] as? JsonObject ?: JsonObject(emptyMap())
+        val updatedOauthCredentialJson = (this["oauth_credential"] as? JsonObject)
             ?.takeIf(JsonObject::isNotEmpty)
             ?.toString()
             .orEmpty()
@@ -221,11 +249,11 @@ class SharedPiChatClient(
             onOAuthCredentialUpdated(config.id, updatedOauthCredentialJson)
         }
         return SharedPiTurnResult(
-            assistantText = response.string("assistant_text"),
-            reasoningText = response.string("reasoning_text"),
-            provider = response.string("provider"),
-            model = response.string("model"),
-            errorMessage = response.string("error_message"),
+            assistantText = string("assistant_text"),
+            reasoningText = string("reasoning_text"),
+            provider = string("provider"),
+            model = string("model"),
+            errorMessage = string("error_message"),
             usage = SharedPiUsage(
                 inputTokens = usage.long("input_tokens"),
                 outputTokens = usage.long("output_tokens"),
@@ -234,7 +262,7 @@ class SharedPiChatClient(
                 cachedInputTokens = usage.long("cached_input_tokens"),
             ),
             usageAvailable = usage.isNotEmpty(),
-            providerPayloadJson = response.toSharedProviderPayloadJson(),
+            providerPayloadJson = toSharedProviderPayloadJson(),
             updatedOauthCredentialJson = updatedOauthCredentialJson,
         )
     }

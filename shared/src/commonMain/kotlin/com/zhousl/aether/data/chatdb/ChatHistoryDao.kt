@@ -1,6 +1,8 @@
 package com.zhousl.aether.data.chatdb
 
 import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
@@ -138,7 +140,7 @@ interface ChatHistoryDao {
     """)
     suspend fun getWorkspaceFileRefsForPaths(paths: List<String>): List<ChatWorkspaceFileRefEntity>
 
-    @Upsert
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertMeta(meta: ChatStateMetaEntity)
 
     @Upsert
@@ -146,6 +148,9 @@ interface ChatHistoryDao {
 
     @Upsert
     suspend fun upsertSessions(sessions: List<ChatSessionEntity>)
+
+    @Query("UPDATE chat_sessions SET selectedModelKey = :selectedModelKey WHERE id = :sessionId")
+    suspend fun updateSelectedModelKey(sessionId: String, selectedModelKey: String)
 
     @Upsert
     suspend fun upsertMessage(message: ChatMessageEntity)

@@ -22,6 +22,9 @@ interface NativeRuntimeHost {
     fun closeStdin(processId: Long)
     fun signal(processId: Long, signal: Int)
     fun resizeTerminal(processId: Long, columns: Int, rows: Int)
+    fun beginBackgroundExecution(name: String, listener: NativeBackgroundExecutionListener): String
+    fun updateBackgroundExecution(identifier: String, detail: String)
+    fun endBackgroundExecution(identifier: String, success: Boolean)
 
     fun fileExists(path: String, listener: NativeBooleanResultListener)
     fun createDirectories(path: String, listener: NativeUnitResultListener)
@@ -60,6 +63,10 @@ interface NativeRuntimeProcessListener {
     fun onStdout(bytes: ByteArray)
     fun onStderr(bytes: ByteArray)
     fun onExit(exitCode: Int, signal: Int)
+}
+
+interface NativeBackgroundExecutionListener {
+    fun onExpired()
 }
 
 interface NativeBooleanResultListener {

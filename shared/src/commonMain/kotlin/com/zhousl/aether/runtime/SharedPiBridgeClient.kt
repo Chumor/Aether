@@ -9,13 +9,16 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -26,6 +29,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+
+private const val PiBridgeStderrMaximumCharacters = 32 * 1024
+private const val PiBridgeStderrMaximumChunkCharacters = 2 * 1024
 
 class PiBridgeRequestException(
     message: String,
@@ -54,9 +60,11 @@ class SharedPiBridgeClient(
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val stateMutex = Mutex()
     private val writeMutex = Mutex()
+    private val recoveryMutex = Mutex()
     private val pending = mutableMapOf<String, PendingRequest>()
     private var process: RuntimeProcess? = null
     private var readerJob: Job? = null
+    private var stderrJob: Job? = null
 
     suspend fun ping(
         onSetupProgress: (PiBridgeSetupPhase) -> Unit = {},
@@ -69,8 +77,12 @@ class SharedPiBridgeClient(
     internal suspend fun extensionLoadOptions(): SharedExtensionLoadOptions =
         extensionLoadOptionsProvider()
 
-    suspend fun listProviders(): JsonObject =
-        request("list_providers", timeoutMillis = 15_000)
+    suspend fun listProviders(startIfNeeded: Boolean = true): JsonObject =
+        request(
+            type = "list_providers",
+            timeoutMillis = 15_000,
+            startIfNeeded = startIfNeeded,
+        )
 
     suspend fun loginProvider(
         providerConfigId: String,
@@ -254,10 +266,11 @@ class SharedPiBridgeClient(
     suspend fun request(
         type: String,
         payload: JsonObject = JsonObject(emptyMap()),
-        timeoutMillis: Long = 10 * 60_000L,
+        timeoutMillis: Long? = 10 * 60_000L,
         onEvent: suspend (String, JsonObject) -> Unit = { _, _ -> },
         abortOnCancellation: Boolean = type in setOf("run_turn", "complete_once", "follow_up", "login_provider"),
         onSetupProgress: (PiBridgeSetupPhase) -> Unit = {},
+        startIfNeeded: Boolean = true,
     ): JsonObject {
         val requestId = "$type-${platformRandomUuid()}"
         val startedAtMillis = platformCurrentTimeMillis()
@@ -267,9 +280,17 @@ class SharedPiBridgeClient(
             details = mapOf("requestId" to requestId, "type" to type),
         )
         val activeProcess = try {
-            ensureStarted {
-                onSetupProgress(PiBridgeSetupPhase.PreparingBridge)
-                onSetupProgress(PiBridgeSetupPhase.StartingBridge)
+            if (startIfNeeded) {
+                ensureStarted {
+                    onSetupProgress(PiBridgeSetupPhase.PreparingBridge)
+                    onSetupProgress(PiBridgeSetupPhase.StartingBridge)
+                }
+            } else {
+                stateMutex.withLock { process }
+                    ?: throw PiBridgeRequestException(
+                        message = "Pi Bridge is not running.",
+                        code = "pi_bridge_not_running",
+                    )
             }
         } catch (failure: Throwable) {
             SharedDiagnosticLogger.event(
@@ -290,8 +311,9 @@ class SharedPiBridgeClient(
         val eventJob = scope.launch {
             for ((event, eventPayload) in events) onEvent(event, eventPayload)
         }
+        val pendingRequest = PendingRequest(deferred, events, eventJob)
         stateMutex.withLock {
-            pending[requestId] = PendingRequest(deferred, events, eventJob)
+            pending[requestId] = pendingRequest
         }
         try {
             val frame = buildJsonObject {
@@ -299,10 +321,23 @@ class SharedPiBridgeClient(
                 put("type", type)
                 put("payload", payload)
             }
-            writeMutex.withLock {
-                activeProcess.writeStdin(BridgeFrameCodec().encode(frame))
+            writeFrameWithRecovery(
+                initialProcess = activeProcess,
+                requestId = requestId,
+                request = pendingRequest,
+                bytes = BridgeFrameCodec().encode(frame),
+                restartOnFailure = startIfNeeded,
+                onStarting = {
+                    onSetupProgress(PiBridgeSetupPhase.PreparingBridge)
+                    onSetupProgress(PiBridgeSetupPhase.StartingBridge)
+                },
+            )
+            val response = if (timeoutMillis == null) {
+                deferred.await()
+            } else {
+                withTimeout(timeoutMillis) { deferred.await() }
             }
-            return withTimeout(timeoutMillis) { deferred.await() }.also {
+            return response.also {
                 SharedDiagnosticLogger.event(
                     category = "pi_bridge",
                     event = "request_end",
@@ -314,33 +349,50 @@ class SharedPiBridgeClient(
                 )
             }
         } catch (throwable: Throwable) {
-            if (abortOnCancellation && throwable is CancellationException) {
-                runCatching {
-                    request(
-                        type = "abort",
-                        payload = buildJsonObject { put("request_id", requestId) },
-                        timeoutMillis = 15_000,
-                        abortOnCancellation = false,
-                    )
+            if (throwable is CancellationException) {
+                withContext(NonCancellable) {
+                    if (abortOnCancellation) {
+                        runCatching {
+                            request(
+                                type = "abort",
+                                payload = buildJsonObject { put("request_id", requestId) },
+                                timeoutMillis = 15_000,
+                                abortOnCancellation = false,
+                            )
+                        }
+                    }
+                    logRequestFailure(requestId, type, startedAtMillis, throwable)
                 }
+            } else {
+                logRequestFailure(requestId, type, startedAtMillis, throwable)
             }
-            SharedDiagnosticLogger.event(
-                category = "pi_bridge",
-                event = if (throwable is CancellationException) "request_cancelled" else "request_failed",
-                level = if (throwable is CancellationException) "info" else "error",
-                details = mapOf(
-                    "requestId" to requestId,
-                    "type" to type,
-                    "durationMillis" to (platformCurrentTimeMillis() - startedAtMillis).toString(),
-                    "error" to throwable.message.orEmpty(),
-                ),
-            )
             throw throwable
         } finally {
-            stateMutex.withLock { pending.remove(requestId) }
-            events.close()
-            eventJob.cancel()
+            withContext(NonCancellable) {
+                stateMutex.withLock { pending.remove(requestId) }
+                events.close()
+                eventJob.cancel()
+            }
         }
+    }
+
+    private suspend fun logRequestFailure(
+        requestId: String,
+        type: String,
+        startedAtMillis: Long,
+        throwable: Throwable,
+    ) {
+        SharedDiagnosticLogger.event(
+            category = "pi_bridge",
+            event = if (throwable is CancellationException) "request_cancelled" else "request_failed",
+            level = if (throwable is CancellationException) "info" else "error",
+            details = mapOf(
+                "requestId" to requestId,
+                "type" to type,
+                "durationMillis" to (platformCurrentTimeMillis() - startedAtMillis).toString(),
+                "error" to throwable.message.orEmpty(),
+            ),
+        )
     }
 
     suspend fun close() {
@@ -353,6 +405,8 @@ class SharedPiBridgeClient(
             pending.clear()
             readerJob?.cancel()
             readerJob = null
+            stderrJob?.cancel()
+            stderrJob = null
             process = null
         }
         transport.stop()
@@ -370,6 +424,7 @@ class SharedPiBridgeClient(
             process?.let { return it }
             process = started
             readerJob = scope.launch { readFrames(started) }
+            stderrJob = scope.launch { readStderr(started) }
         }
         SharedDiagnosticLogger.event(
             category = "pi_bridge",
@@ -377,6 +432,59 @@ class SharedPiBridgeClient(
             details = mapOf("pid" to started.pid.toString()),
         )
         return started
+    }
+
+    private suspend fun writeFrameWithRecovery(
+        initialProcess: RuntimeProcess,
+        requestId: String,
+        request: PendingRequest,
+        bytes: ByteArray,
+        restartOnFailure: Boolean,
+        onStarting: () -> Unit,
+    ) = writeMutex.withLock {
+        try {
+            initialProcess.writeStdin(bytes)
+        } catch (failure: RuntimeProcessStdinException) {
+            stateMutex.withLock {
+                if (pending[requestId] === request) pending.remove(requestId)
+            }
+            if (!restartOnFailure) throw failure
+            recoverProcess(initialProcess, failure)
+            val restarted = ensureStarted(onStarting)
+            stateMutex.withLock { pending[requestId] = request }
+            restarted.writeStdin(bytes)
+        }
+    }
+
+    private suspend fun recoverProcess(
+        failedProcess: RuntimeProcess,
+        failure: RuntimeProcessStdinException,
+    ) = recoveryMutex.withLock {
+        val shouldRecover = stateMutex.withLock {
+            if (process !== failedProcess) {
+                false
+            } else {
+                process = null
+                readerJob?.cancel()
+                readerJob = null
+                stderrJob?.cancel()
+                stderrJob = null
+                true
+            }
+        }
+        if (!shouldRecover) return@withLock
+
+        SharedDiagnosticLogger.event(
+            category = "pi_bridge",
+            event = "process_recover",
+            level = "error",
+            details = mapOf(
+                "pid" to failedProcess.pid.toString(),
+                "error" to failure.message.orEmpty(),
+            ),
+        )
+        failAll("Pi Bridge restarted after its runtime process stopped accepting input.")
+        transport.stop()
     }
 
     private suspend fun readFrames(activeProcess: RuntimeProcess) {
@@ -408,8 +516,73 @@ class SharedPiBridgeClient(
                 failAll(throwable.message ?: "Pi Bridge output failed.")
             }
         } finally {
-            stateMutex.withLock {
-                if (process === activeProcess) process = null
+            val stderrToFinish = stateMutex.withLock {
+                if (process === activeProcess) {
+                    process = null
+                    readerJob = null
+                    stderrJob.also { stderrJob = null }
+                } else {
+                    null
+                }
+            }
+            stderrToFinish?.let { job ->
+                val drained = withTimeoutOrNull(1_000) {
+                    job.join()
+                    true
+                } ?: false
+                if (!drained) job.cancel()
+            }
+        }
+    }
+
+    private suspend fun readStderr(activeProcess: RuntimeProcess) {
+        var loggedCharacters = 0
+        var reportedTruncation = false
+        try {
+            activeProcess.stderr.collect { chunk ->
+                val decoded = chunk.decodeToString()
+                val remaining = PiBridgeStderrMaximumCharacters - loggedCharacters
+                if (remaining <= 0) {
+                    if (!reportedTruncation) {
+                        reportedTruncation = true
+                        SharedDiagnosticLogger.event(
+                            category = "pi_bridge",
+                            event = "process_stderr_truncated",
+                            level = "warn",
+                            details = mapOf("pid" to activeProcess.pid.toString()),
+                        )
+                    }
+                    return@collect
+                }
+                val retained = decoded.take(
+                    minOf(remaining, PiBridgeStderrMaximumChunkCharacters),
+                )
+                if (retained.isNotBlank()) {
+                    loggedCharacters += retained.length
+                    SharedDiagnosticLogger.event(
+                        category = "pi_bridge",
+                        event = "process_stderr",
+                        level = "warn",
+                        details = mapOf(
+                            "pid" to activeProcess.pid.toString(),
+                            "message" to retained,
+                            "chunkCharacters" to decoded.length.toString(),
+                            "truncated" to (retained.length < decoded.length).toString(),
+                        ),
+                    )
+                }
+            }
+        } catch (throwable: Throwable) {
+            if (throwable !is CancellationException) {
+                SharedDiagnosticLogger.event(
+                    category = "pi_bridge",
+                    event = "process_stderr_read_failed",
+                    level = "warn",
+                    details = mapOf(
+                        "pid" to activeProcess.pid.toString(),
+                        "error" to throwable.message.orEmpty(),
+                    ),
+                )
             }
         }
     }

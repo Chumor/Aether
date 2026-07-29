@@ -12,6 +12,7 @@ data class PlatformCapabilities(
     val alpineChrome: Boolean = true,
     val stdioMcp: Boolean = true,
     val scriptExtensions: Boolean = true,
+    val layeredScreenTransitions: Boolean = true,
 ) {
     companion object {
         val Android = PlatformCapabilities(
@@ -31,6 +32,7 @@ data class PlatformCapabilities(
             persistentBackground = false,
             nativeMods = false,
             alpineChrome = false,
+            layeredScreenTransitions = false,
         )
     }
 }

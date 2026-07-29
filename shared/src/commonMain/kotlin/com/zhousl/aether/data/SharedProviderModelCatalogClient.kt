@@ -8,6 +8,13 @@ import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -27,6 +34,9 @@ data class SharedModelCatalogInfo(
     val labId: String,
     val labName: String,
     val labLogoUrl: String,
+    val labLogoPathData: List<String> = emptyList(),
+    val labLogoViewportWidth: Float = 40f,
+    val labLogoViewportHeight: Float = 40f,
 )
 
 private val SharedPiThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -36,41 +46,93 @@ internal fun sharedThinkingCatalogKey(providerId: String, modelId: String): Stri
 
 class SharedProviderModelCatalogClient(engine: HttpClientEngine? = null) {
     private val client = if (engine == null) createClient() else createClient(engine)
+    private val publicCatalogMutex = Mutex()
+    private val labLogoMutex = Mutex()
+    private var cachedPublicCatalog: JsonObject? = null
+    private val cachedLabLogos = mutableMapOf<String, SharedLabLogo?>()
 
     suspend fun fetchModelInfo(options: List<ProviderModelOption>): Map<String, SharedModelCatalogInfo> {
         if (options.isEmpty()) return emptyMap()
         return runCatching {
-            val response = client.get(SharedModelCatalogUrl)
-            val models = if (response.status.isSuccess()) {
-                val root = Json.parseToJsonElement(response.body<String>()) as? JsonObject
-                (root?.get("models") as? JsonObject).orEmpty()
-            } else {
-                emptyMap()
-            }
-            val catalog = buildMap {
-                models.forEach { (key, value) ->
-                    val model = value as? JsonObject ?: return@forEach
-                    val id = model.stringValue("id").ifBlank { key }.trim()
-                    val labId = id.substringBefore('/').takeIf { it != id }.orEmpty()
-                    val name = model.stringValue("name").trim()
-                    if (name.isBlank()) return@forEach
-                    val info = sharedModelCatalogInfo(name, labId)
-                    put(key.trim().lowercase(), info)
-                    put(id.lowercase(), info)
-                    id.substringAfterLast('/').takeIf(String::isNotBlank)?.let { shortId ->
-                        val normalizedShortId = shortId.lowercase()
-                        if (normalizedShortId !in this) put(normalizedShortId, info)
+            val models = (fetchPublicCatalog()?.get("models") as? JsonObject).orEmpty()
+            val matched = withContext(Dispatchers.Default) {
+                val catalog = buildMap {
+                    models.forEach { (key, value) ->
+                        val model = value as? JsonObject ?: return@forEach
+                        val id = model.stringValue("id").ifBlank { key }.trim()
+                        val labId = id.substringBefore('/').takeIf { it != id }.orEmpty()
+                        val name = model.stringValue("name").trim()
+                        if (name.isBlank()) return@forEach
+                        val info = sharedModelCatalogInfo(name, labId)
+                        put(key.trim().lowercase(), info)
+                        put(id.lowercase(), info)
+                        id.substringAfterLast('/').takeIf(String::isNotBlank)?.let { shortId ->
+                            val normalizedShortId = shortId.lowercase()
+                            if (normalizedShortId !in this) put(normalizedShortId, info)
+                        }
                     }
                 }
+                options.associate { option ->
+                    val info = option.sharedCatalogLookupKeys()
+                        .firstNotNullOfOrNull { catalog[it.lowercase()] }
+                        ?: sharedModelCatalogInfo(option.modelId, inferSharedModelLabId(option.modelId))
+                    option.key to info
+                }
             }
-            options.associate { option ->
-                val info = option.sharedCatalogLookupKeys()
-                    .firstNotNullOfOrNull { catalog[it.lowercase()] }
-                    ?: sharedModelCatalogInfo(option.modelId, inferSharedModelLabId(option.modelId))
-                option.key to info
+            val logos = fetchSharedLabLogos(matched.values.map(SharedModelCatalogInfo::labId))
+            withContext(Dispatchers.Default) {
+                matched.mapValues { (_, info) ->
+                    logos[info.labId]?.let { logo ->
+                        info.copy(
+                            labLogoPathData = logo.pathData,
+                            labLogoViewportWidth = logo.viewportWidth,
+                            labLogoViewportHeight = logo.viewportHeight,
+                        )
+                    } ?: info
+                }
             }
         }.getOrDefault(emptyMap())
     }
+
+    suspend fun fetchThinkingLevels(
+        options: List<ProviderModelOption>,
+    ): Map<String, List<String>> = runCatching {
+        val providers = fetchPublicCatalog()?.get("providers") as? JsonObject ?: return@runCatching emptyMap()
+        withContext(Dispatchers.Default) {
+            val fallbackModels = providers.sharedPublicCatalogModelIndex()
+            buildMap {
+                options.forEach { option ->
+                    val preferredModels = (providers[option.publicCatalogProviderId()] as? JsonObject)
+                        ?.get("models") as? JsonObject
+                    val model = preferredModels?.findSharedPublicCatalogModel(option)
+                        ?: option.sharedPublicCatalogModelKeys()
+                            .firstNotNullOfOrNull { fallbackModels[it.lowercase()] }
+                    val levels = if (model?.get("reasoning")?.jsonPrimitive?.booleanOrNull == true) {
+                        buildList {
+                            val optionsArray = model["reasoning_options"] as? JsonArray
+                            val hasToggle = optionsArray.orEmpty().any { entry ->
+                                (entry as? JsonObject)?.stringValue("type") == "toggle"
+                            }
+                            if (hasToggle) add("off")
+                            optionsArray.orEmpty().forEach { entry ->
+                                val reasoningOption = entry as? JsonObject ?: return@forEach
+                                if (reasoningOption.stringValue("type") != "effort") return@forEach
+                                (reasoningOption["values"] as? JsonArray).orEmpty()
+                                    .mapNotNull { it.jsonPrimitive.contentOrNull }
+                                    .map { if (it == "none") "off" else it }
+                                    .filter { it in SharedPiThinkingLevels }
+                                    .forEach { if (it !in this) add(it) }
+                            }
+                            if (isEmpty()) addAll(listOf("off", "medium"))
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    put(sharedThinkingCatalogKey(option.piProviderId, option.modelId), levels)
+                }
+            }
+        }
+    }.getOrDefault(emptyMap())
 
     suspend fun fetchModels(
         config: LlmProviderConfig,
@@ -78,11 +140,67 @@ class SharedProviderModelCatalogClient(engine: HttpClientEngine? = null) {
     ): SharedProviderModelsResult {
         val definition = PiProviderCatalog.resolve(config.piProviderId)
         return if (shouldFetchModelsFromEndpoint(config, definition)) {
-            fetchOpenAiModels(config)
+            val endpoint = fetchOpenAiModels(config)
+            val publicModels = if (definition.isBuiltIn) {
+                fetchPublicProviderModels(definition.id)
+            } else {
+                emptyList()
+            }
+            val merged = (endpoint.models + publicModels).distinctBy(String::lowercase)
+            endpoint.copy(
+                models = merged,
+                error = endpoint.error.takeIf { merged.isEmpty() },
+            )
         } else {
             providerModelsFromCatalog(fetchBuiltinCatalog(), definition.id)
         }
     }
+
+    private suspend fun fetchPublicProviderModels(providerId: String): List<String> = runCatching {
+        val provider = (fetchPublicCatalog()?.get("providers") as? JsonObject)
+            ?.get(providerId) as? JsonObject
+        val models = provider?.get("models") as? JsonObject
+        models.orEmpty().mapNotNull { (key, value) ->
+            (value as? JsonObject)?.stringValue("id").orEmpty().ifBlank { key }
+                .trim().takeIf(String::isNotBlank)
+        }
+    }.getOrDefault(emptyList())
+
+    private suspend fun fetchPublicCatalog(): JsonObject? {
+        cachedPublicCatalog?.let { return it }
+        return publicCatalogMutex.withLock {
+            cachedPublicCatalog?.let { return@withLock it }
+            val response = client.get(SharedModelCatalogUrl)
+            if (!response.status.isSuccess()) return@withLock null
+            val body = response.body<String>()
+            withContext(Dispatchers.Default) {
+                Json.parseToJsonElement(body) as? JsonObject
+            }?.also { cachedPublicCatalog = it }
+        }
+    }
+
+    private suspend fun fetchSharedLabLogo(labId: String): SharedLabLogo? = runCatching {
+        val response = client.get("$SharedModelLogoBaseUrl/$labId.svg")
+        if (!response.status.isSuccess()) return@runCatching null
+        val body = response.body<String>()
+        withContext(Dispatchers.Default) { parseSharedLabLogo(body) }
+    }.getOrNull()
+
+    private suspend fun fetchSharedLabLogos(labIds: Collection<String>): Map<String, SharedLabLogo?> =
+        coroutineScope {
+            val normalizedLabIds = labIds.map(String::trim).filter(String::isNotBlank).distinct()
+            val missingLabIds = labLogoMutex.withLock {
+                normalizedLabIds.filterNot(cachedLabLogos::containsKey)
+            }
+            missingLabIds.map { labId ->
+                async { labId to fetchSharedLabLogo(labId) }
+            }.awaitAll().let { fetched ->
+                labLogoMutex.withLock {
+                    fetched.forEach { (labId, logo) -> cachedLabLogos[labId] = logo }
+                    normalizedLabIds.associateWith { cachedLabLogos[it] }
+                }
+            }
+        }
 
     private suspend fun fetchOpenAiModels(config: LlmProviderConfig): SharedProviderModelsResult {
         val modelsUrl = modelsEndpoint(config.baseUrl)
@@ -148,12 +266,78 @@ class SharedProviderModelCatalogClient(engine: HttpClientEngine? = null) {
 private const val SharedModelCatalogUrl = "https://models.dev/catalog.json"
 private const val SharedModelLogoBaseUrl = "https://models.dev/logos/labs"
 
+private data class SharedLabLogo(
+    val pathData: List<String>,
+    val viewportWidth: Float,
+    val viewportHeight: Float,
+)
+
+private fun parseSharedLabLogo(svg: String): SharedLabLogo? {
+    val viewBox = Regex("""viewBox\s*=\s*"([^"]+)"""").find(svg)
+        ?.groupValues?.getOrNull(1)
+        ?.split(Regex("\\s+|,"))
+        ?.mapNotNull(String::toFloatOrNull)
+        .orEmpty()
+    val pathData = Regex("""<path\b[^>]*\bd\s*=\s*"([^"]+)"""")
+        .findAll(svg)
+        .mapNotNull { match -> match.groupValues.getOrNull(1)?.trim()?.takeIf(String::isNotBlank) }
+        .toList()
+    if (pathData.isEmpty()) return null
+    return SharedLabLogo(
+        pathData = pathData,
+        viewportWidth = viewBox.getOrNull(2) ?: 40f,
+        viewportHeight = viewBox.getOrNull(3) ?: 40f,
+    )
+}
+
 private fun ProviderModelOption.sharedCatalogLookupKeys(): List<String> = listOf(
     fullLabel,
     "$providerId/$modelId",
     modelId,
     modelId.substringAfterLast('/'),
 ).map(String::trim).filter(String::isNotEmpty).distinct()
+
+private fun ProviderModelOption.sharedPublicCatalogModelKeys(): List<String> = listOf(
+    modelId,
+    modelId.substringAfter("$piProviderId/", modelId),
+    modelId.substringAfterLast('/'),
+).map(String::trim).filter(String::isNotEmpty).distinct()
+
+private fun JsonObject.findSharedPublicCatalogModel(option: ProviderModelOption): JsonObject? {
+    val lookupKeys = option.sharedPublicCatalogModelKeys()
+    lookupKeys.firstNotNullOfOrNull { key -> this[key] as? JsonObject }?.let { return it }
+    val normalizedModelId = option.modelId.substringAfterLast('/').trim()
+    return entries.firstNotNullOfOrNull { (key, value) ->
+        val model = value as? JsonObject ?: return@firstNotNullOfOrNull null
+        val candidateIds = listOf(key, model.stringValue("id"))
+        model.takeIf { candidateIds.any { id ->
+            id.substringAfterLast('/').trim().equals(normalizedModelId, ignoreCase = true)
+        } }
+    }
+}
+
+private fun JsonObject.sharedPublicCatalogModelIndex(): Map<String, JsonObject> = buildMap {
+    this@sharedPublicCatalogModelIndex.values.forEach { providerValue ->
+        val provider = providerValue as? JsonObject ?: return@forEach
+        val models = provider["models"] as? JsonObject ?: return@forEach
+        models.forEach { (key, modelValue) ->
+            val model = modelValue as? JsonObject ?: return@forEach
+            val id = model.stringValue("id").ifBlank { key }.trim()
+            listOf(key, id, id.substringAfterLast('/'))
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .forEach { lookupKey ->
+                    val normalizedKey = lookupKey.lowercase()
+                    if (normalizedKey !in this) put(normalizedKey, model)
+                }
+        }
+    }
+}
+
+private fun ProviderModelOption.publicCatalogProviderId(): String = when (piProviderId) {
+    "openai-codex" -> "openai"
+    else -> piProviderId
+}
 
 private fun sharedModelCatalogInfo(displayName: String, labId: String): SharedModelCatalogInfo =
     SharedModelCatalogInfo(

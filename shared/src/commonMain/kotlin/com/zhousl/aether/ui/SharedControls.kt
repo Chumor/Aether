@@ -58,6 +58,7 @@ import com.zhousl.aether.ui.theme.AetherPrimary
 import com.zhousl.aether.ui.theme.AetherScrim
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
+import com.zhousl.aether.platform.currentPlatformCapabilities
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -91,6 +92,10 @@ internal fun <T> SharedSettingsPageTransition(
     AnimatedContent(
         targetState = targetState,
         transitionSpec = {
+            if (!currentPlatformCapabilities.layeredScreenTransitions) {
+                return@AnimatedContent fadeIn(tween(120)) togetherWith
+                    fadeOut(tween(80))
+            }
             val isForward = depth(targetState) > depth(initialState)
             val enterSlide = slideInHorizontally(
                 animationSpec = tween(

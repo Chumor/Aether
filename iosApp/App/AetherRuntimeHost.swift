@@ -4,6 +4,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 import QuickLook
 import Darwin
+import BackgroundTasks
 import AetherShared
 
 final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDelegate, PHPickerViewControllerDelegate, QLPreviewControllerDataSource {
@@ -18,6 +19,7 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
     private var fileExportListener: NativeFileExportListener?
     private var fileExportURL: URL?
     private var previewURL: URL?
+    private let backgroundExecution = AetherBackgroundExecutionCoordinator.shared
 
     private let maximumPickedDirectoryEntries = 4_096
     private let maximumPickedDirectoryEntryBytes = 16 * 1024 * 1024
@@ -45,6 +47,22 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
                 onMain { listener.onError(message: error.localizedDescription) }
             }
         }
+    }
+
+    func beginBackgroundExecution(name: String, listener: NativeBackgroundExecutionListener) -> String {
+        backgroundExecution.begin(name: name) { listener.onExpired() }
+    }
+
+    func registerBackgroundExecution() {
+        backgroundExecution.register()
+    }
+
+    func updateBackgroundExecution(identifier: String, detail: String) {
+        backgroundExecution.update(identifier: identifier, detail: detail)
+    }
+
+    func endBackgroundExecution(identifier: String, success: Bool) {
+        backgroundExecution.end(identifier: identifier, success: success)
     }
 
     func initialize(listener: NativeRuntimeInitializationListener) {
@@ -130,7 +148,7 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         }
         let pid = runtime.startExecutable(
             "/bin/sh",
-            arguments: ["-c", "node --version 2>/dev/null | grep -q '^v22\\.'"],
+            arguments: ["-c", Self.nodeVerificationCommand],
             environment: [:],
             workingDirectory: "/root",
             pseudoTerminal: false,
@@ -154,31 +172,83 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         onMain {
             listener.onProgress(phase: "installing_node", detail: "Installing Node 22", fraction: 0.84)
         }
+        var installOutput = ""
         let pid = runtime.startExecutable(
             "/bin/sh",
-            arguments: ["-c", "apk add --no-cache nodejs npm"],
+            arguments: ["-c", Self.nodeInstallCommand],
             environment: [:],
             workingDirectory: "/root",
             pseudoTerminal: false,
             remoteDebuggingPipe: false,
             standardOutput: { data in
+                installOutput.append(String(decoding: data, as: UTF8.self))
                 self.forwardSetupOutput(data, listener: listener)
             },
             standardError: { data in
+                installOutput.append(String(decoding: data, as: UTF8.self))
                 self.forwardSetupOutput(data, listener: listener)
             },
             exit: { code, _ in
-                guard code == 0 else {
-                    self.onMain { listener.onError(message: "Unable to install Node 22 in Alpine (exit \(code)).") }
-                    return
-                }
-                self.markRuntimeReady(listener: listener)
+                self.verifyNodeAfterInstall(
+                    listener: listener,
+                    installExitCode: code,
+                    installOutput: installOutput
+                )
             }
         )
         if pid < 0 {
             onMain { listener.onError(message: "Unable to start Alpine package setup (\(pid)).") }
         }
     }
+
+    private func verifyNodeAfterInstall(
+        listener: NativeRuntimeInitializationListener,
+        installExitCode: Int32,
+        installOutput: String
+    ) {
+        let pid = runtime.startExecutable(
+            "/bin/sh",
+            arguments: ["-c", Self.nodeVerificationCommand],
+            environment: [:],
+            workingDirectory: "/root",
+            pseudoTerminal: false,
+            remoteDebuggingPipe: false,
+            standardOutput: { _ in },
+            standardError: { _ in },
+            exit: { code, _ in
+                if code == 0 {
+                    self.markRuntimeReady(listener: listener)
+                    return
+                }
+                let detail = installOutput
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .suffix(2_000)
+                let suffix = detail.isEmpty ? "" : "\n\(detail)"
+                self.onMain {
+                    listener.onError(
+                        message: "Unable to install Node 22 in Alpine (apk exit \(installExitCode), verification exit \(code)).\(suffix)"
+                    )
+                }
+            }
+        )
+        if pid < 0 {
+            onMain { listener.onError(message: "Unable to verify Node 22 in Alpine (\(pid)).") }
+        }
+    }
+
+    private static let nodeVerificationCommand =
+        "node --version 2>/dev/null | grep -q '^v22\\.' && npm --version >/dev/null 2>&1"
+
+    private static let nodeInstallCommand = """
+        attempt=1
+        while [ "$attempt" -le 3 ]; do
+          apk add --no-cache nodejs npm && exit 0
+          \(nodeVerificationCommand) && exit 0
+          sleep $((attempt * 2))
+          attempt=$((attempt + 1))
+        done
+        exit 1
+        """
 
     private func markRuntimeReady(listener: NativeRuntimeInitializationListener) {
         operations.async {
@@ -893,6 +963,171 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         } else {
             DispatchQueue.main.async(execute: callback)
         }
+    }
+}
+
+private final class AetherBackgroundExecutionCoordinator {
+    static let shared = AetherBackgroundExecutionCoordinator()
+
+    private struct Lease {
+        let name: String
+        let onExpired: () -> Void
+        var detail: String
+    }
+
+    private var leases: [String: Lease] = [:]
+    private var briefTaskIdentifier: UIBackgroundTaskIdentifier = .invalid
+    private var registrationAttempted = false
+    private var continuedTask: AnyObject?
+    private var continuedTaskSubmitted = false
+    private var progressActivityCount: Int64 = 0
+    private var lastProgressUpdate = Date.distantPast
+
+    private var taskIdentifier: String {
+        "\(Bundle.main.bundleIdentifier ?? "com.baimoqilin.aether").agent"
+    }
+
+    func register() {
+        onMainSync {
+            guard #available(iOS 26.0, *), !registrationAttempted else { return }
+            registrationAttempted = true
+            BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: taskIdentifier,
+                using: nil
+            ) { [weak self] task in
+                guard let self, let task = task as? BGContinuedProcessingTask else {
+                    task.setTaskCompleted(success: false)
+                    return
+                }
+                self.onMain { self.attach(task) }
+            }
+        }
+    }
+
+    func begin(name: String, onExpired: @escaping () -> Void) -> String {
+        onMainSync {
+            let identifier = UUID().uuidString
+            leases[identifier] = Lease(name: name, onExpired: onExpired, detail: "Starting")
+            ensureBriefBackgroundTask(name: name)
+            if #available(iOS 26.0, *) {
+                ensureContinuedProcessingTask(name: name)
+            }
+            return identifier
+        }
+    }
+
+    func update(identifier: String, detail: String) {
+        onMain {
+            guard var lease = self.leases[identifier] else { return }
+            lease.detail = detail
+            self.leases[identifier] = lease
+            guard #available(iOS 26.0, *),
+                  let task = self.continuedTask as? BGContinuedProcessingTask else { return }
+            let now = Date()
+            guard now.timeIntervalSince(self.lastProgressUpdate) >= 1 else { return }
+            self.lastProgressUpdate = now
+            self.progressActivityCount = min(self.progressActivityCount + 1, 9_999)
+            task.progress.completedUnitCount = self.progressActivityCount
+            task.updateTitle(lease.name, subtitle: detail)
+        }
+    }
+
+    func end(identifier: String, success: Bool) {
+        onMain {
+            guard self.leases.removeValue(forKey: identifier) != nil else { return }
+            if self.leases.isEmpty {
+                self.finishAll(success: success)
+            }
+        }
+    }
+
+    private func ensureBriefBackgroundTask(name: String) {
+        guard briefTaskIdentifier == .invalid else { return }
+        briefTaskIdentifier = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            self?.expireAll()
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func ensureContinuedProcessingTask(name: String) {
+        let scheduler = BGTaskScheduler.shared
+        register()
+        guard !continuedTaskSubmitted else { return }
+        let request = BGContinuedProcessingTaskRequest(
+            identifier: taskIdentifier,
+            title: name,
+            subtitle: "Agent is working"
+        )
+        request.strategy = .fail
+        do {
+            try scheduler.submit(request)
+            continuedTaskSubmitted = true
+        } catch {
+            continuedTaskSubmitted = false
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private func attach(_ task: BGContinuedProcessingTask) {
+        guard !leases.isEmpty else {
+            continuedTaskSubmitted = false
+            task.setTaskCompleted(success: true)
+            endBriefBackgroundTask()
+            return
+        }
+        continuedTask = task
+        progressActivityCount = 1
+        task.progress.totalUnitCount = 10_000
+        task.progress.completedUnitCount = progressActivityCount
+        task.expirationHandler = { [weak self] in
+            self?.onMain { self?.expireAll() }
+        }
+        endBriefBackgroundTask()
+    }
+
+    private func expireAll() {
+        let callbacks = leases.values.map(\.onExpired)
+        leases.removeAll()
+        finishAll(success: false)
+        callbacks.forEach { $0() }
+    }
+
+    private func finishAll(success: Bool) {
+        if #available(iOS 26.0, *), let task = continuedTask as? BGContinuedProcessingTask {
+            if success {
+                task.progress.completedUnitCount = task.progress.totalUnitCount
+            }
+            task.setTaskCompleted(success: success)
+        }
+        continuedTask = nil
+        if #available(iOS 26.0, *), continuedTaskSubmitted {
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+        }
+        continuedTaskSubmitted = false
+        progressActivityCount = 0
+        endBriefBackgroundTask()
+    }
+
+    private func endBriefBackgroundTask() {
+        guard briefTaskIdentifier != .invalid else { return }
+        let identifier = briefTaskIdentifier
+        briefTaskIdentifier = .invalid
+        UIApplication.shared.endBackgroundTask(identifier)
+    }
+
+    private func onMain(_ operation: @escaping () -> Void) {
+        if Thread.isMainThread {
+            operation()
+        } else {
+            DispatchQueue.main.async(execute: operation)
+        }
+    }
+
+    private func onMainSync<T>(_ operation: () -> T) -> T {
+        if Thread.isMainThread {
+            return operation()
+        }
+        return DispatchQueue.main.sync(execute: operation)
     }
 }
 

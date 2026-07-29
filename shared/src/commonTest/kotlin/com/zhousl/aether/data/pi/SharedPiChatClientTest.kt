@@ -9,13 +9,18 @@ import com.zhousl.aether.runtime.SharedPiBridgeClient
 import com.zhousl.aether.runtime.SharedExtensionLoadOptions
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -27,6 +32,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SharedPiChatClientTest {
     @Test
     fun modelConfigUsesReliabilityTimeoutAndAndroidBounds() {
@@ -78,6 +84,30 @@ class SharedPiChatClientTest {
         assertEquals("assistant", providerPayload["piAssistantMessage"]!!.jsonObject["role"]!!.jsonPrimitive.content)
         assertEquals("response-1", providerPayload["responseId"]!!.jsonPrimitive.content)
         assertEquals(1, providerPayload["usage"]!!.jsonObject["request_count"]!!.jsonPrimitive.content.toInt())
+        bridge.close()
+    }
+
+    @Test
+    fun oneShotCompletionUsesAndroidCompleteOnceProtocol() = runTest {
+        val process = ChatProtocolProcess()
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+
+        val result = SharedPiChatClient(bridge).completeOnce(
+            config = testProvider(),
+            messages = listOf(SharedPiChatMessage("user", "Name this chat")),
+            systemPrompt = "Return a short title.",
+        )
+
+        val request = process.requests.single()
+        assertEquals("complete_once", request["type"]!!.jsonPrimitive.content)
+        val payload = request["payload"]!!.jsonObject
+        assertEquals("Return a short title.", payload["system_prompt"]!!.jsonPrimitive.content)
+        assertEquals("false", payload["stream"]!!.jsonPrimitive.content)
+        assertEquals("off", payload["reasoning"]!!.jsonPrimitive.content)
+        assertEquals("done", result.assistantText)
         bridge.close()
     }
 
@@ -241,11 +271,73 @@ class SharedPiChatClientTest {
         assertNull(statuses[2])
         bridge.close()
     }
+
+    @Test
+    fun turnCanContinuePastTheBridgeDefaultTenMinuteDeadline() = runTest {
+        val process = DeferredChatProtocolProcess()
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+
+        val turn = async {
+            SharedPiChatClient(bridge).runTurn(
+                config = testProvider(),
+                messages = listOf(SharedPiChatMessage("user", "long task")),
+                sessionId = "long-running-session",
+            )
+        }
+        runCurrent()
+        advanceTimeBy(10 * 60_000L + 1)
+        runCurrent()
+
+        assertFalse(turn.isCompleted)
+        assertEquals(
+            listOf("run_turn"),
+            process.requests.map { it["type"]!!.jsonPrimitive.content },
+        )
+        process.respondToFirstRequest()
+        runCurrent()
+        assertEquals("done", turn.await().assistantText)
+        bridge.close()
+    }
 }
 
 private class SingleProcessTransport(private val process: RuntimeProcess) : PiBridgeTransport {
     override suspend fun start(): RuntimeProcess = process
     override suspend fun stop() = Unit
+}
+
+private class DeferredChatProtocolProcess : RuntimeProcess {
+    private val output = Channel<ByteArray>(Channel.UNLIMITED)
+    val requests = mutableListOf<JsonObject>()
+    override val pid = 22
+    override val stdout: Flow<ByteArray> = output.receiveAsFlow()
+    override val stderr: Flow<ByteArray> = Channel<ByteArray>().receiveAsFlow()
+
+    override suspend fun writeStdin(bytes: ByteArray) {
+        requests += Json.parseToJsonElement(bytes.decodeToString().trim()).jsonObject
+    }
+
+    suspend fun respondToFirstRequest() {
+        val id = requests.first()["id"]!!.jsonPrimitive.content
+        output.send(
+            (buildJsonObject {
+                put("type", "response")
+                put("id", id)
+                put("ok", true)
+                put("payload", buildJsonObject {
+                    put("assistant_text", "done")
+                    put("provider", "test-provider")
+                    put("model", "test-model")
+                })
+            }.toString() + "\n").encodeToByteArray(),
+        )
+    }
+
+    override suspend fun closeStdin() = Unit
+    override suspend fun awaitExit(): RuntimeProcessExit = CompletableDeferred<RuntimeProcessExit>().await()
+    override suspend fun signal(signal: RuntimeProcessSignal) = Unit
 }
 
 private class ChatProtocolProcess(

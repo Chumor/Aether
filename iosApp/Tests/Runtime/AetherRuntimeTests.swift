@@ -9,6 +9,99 @@ final class AetherRuntimeTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testNodeAndNpmAreReadyAfterRuntimeInitialization() throws {
+        try initializeRuntime()
+
+        let result = try run(
+            "/bin/sh",
+            arguments: ["-c", "node --version && npm --version"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("v22."), result.stdout)
+    }
+
+    func testLastWorkerThreadReportsTheLeaderProcessExit() throws {
+        try initializeRuntime()
+
+        let source = #"""
+        #include <pthread.h>
+        #include <unistd.h>
+
+        static void *finish_last(void *unused) {
+            (void) unused;
+            usleep(100000);
+            return NULL;
+        }
+
+        int main(void) {
+            pthread_t worker;
+            if (pthread_create(&worker, NULL, finish_last, NULL) != 0) return 2;
+            pthread_exit(NULL);
+        }
+        """#
+        try writeGuestFile("/workspace/e2e/last-thread-exit.c", contents: source)
+        let compiled = try run(
+            "/bin/sh",
+            arguments: [
+                "-c",
+                "command -v cc >/dev/null 2>&1 || " +
+                    "apk add --no-cache build-base >/tmp/aether-build-base.log 2>&1; " +
+                    "cc -pthread /workspace/e2e/last-thread-exit.c -o /tmp/last-thread-exit",
+            ],
+            timeout: 300
+        )
+        XCTAssertEqual(compiled.exitCode, 0, compiled.stderr)
+
+        let result = try run(
+            "/tmp/last-thread-exit",
+            arguments: [],
+            timeout: 30
+        )
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+    }
+
+    func testProcessExitDoesNotWaitForDescendantHoldingOutputPipe() throws {
+        try initializeRuntime()
+
+        let source = #"""
+        #include <sys/types.h>
+        #include <unistd.h>
+
+        int main(void) {
+            pid_t child = fork();
+            if (child < 0) return 2;
+            if (child == 0) {
+                for (int i = 0; i < 5000; i++) {
+                    (void) write(STDOUT_FILENO, ".", 1);
+                    usleep(1000);
+                }
+                _exit(0);
+            }
+            return 0;
+        }
+        """#
+        try writeGuestFile("/workspace/e2e/inherited-output.c", contents: source)
+        let compiled = try run(
+            "/bin/sh",
+            arguments: [
+                "-c",
+                "command -v cc >/dev/null 2>&1 || " +
+                    "apk add --no-cache build-base >/tmp/aether-build-base.log 2>&1; " +
+                    "cc /workspace/e2e/inherited-output.c -o /tmp/inherited-output",
+            ],
+            timeout: 300
+        )
+        XCTAssertEqual(compiled.exitCode, 0, compiled.stderr)
+
+        let startedAt = Date()
+        let result = try run("/tmp/inherited-output", arguments: [], timeout: 3)
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 2.5)
+    }
+
     func testAlpineNodeBridgeTerminalCancellationAndStdioMcp() throws {
         try initializeRuntime()
 

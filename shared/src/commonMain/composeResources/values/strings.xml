@@ -9,16 +9,16 @@
     <string name="common_new_chat">New chat</string>
     <string name="message_root_setup_completed">Root setup completed</string>
     <string name="message_root_setup_failed">Root setup failed: %1$s</string>
-    <string name="message_update_download_failed">Couldn\'t download update: %1$s</string>
+    <string name="message_update_download_failed">Couldn't download update: %1$s</string>
     <string name="message_pause_before_deleting_session">Pause this session before deleting it.</string>
     <string name="message_session_exported">Session exported</string>
-    <string name="message_session_export_failed">Couldn\'t export session</string>
+    <string name="message_session_export_failed">Couldn't export session</string>
     <string name="message_app_data_exported">App data exported</string>
-    <string name="message_app_data_export_failed">Couldn\'t export app data</string>
+    <string name="message_app_data_export_failed">Couldn't export app data</string>
     <string name="message_logs_exported">Logs exported</string>
-    <string name="message_logs_export_failed">Couldn\'t export logs</string>
+    <string name="message_logs_export_failed">Couldn't export logs</string>
     <string name="message_app_data_imported">App data imported</string>
-    <string name="message_app_data_import_failed">Couldn\'t import app data: %1$s</string>
+    <string name="message_app_data_import_failed">Couldn't import app data: %1$s</string>
     <string name="message_scheduled_task_prompt_required">Scheduled task prompt is required.</string>
     <string name="message_pause_before_editing_message">Pause this session before editing an earlier message.</string>
     <string name="message_session_no_longer_running">This session is no longer running. Try sending again.</string>
@@ -33,9 +33,9 @@
     <string name="message_no_provider_configured">No provider is configured. Open Settings &gt; Providers to add one.</string>
     <string name="message_export_conversation_failed">Unable to export this conversation.</string>
     <string name="message_installed_skill">Installed skill: %1$s</string>
-    <string name="message_install_skill_failed">Couldn\'t install skill: %1$s</string>
+    <string name="message_install_skill_failed">Couldn't install skill: %1$s</string>
     <string name="message_aether_up_to_date">Aether is up to date.</string>
-    <string name="message_update_check_failed">Couldn\'t check for updates: %1$s</string>
+    <string name="message_update_check_failed">Couldn't check for updates: %1$s</string>
     <string name="message_fetch_models_failed">Failed to fetch models: %1$s</string>
     <string name="message_refresh_mcp_failed">Failed to refresh MCP tools: %1$s</string>
     <string name="common_more">More</string>
@@ -589,12 +589,12 @@
     <string name="markdown_image_preview_title">Image preview</string>
     <string name="markdown_preview_unavailable">Preview unavailable.</string>
     <string name="markdown_open_original">Open original</string>
-    <string name="markdown_image_error_load_preview">Couldn\'t load image preview.</string>
-    <string name="markdown_image_error_load_preview_http">Couldn\'t load image preview (HTTP %1$d).</string>
-    <string name="markdown_image_error_read_data">Couldn\'t read image data.</string>
-    <string name="markdown_image_error_read_workspace">Couldn\'t read image data from the workspace.</string>
+    <string name="markdown_image_error_load_preview">Couldn't load image preview.</string>
+    <string name="markdown_image_error_load_preview_http">Couldn't load image preview (HTTP %1$d).</string>
+    <string name="markdown_image_error_read_data">Couldn't read image data.</string>
+    <string name="markdown_image_error_read_workspace">Couldn't read image data from the workspace.</string>
     <string name="markdown_image_error_too_large">Image is larger than 8.0 MB.</string>
-    <string name="markdown_mermaid_error_render">Couldn\'t render Mermaid diagram.</string>
+    <string name="markdown_mermaid_error_render">Couldn't render Mermaid diagram.</string>
     <string name="markdown_mermaid_error_invalid_syntax">Invalid Mermaid syntax.</string>
     <string name="markdown_mermaid_preview_title">Mermaid preview</string>
 
@@ -603,7 +603,7 @@
 
     <!-- File / Termux -->
     <string name="file_saved">File saved</string>
-    <string name="file_could_not_save">Couldn\'t save file</string>
+    <string name="file_could_not_save">Couldn't save file</string>
     <string name="file_reply_copied">Reply copied</string>
     <string name="termux_install_to_enable_bash">Install Termux to enable bash</string>
     <string name="termux_grant_command_access">Grant Termux command access</string>
@@ -660,10 +660,10 @@
     <string name="onboarding_provider_pick_message">Now choose a provider that supports that authentication method.</string>
     <string name="onboarding_provider_search_placeholder">Search providers</string>
     <string name="onboarding_using_pi_provider">Provider: %1$s</string>
-    <string name="onboarding_provider_credentials_message">Finish authentication, then I\'ll fetch the available models.</string>
+    <string name="onboarding_provider_credentials_message">Finish authentication, then I'll fetch the available models.</string>
     <string name="onboarding_provider_model_message">Pick the model you want, and then we can go straight into chat.</string>
     <string name="onboarding_change_later_settings">You can change this later in Settings.</string>
-    <string name="onboarding_best_models_first">I\'ll place the best matches first when I can find them.</string>
+    <string name="onboarding_best_models_first">I'll place the best matches first when I can find them.</string>
     <string name="onboarding_termux_setup_command_copied">Termux setup command copied</string>
     <string name="onboarding_termux_message">Great. Now let’s give Aether access to your device so tools can run locally.</string>
     <string name="onboarding_app_settings">App settings</string>
@@ -826,14 +826,14 @@
     <string name="settings_runtime_defaults">Runtime Defaults</string>
     <string name="settings_runtime_defaults_hint">Choose the default local runtime</string>
     <string name="settings_runtime_environment">Runtime environment</string>
-    <string name="settings_runtime_environment_default_help">Leave this as default to follow the user\'s runtime default.</string>
+    <string name="settings_runtime_environment_default_help">Leave this as default to follow the user's runtime default.</string>
     <string name="settings_default_runtime">Default runtime</string>
     <string name="settings_default_runtime_help">Use Settings &gt; Runtime Defaults.</string>
     <string name="settings_runtime_termux_stdio_subtitle">Run this stdio server through Termux.</string>
     <string name="settings_runtime_alpine_stdio_subtitle">Run this stdio server inside Alpine.</string>
     <string name="settings_live_command_output">Live command output</string>
     <string name="settings_live_command_output_description">Show running bash stdout and stderr snapshots in the tool card while Termux commands are still active.</string>
-    <string name="settings_alpine_description">Aether\'s built-in Linux environment is app-private and independent from Termux. Use it for shell scripts, development tools, and stdio MCP servers that do not need Android-side control.</string>
+    <string name="settings_alpine_description">Aether's built-in Linux environment is app-private and independent from Termux. Use it for shell scripts, development tools, and stdio MCP servers that do not need Android-side control.</string>
     <string name="settings_open_terminal">Open terminal</string>
     <string name="settings_open_chrome">Open Chrome</string>
     <string name="settings_chrome_environment">Chrome browser</string>
@@ -880,9 +880,9 @@
     <string name="onboarding_termux_agent_mode_subtitle">Use Termux commands and Agent Mode to operate the device.</string>
     <string name="onboarding_configure_termux_agent_mode">Set up</string>
     <string name="onboarding_not_now">Not now</string>
-    <string name="onboarding_alpine_runtime_message">Set up the built-in Alpine Linux environment. It stays inside Aether\'s private app storage.</string>
+    <string name="onboarding_alpine_runtime_message">Set up the built-in Alpine Linux environment. It stays inside Aether's private app storage.</string>
     <string name="onboarding_alpine_status_ready">Alpine is ready and will be used as the default local runtime.</string>
-    <string name="onboarding_alpine_status_not_installed">Initialize Alpine to use Aether\'s built-in Linux VM.</string>
+    <string name="onboarding_alpine_status_not_installed">Initialize Alpine to use Aether's built-in Linux VM.</string>
     <string name="onboarding_alpine_status_unsupported_abi">Alpine v1 currently supports arm64-v8a only.</string>
     <string name="onboarding_alpine_status_missing_assets">This build does not include the Alpine runtime assets yet.</string>
     <string name="onboarding_alpine_status_failed">Alpine could not start. You can retry later from Settings.</string>
@@ -949,7 +949,7 @@
     <string name="settings_package_incompatible_interactive_ui">This package appears to rely on Pi interactive TUI features that Aether does not provide. Non-UI resources may still work.</string>
     <string name="settings_package_incompatible_theme">This package includes a Pi terminal theme. Aether does not apply Pi TUI themes, so the package may only work partially.</string>
     <string name="settings_package_incompatible_prompt">This package only exposes Pi prompt templates, which Aether does not currently surface.</string>
-    <string name="settings_package_incompatible_platform">This package appears to require a desktop operating system or CPU architecture that may not be available in Aether\'s Android Alpine runtime.</string>
+    <string name="settings_package_incompatible_platform">This package appears to require a desktop operating system or CPU architecture that may not be available in Aether's Android Alpine runtime.</string>
     <string name="settings_package_install_warning_title">Possible incompatibility</string>
     <string name="settings_package_install_warning_body">%1$s may not work as expected.\n\n%2$s\n\nInstalling it can cause unexpected agent behavior.</string>
     <string name="settings_install_anyway">Install anyway</string>

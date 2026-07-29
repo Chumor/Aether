@@ -41,4 +41,19 @@ class AppSettingsSerializationTest {
         assertEquals(AppThemeMode.Dark, parsed.themeMode)
         assertEquals(DefaultReasoningEffort, parsed.reasoningEffort)
     }
+
+    @Test
+    fun thinkingCatalogCacheRoundTripPreservesResolvedEmptyModels() {
+        val cache = SharedThinkingCatalogCache(
+            levelsByProviderModel = mapOf(
+                "openai/gpt-5" to listOf("off", "medium", "high"),
+                "anthropic/claude-haiku" to emptyList(),
+            ),
+            clampsByProviderModel = mapOf(
+                "openai/gpt-5" to mapOf("max" to "high"),
+            ),
+        )
+
+        assertEquals(cache, parseSharedThinkingCatalogCache(serializeSharedThinkingCatalogCache(cache)))
+    }
 }

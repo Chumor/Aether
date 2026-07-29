@@ -540,9 +540,10 @@ fun buildModelOptionKey(
 
 fun LlmProviderConfig.availableModels(): List<String> = normalizeStringList(cachedModels + manualModelIds)
 
-fun LlmProviderConfig.enabledModels(): List<String> = normalizeStringList(
-    enabledModelIds.filter { availableModels().contains(it) }
-)
+fun LlmProviderConfig.enabledModels(): List<String> {
+    val availableModels = availableModels().toHashSet()
+    return normalizeStringList(enabledModelIds.filter(availableModels::contains))
+}
 
 data class ProviderModelOption(
     val key: String,
@@ -581,16 +582,15 @@ fun List<LlmProviderConfig>.availableModelOptions(
             config.providerId.trim().isNotEmpty() &&
                 (!definition.requiresBaseUrl || config.baseUrl.trim().isNotEmpty())
         }
-    val modelCounts = scopedConfigs
-        .flatMap { config ->
-            val models = if (includeDisabledModels) config.availableModels() else config.enabledModels()
-            models.map { modelId -> modelId to config.id }
-        }
+    val modelsByConfig = scopedConfigs.map { config ->
+        config to if (includeDisabledModels) config.availableModels() else config.enabledModels()
+    }
+    val modelCounts = modelsByConfig
+        .flatMap { (config, models) -> models.map { modelId -> modelId to config.id } }
         .groupingBy { it.first }
         .eachCount()
 
-    return scopedConfigs.flatMap { config ->
-        val models = if (includeDisabledModels) config.availableModels() else config.enabledModels()
+    return modelsByConfig.flatMap { (config, models) ->
         models.map { modelId ->
             val providerId = config.providerId.trim()
             val providerName = config.name.trim().ifBlank { providerId }

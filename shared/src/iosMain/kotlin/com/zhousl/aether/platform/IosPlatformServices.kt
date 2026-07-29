@@ -10,7 +10,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 class IosPlatformServices(
-    private val host: NativeRuntimeHost,
+    internal val host: NativeRuntimeHost,
 ) : PlatformServices {
     override suspend fun pickFile(imagesOnly: Boolean): PlatformPickedFile? =
         suspendCancellableCoroutine { continuation ->

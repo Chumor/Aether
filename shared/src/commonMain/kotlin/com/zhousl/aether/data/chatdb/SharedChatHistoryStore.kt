@@ -17,6 +17,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 const val SharedDraftSessionId = "draft"
 
@@ -234,6 +236,7 @@ class SharedChatHistoryStore(
     database: ChatHistoryDatabase,
 ) {
     private val dao = database.chatHistoryDao()
+    private val writeMutex = Mutex()
 
     suspend fun loadMostRecent(): PersistedChatSession? {
         val session = dao.getSessions().firstOrNull() ?: return null
@@ -252,10 +255,12 @@ class SharedChatHistoryStore(
             ?.let { id -> if (isSharedDraftSessionId(id)) SharedDraftSessionId else id }
             ?: SharedDraftSessionId
 
-    suspend fun setCurrentSession(sessionId: String?) {
+    suspend fun setCurrentSession(sessionId: String?) = writeMutex.withLock {
+        val storedSessionId = sessionId.toStoredSharedCurrentSessionId()
+            ?.takeIf { dao.getSession(it) != null }
         dao.upsertMeta(
             ChatStateMetaEntity(
-                currentSessionId = sessionId.toStoredSharedCurrentSessionId(),
+                currentSessionId = storedSessionId,
                 roomMigrationComplete = true,
                 workspaceFileRefsComplete = true,
             )
@@ -295,6 +300,10 @@ class SharedChatHistoryStore(
     suspend fun rename(sessionId: String, title: String) {
         val session = dao.getSession(sessionId) ?: return
         dao.upsertSession(session.copy(title = title.trim(), hasCustomTitle = true))
+    }
+
+    suspend fun updateSelectedModelKey(sessionId: String, selectedModelKey: String) = writeMutex.withLock {
+        dao.updateSelectedModelKey(sessionId, selectedModelKey)
     }
 
     suspend fun delete(sessionId: String) {
@@ -337,7 +346,7 @@ class SharedChatHistoryStore(
     suspend fun replaceAll(
         sessions: List<PersistedChatSession>,
         currentSessionId: String?,
-    ) {
+    ) = writeMutex.withLock {
         val normalizedCurrentId = resolveSharedCurrentSessionId(
             currentSessionId = currentSessionId,
             sessionIds = sessions.map(PersistedChatSession::id),
@@ -402,7 +411,7 @@ class SharedChatHistoryStore(
         selectedModelKey: String = "",
         titleOverride: String? = null,
         hasCustomTitle: Boolean = false,
-    ) {
+    ) = writeMutex.withLock {
         val metadata = deriveSharedSessionMetadata(messages)
         dao.upsertSession(
             ChatSessionEntity(

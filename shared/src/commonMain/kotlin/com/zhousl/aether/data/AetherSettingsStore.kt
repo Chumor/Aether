@@ -7,13 +7,24 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import okio.Path.Companion.toPath
+
+@Serializable
+data class SharedThinkingCatalogCache(
+    val levelsByProviderModel: Map<String, List<String>> = emptyMap(),
+    val clampsByProviderModel: Map<String, Map<String, String>> = emptyMap(),
+)
 
 data class SharedPersistedSettings(
     val providerConfigs: List<LlmProviderConfig> = emptyList(),
     val activeProviderConfigId: String = "",
     val onboardingCompletedVersion: Int = 0,
     val appSettings: AppSettings = AppSettings(),
+    val thinkingCatalogCache: SharedThinkingCatalogCache = SharedThinkingCatalogCache(),
 ) {
     val activeProviderConfig: LlmProviderConfig?
         get() = providerConfigs.firstOrNull { it.id == activeProviderConfigId && it.isEnabled }
@@ -45,6 +56,9 @@ class AetherSettingsStore(
             onboardingCompletedVersion = preferences[OnboardingCompletedVersion] ?: 0,
             appSettings = fullSettings.copy(
                 onboardingCompletedVersion = preferences[OnboardingCompletedVersion] ?: 0,
+            ),
+            thinkingCatalogCache = parseSharedThinkingCatalogCache(
+                preferences[ThinkingCatalogCacheJson].orEmpty(),
             ),
         )
     }
@@ -104,6 +118,12 @@ class AetherSettingsStore(
         }
     }
 
+    suspend fun saveThinkingCatalogCache(cache: SharedThinkingCatalogCache) {
+        dataStore.edit { preferences ->
+            preferences[ThinkingCatalogCacheJson] = serializeSharedThinkingCatalogCache(cache)
+        }
+    }
+
     suspend fun markOnboardingComplete() {
         dataStore.edit { preferences ->
             preferences[OnboardingCompletedVersion] = CurrentOnboardingVersion
@@ -160,8 +180,22 @@ class AetherSettingsStore(
         val TavilyApiKey = stringPreferencesKey("tavily_api_key")
         val TavilyBaseUrl = stringPreferencesKey("tavily_base_url")
         val AppSettingsJson = stringPreferencesKey("app_settings_json")
+        val ThinkingCatalogCacheJson = stringPreferencesKey("thinking_catalog_cache_json")
     }
 }
+
+private val SharedThinkingCatalogCacheJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
+internal fun parseSharedThinkingCatalogCache(value: String): SharedThinkingCatalogCache =
+    value.takeIf(String::isNotBlank)
+        ?.let { runCatching { SharedThinkingCatalogCacheJson.decodeFromString<SharedThinkingCatalogCache>(it) }.getOrNull() }
+        ?: SharedThinkingCatalogCache()
+
+internal fun serializeSharedThinkingCatalogCache(cache: SharedThinkingCatalogCache): String =
+    SharedThinkingCatalogCacheJson.encodeToString(cache)
 
 fun createAetherSettingsStore(path: String): AetherSettingsStore = AetherSettingsStore(
     PreferenceDataStoreFactory.createWithPath(

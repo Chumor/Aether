@@ -39,6 +39,7 @@ static NSString *const AetherISHErrorDomain = @"com.baimoqilin.aether.ish";
 @property(nonatomic, copy) AetherISHOutputBlock stderrBlock;
 @property(nonatomic, copy) AetherISHExitBlock exitBlock;
 @property(atomic) BOOL completed;
+@property(atomic) BOOL exitDelivered;
 @property(nonatomic) dispatch_group_t readerGroup;
 @end
 
@@ -85,8 +86,9 @@ static NSError *AetherISHError(NSInteger code, NSString *message) {
 }
 
 static void AetherISHProcessExited(struct task *task, int code) {
-    if (task->parent != NULL && task->parent->parent != NULL) return;
-    int processId = task->pid;
+    struct task *leader = task->group != NULL ? task->group->leader : task;
+    if (leader->parent != NULL && leader->parent->parent != NULL) return;
+    int processId = leader->pid;
     int exitCode = WIFEXITED(code) ? WEXITSTATUS(code) : 1;
     int exitSignal = WIFSIGNALED(code) ? WTERMSIG(code) : 0;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -460,7 +462,7 @@ static void AetherISHDie(const char *message) {
             } else if (count == 0) {
                 break;
             } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                if (process.completed && ++idleReadsAfterExit >= 100) break;
+                if (process.completed && ++idleReadsAfterExit >= 2) break;
                 usleep(10000);
             } else {
                 break;
@@ -478,9 +480,23 @@ static void AetherISHDie(const char *message) {
         process.completed = YES;
         [self.processes removeObjectForKey:@(processId)];
     }
-    dispatch_group_notify(process.readerGroup, dispatch_get_main_queue(), ^{
+    if (process.stdinWrite >= 0) {
+        close(process.stdinWrite);
+        process.stdinWrite = -1;
+    }
+    void (^deliverExit)(void) = ^{
+        @synchronized(process) {
+            if (process.exitDelivered) return;
+            process.exitDelivered = YES;
+        }
         process.exitBlock(code, signal);
-    });
+    };
+    dispatch_group_notify(process.readerGroup, dispatch_get_main_queue(), deliverExit);
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)NSEC_PER_SEC),
+        dispatch_get_main_queue(),
+        deliverExit
+    );
 }
 
 - (BOOL)writeStdin:(NSData *)bytes processId:(int)processId {
@@ -493,6 +509,7 @@ static void AetherISHDie(const char *message) {
     NSUInteger remaining = bytes.length;
     while (remaining > 0) {
         ssize_t written = write(process.stdinWrite, cursor, remaining);
+        if (written < 0 && errno == EINTR) continue;
         if (written <= 0) return NO;
         cursor += written;
         remaining -= (NSUInteger)written;

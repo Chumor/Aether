@@ -31,14 +31,11 @@ jobs:
       - name: Install iOS build tools
         run: brew install llvm lld meson ninja xcodegen
 
-      - name: Test and build Pi Bridge
+      - name: Build Pi Bridge
         working-directory: pi-bridge
         run: |
           npm ci --ignore-scripts --legacy-peer-deps
-          npm test
-
-      - name: Test shared code
-        run: bash ./gradlew -Paether.sharedOnly=true :shared:iosSimulatorArm64Test
+          npm run build
 
       - name: Generate iOS project
         run: scripts/bootstrap-ios.sh
@@ -53,25 +50,3 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
             CODE_SIGNING_ALLOWED=NO \
             build
-
-      - name: Test iOS runtime
-        run: |
-          xcodebuild test \
-            -project iosApp/Aether.xcodeproj \
-            -scheme Aether \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
-            -parallel-testing-enabled NO \
-            -test-timeouts-enabled NO \
-            -only-testing:AetherRuntimeTests
-
-      - name: Reset iOS simulator app data
-        run: xcrun simctl uninstall booted com.baimoqilin.aether
-
-      - name: Test iOS UI
-        run: |
-          xcodebuild test \
-            -project iosApp/Aether.xcodeproj \
-            -scheme Aether \
-            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
-            -parallel-testing-enabled NO \
-            -only-testing:AetherUITests

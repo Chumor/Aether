@@ -55,17 +55,19 @@ internal fun SharedTavilyFollowUpTour(
     initialValue: String,
     onClose: () -> Unit,
     onDone: (String) -> Unit,
+    timelineSpec: OnboardingTimelineSpec? = null,
 ) {
     var value by remember(initialValue) { mutableStateOf(initialValue) }
     val apiKeyLabel = stringResource(Res.string.onboarding_api_key)
     var revealSecret by rememberSaveable(apiKeyLabel) { mutableStateOf(false) }
     OnboardingConversationStepPage(
-        stepIndex = 1,
-        stepCount = 1,
+        stepIndex = if (timelineSpec == null) 1 else 4,
+        stepCount = if (timelineSpec == null) 1 else 4,
         message = stringResource(Res.string.onboarding_tavily_message),
         onBack = onClose,
         topRightLabel = stringResource(Res.string.common_close),
         onTopRight = onClose,
+        timelineSpec = timelineSpec,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),

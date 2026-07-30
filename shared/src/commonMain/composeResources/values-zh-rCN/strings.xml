@@ -654,6 +654,17 @@
     <string name="onboarding_or_type_your_own_model">或者输入你自己的模型</string>
     <string name="onboarding_welcome_title">欢迎使用 Aether</string>
     <string name="onboarding_welcome_subtitle">在设备上运行、可与一切协作的智能体。</string>
+    <string name="onboarding_timeline_welcome">欢迎</string>
+    <string name="onboarding_timeline_setup">环境设置</string>
+    <string name="onboarding_timeline_provider">AI 配置</string>
+    <string name="onboarding_timeline_search">搜索</string>
+    <string name="onboarding_timeline_connection">连接方式</string>
+    <string name="onboarding_timeline_provider_choice">服务商</string>
+    <string name="onboarding_timeline_credentials">凭据</string>
+    <string name="onboarding_timeline_models">模型</string>
+    <string name="onboarding_setup_log_title">设置日志</string>
+    <string name="onboarding_setup_log_waiting">运行时输出会显示在这里。</string>
+    <string name="onboarding_provider_configuration_title">配置 %1$s</string>
     <string name="onboarding_provider_auth_message">首先，选择你已有的认证方式。</string>
     <string name="onboarding_provider_pick_message">现在选择一个支持该认证方式的提供方。</string>
     <string name="onboarding_provider_search_placeholder">搜索提供方</string>

@@ -635,6 +635,10 @@ private fun SharedProviderEditPage(
 ) {
     val scope = rememberCoroutineScope()
     val formState = rememberProviderFormState(existingConfig)
+    ReportSharedSettingsUnsavedChanges(
+        existingConfig != null &&
+            formState.buildConfig().copy(updatedAtMillis = existingConfig.updatedAtMillis) != existingConfig,
+    )
     val modelCatalogClient = remember { SharedProviderModelCatalogClient() }
     var authState by remember(existingConfig?.id) { mutableStateOf(PiProviderAuthState()) }
     var authJob by remember(existingConfig?.id) { mutableStateOf<Job?>(null) }

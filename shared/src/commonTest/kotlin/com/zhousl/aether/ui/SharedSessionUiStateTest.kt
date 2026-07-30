@@ -43,7 +43,7 @@ class SharedSessionUiStateTest {
         )
 
         assertTrue(state.retainEnabledSkillSelections(setOf("enabled")))
-        assertEquals(listOf("enabled"), state.selectedSkillIds)
+        assertEquals(listOf("enabled"), state.selectedSkillIds.toList())
         assertEquals(listOf("enabled"), state.activeSkills.map { it.skillId })
         assertFalse(state.retainEnabledSkillSelections(setOf("enabled")))
     }
@@ -56,7 +56,7 @@ class SharedSessionUiStateTest {
         )
 
         assertTrue(state.retainEnabledMcpSelections(setOf("enabled")))
-        assertEquals(listOf("enabled"), state.activeMcpServerIds)
+        assertEquals(listOf("enabled"), state.activeMcpServerIds.toList())
         assertFalse(state.retainEnabledMcpSelections(setOf("enabled")))
     }
 }

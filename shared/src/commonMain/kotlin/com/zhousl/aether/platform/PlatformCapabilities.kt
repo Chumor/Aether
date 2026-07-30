@@ -13,6 +13,7 @@ data class PlatformCapabilities(
     val stdioMcp: Boolean = true,
     val scriptExtensions: Boolean = true,
     val layeredScreenTransitions: Boolean = true,
+    val supportsTabletLayout: Boolean = false,
 ) {
     companion object {
         val Android = PlatformCapabilities(
@@ -33,6 +34,7 @@ data class PlatformCapabilities(
             nativeMods = false,
             alpineChrome = false,
             layeredScreenTransitions = false,
+            supportsTabletLayout = true,
         )
     }
 }

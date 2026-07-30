@@ -11,17 +11,23 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Key
@@ -113,6 +119,7 @@ fun SharedProviderOnboardingStep(
     onClose: () -> Unit,
     onReturnToLanding: () -> Unit,
     onComplete: () -> Unit,
+    onTimelineStepSelected: (OnboardingTimelineStep) -> Unit = {},
 ) {
     var stage by rememberSaveable(stepIndex, replayMode) {
         mutableStateOf(SharedProviderTourStage.PickAuthentication)
@@ -186,6 +193,58 @@ fun SharedProviderOnboardingStep(
         }
     }
 
+    val providerPickerContent: @Composable ColumnScope.() -> Unit = {
+        SharedProviderPickerContent(
+            providerSearch = providerSearch,
+            onProviderSearchChange = { providerSearch = it },
+            providerChoices = providerChoices,
+            onProviderSelected = { provider ->
+                onClearAuthState()
+                formState.applyProviderDefaults(provider)
+                formState.setAuthMethod(selectedAuthMethod)
+                stage = SharedProviderTourStage.Credentials
+            },
+        )
+    }
+    val credentialsContent: @Composable ColumnScope.() -> Unit = {
+        SharedProviderCredentialsContent(
+            formState = formState,
+            definition = definition,
+            authState = authState,
+            isLoadingModels = isLoadingModels,
+            canContinue = canContinueFromCredentials,
+            onStartProviderLogin = onStartProviderLogin,
+            onSubmitAuthPrompt = onSubmitAuthPrompt,
+            onClearAuthState = onClearAuthState,
+            onContinue = {
+                formState.isFetchingModelsLocally = true
+                onFetchModels(formState.buildConfig()) { models ->
+                    val ordered = prioritizedSharedProviderModelOptions(
+                        piProviderId = definition.id,
+                        cachedModels = models,
+                    )
+                    formState.cachedModels = models
+                        .map(String::trim)
+                        .filter(String::isNotBlank)
+                        .distinctBy { it.lowercase() }
+                    formState.enabledModelIds = ordered
+                    formState.modelId = ordered.firstOrNull().orEmpty()
+                    customModelValue = TextFieldValue()
+                    formState.isFetchingModelsLocally = false
+                    stage = SharedProviderTourStage.Model
+                }
+            },
+        )
+    }
+    val timelineSpec = OnboardingTimelineSpec(
+        activeStep = OnboardingTimelineStep.Provider,
+        providerSubstep = stage.ordinal,
+        onStepSelected = onTimelineStepSelected,
+        onProviderSubstepSelected = { selected ->
+            SharedProviderTourStage.entries.getOrNull(selected)?.let { stage = it }
+        },
+    )
+
     OnboardingConversationStepPage(
         stepIndex = stepIndex,
         stepCount = stepCount,
@@ -198,6 +257,27 @@ fun SharedProviderOnboardingStep(
         },
         onTopRight = if (replayMode) onClose else onExit,
         isExiting = isFinishing,
+        timelineSpec = timelineSpec,
+        widePrimaryMessage = if (stage == SharedProviderTourStage.Credentials) {
+            stringResource(Res.string.onboarding_provider_pick_message)
+        } else {
+            null
+        },
+        widePrimaryContent = if (stage == SharedProviderTourStage.Credentials) {
+            providerPickerContent
+        } else {
+            null
+        },
+        wideAuxiliaryVisible = stage == SharedProviderTourStage.Credentials,
+        wideAuxiliaryContent = {
+            SharedProviderConfigurationPane(
+                title = stringResource(
+                    Res.string.onboarding_provider_configuration_title,
+                    definition.displayName,
+                ),
+                content = credentialsContent,
+            )
+        },
     ) {
         AnimatedContent(
             targetState = stage,
@@ -260,87 +340,11 @@ fun SharedProviderOnboardingStep(
                 }
 
                 SharedProviderTourStage.PickProvider -> {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        SharedProviderMinimalInputField(
-                            label = stringResource(Res.string.common_search),
-                            value = providerSearch,
-                            placeholder = stringResource(Res.string.onboarding_provider_search_placeholder),
-                            onValueChange = { providerSearch = it },
-                        )
-                        providerChoices.forEach { provider ->
-                            SharedProviderStageButton(
-                                label = provider.displayName,
-                                subtitle = "${provider.category} · ${provider.id}",
-                                provider = provider,
-                                onClick = {
-                                    onClearAuthState()
-                                    formState.applyProviderDefaults(provider)
-                                    formState.setAuthMethod(selectedAuthMethod)
-                                    stage = SharedProviderTourStage.Credentials
-                                },
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = stringResource(Res.string.onboarding_change_later_settings),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = SharedProviderTourTextSecondary,
-                        )
-                    }
+                    providerPickerContent()
                 }
 
                 SharedProviderTourStage.Credentials -> {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(18.dp),
-                    ) {
-                        Text(
-                            text = stringResource(
-                                Res.string.onboarding_using_pi_provider,
-                                definition.displayName,
-                            ),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = SharedProviderTourGreen,
-                        )
-                        ProviderAuthenticationSetup(
-                            state = formState,
-                            authState = authState,
-                            onStartProviderLogin = onStartProviderLogin,
-                            onSubmitAuthPrompt = onSubmitAuthPrompt,
-                            onClearAuthState = onClearAuthState,
-                            cardColor = SharedProviderTourSurface,
-                        )
-                        OnboardingPrimaryActionButton(
-                            label = if (isLoadingModels) {
-                                stringResource(Res.string.onboarding_loading_models)
-                            } else {
-                                stringResource(Res.string.common_next)
-                            },
-                            enabled = canContinueFromCredentials && !isLoadingModels,
-                            onClick = {
-                                formState.isFetchingModelsLocally = true
-                                onFetchModels(formState.buildConfig()) { models ->
-                                    val ordered = prioritizedSharedProviderModelOptions(
-                                        piProviderId = definition.id,
-                                        cachedModels = models,
-                                    )
-                                    formState.cachedModels = models
-                                        .map(String::trim)
-                                        .filter(String::isNotBlank)
-                                        .distinctBy { it.lowercase() }
-                                    formState.enabledModelIds = ordered
-                                    formState.modelId = ordered.firstOrNull().orEmpty()
-                                    customModelValue = TextFieldValue()
-                                    formState.isFetchingModelsLocally = false
-                                    stage = SharedProviderTourStage.Model
-                                }
-                            },
-                            isLoading = isLoadingModels,
-                        )
-                    }
+                    credentialsContent()
                 }
 
                 SharedProviderTourStage.Model -> {
@@ -400,6 +404,103 @@ fun SharedProviderOnboardingStep(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SharedProviderPickerContent(
+    providerSearch: String,
+    onProviderSearchChange: (String) -> Unit,
+    providerChoices: List<PiProviderDefinition>,
+    onProviderSelected: (PiProviderDefinition) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        SharedProviderMinimalInputField(
+            label = stringResource(Res.string.common_search),
+            value = providerSearch,
+            placeholder = stringResource(Res.string.onboarding_provider_search_placeholder),
+            onValueChange = onProviderSearchChange,
+        )
+        providerChoices.forEach { provider ->
+            SharedProviderStageButton(
+                label = provider.displayName,
+                subtitle = "${provider.category} · ${provider.id}",
+                provider = provider,
+                onClick = { onProviderSelected(provider) },
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = stringResource(Res.string.onboarding_change_later_settings),
+            style = MaterialTheme.typography.bodySmall,
+            color = SharedProviderTourTextSecondary,
+        )
+    }
+}
+
+@Composable
+private fun SharedProviderCredentialsContent(
+    formState: ProviderFormState,
+    definition: PiProviderDefinition,
+    authState: PiProviderAuthState,
+    isLoadingModels: Boolean,
+    canContinue: Boolean,
+    onStartProviderLogin: (String, String, ProviderAuthMethod, String) -> Unit,
+    onSubmitAuthPrompt: (String, String, Boolean) -> Unit,
+    onClearAuthState: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Text(
+            text = stringResource(Res.string.onboarding_using_pi_provider, definition.displayName),
+            style = MaterialTheme.typography.labelMedium,
+            color = SharedProviderTourGreen,
+        )
+        ProviderAuthenticationSetup(
+            state = formState,
+            authState = authState,
+            onStartProviderLogin = onStartProviderLogin,
+            onSubmitAuthPrompt = onSubmitAuthPrompt,
+            onClearAuthState = onClearAuthState,
+            cardColor = SharedProviderTourSurface,
+        )
+        OnboardingPrimaryActionButton(
+            label = if (isLoadingModels) {
+                stringResource(Res.string.onboarding_loading_models)
+            } else {
+                stringResource(Res.string.common_next)
+            },
+            enabled = canContinue && !isLoadingModels,
+            onClick = onContinue,
+            isLoading = isLoadingModels,
+        )
+    }
+}
+
+@Composable
+private fun SharedProviderConfigurationPane(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().background(SharedProviderTourSurface.copy(alpha = 0.52f))
+            .statusBarsPadding().navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 34.dp, top = 34.dp, end = 34.dp, bottom = 28.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = SharedProviderTourTextPrimary,
+        )
+        Spacer(modifier = Modifier.height(28.dp))
+        content()
     }
 }
 

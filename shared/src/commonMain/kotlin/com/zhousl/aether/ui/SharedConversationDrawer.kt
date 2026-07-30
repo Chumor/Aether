@@ -77,6 +77,7 @@ import com.zhousl.aether.shared.resources.settings_title
 import com.zhousl.aether.shared.resources.chat_no_conversations_yet
 import com.zhousl.aether.ui.theme.AetherOnSurface
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
+import com.zhousl.aether.ui.theme.AetherBackground
 import com.zhousl.aether.ui.theme.AetherScrim
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
@@ -107,6 +108,7 @@ fun AetherConversationDrawer(
     onExportSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onSettingsSelected: () -> Unit,
+    permanent: Boolean = false,
     extraContent: @Composable ((dismissSearch: () -> Unit) -> Unit) = {},
 ) {
     var searchExpanded by rememberSaveable { mutableStateOf(false) }
@@ -124,11 +126,14 @@ fun AetherConversationDrawer(
         searchExpanded = false
         searchQuery = ""
     }
+    val drawerBackground = if (permanent) AetherBackground else AetherSurface
 
     ModalDrawerSheet(
-        modifier = Modifier.fillMaxHeight().widthIn(min = 304.dp, max = 328.dp),
-        drawerContainerColor = AetherSurface,
-        drawerShape = RoundedCornerShape(topEnd = 30.dp, bottomEnd = 30.dp),
+        modifier = Modifier.fillMaxHeight().width(if (permanent) 320.dp else 322.dp),
+        drawerContainerColor = drawerBackground,
+        drawerShape = if (permanent) RoundedCornerShape(0.dp) else {
+            RoundedCornerShape(topEnd = 30.dp, bottomEnd = 30.dp)
+        },
     ) {
         Box(modifier = Modifier.fillMaxSize().padding(bottom = 18.dp)) {
             if (filteredSessions.isEmpty()) {
@@ -193,7 +198,7 @@ fun AetherConversationDrawer(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .fillMaxWidth()
-                    .background(sharedDrawerOverlayBodyGradient())
+                    .background(sharedDrawerOverlayBodyGradient(drawerBackground))
                     .onSizeChanged { overlayHeightPx = it.height },
             ) {
                 Column(
@@ -248,7 +253,7 @@ fun AetherConversationDrawer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(SharedDrawerOverlayFadeHeight)
-                        .background(sharedDrawerOverlayTailGradient()),
+                        .background(sharedDrawerOverlayTailGradient(drawerBackground)),
                 )
             }
 
@@ -502,20 +507,20 @@ private fun SharedDrawerActionRow(
     }
 }
 
-private fun sharedDrawerOverlayBodyGradient(): Brush = Brush.verticalGradient(
+private fun sharedDrawerOverlayBodyGradient(baseColor: Color): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to AetherSurface.copy(alpha = 0.94f),
-        0.20f to AetherSurface.copy(alpha = 0.86f),
-        0.48f to AetherSurface.copy(alpha = 0.54f),
-        0.78f to AetherSurface.copy(alpha = 0.18f),
+        0.0f to baseColor.copy(alpha = 0.94f),
+        0.20f to baseColor.copy(alpha = 0.86f),
+        0.48f to baseColor.copy(alpha = 0.54f),
+        0.78f to baseColor.copy(alpha = 0.18f),
         1.0f to Color.Transparent,
     )
 )
 
-private fun sharedDrawerOverlayTailGradient(): Brush = Brush.verticalGradient(
+private fun sharedDrawerOverlayTailGradient(baseColor: Color): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to AetherSurface.copy(alpha = 0.18f),
-        0.46f to AetherSurface.copy(alpha = 0.06f),
+        0.0f to baseColor.copy(alpha = 0.18f),
+        0.46f to baseColor.copy(alpha = 0.06f),
         1.0f to Color.Transparent,
     )
 )

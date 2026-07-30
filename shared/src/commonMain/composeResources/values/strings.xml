@@ -87,7 +87,7 @@
     <string name="common_decline">Decline</string>
     <string name="common_later">Later</string>
     <string name="app_privacy_policy_title">Privacy Policy</string>
-    <string name="app_privacy_policy_message_prefix">"Please review and agree to Aether's "</string>
+    <string name="app_privacy_policy_message_prefix">Please review and agree to Aether's </string>
     <string name="app_privacy_policy_message_suffix"> before using the app.</string>
     <string name="app_update_available">Update available</string>
     <string name="app_update_available_message">Aether %1$s is available. You can download the APK and install it now.</string>
@@ -656,6 +656,17 @@
     <string name="onboarding_or_type_your_own_model">Or type your own model</string>
     <string name="onboarding_welcome_title">Welcome to Aether</string>
     <string name="onboarding_welcome_subtitle">The on-device agent that works with everything.</string>
+    <string name="onboarding_timeline_welcome">Welcome</string>
+    <string name="onboarding_timeline_setup">Setup</string>
+    <string name="onboarding_timeline_provider">AI Config</string>
+    <string name="onboarding_timeline_search">Search</string>
+    <string name="onboarding_timeline_connection">Connection</string>
+    <string name="onboarding_timeline_provider_choice">Provider</string>
+    <string name="onboarding_timeline_credentials">Credentials</string>
+    <string name="onboarding_timeline_models">Models</string>
+    <string name="onboarding_setup_log_title">Setup Log</string>
+    <string name="onboarding_setup_log_waiting">Runtime output will appear here.</string>
+    <string name="onboarding_provider_configuration_title">Configure %1$s</string>
     <string name="onboarding_provider_auth_message">First, choose how you want to connect.</string>
     <string name="onboarding_provider_pick_message">Now choose a provider that supports that authentication method.</string>
     <string name="onboarding_provider_search_placeholder">Search providers</string>

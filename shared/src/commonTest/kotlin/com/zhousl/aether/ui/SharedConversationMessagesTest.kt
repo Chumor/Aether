@@ -365,7 +365,7 @@ class SharedConversationMessagesTest {
         assertEquals("60.00s", formatSharedDuration(60_000))
         assertEquals("66.00s", formatSharedDuration(65_999))
         assertEquals("1s", formatSharedThoughtDuration(1))
-        assertEquals("1min 6s", formatSharedThoughtDuration(65_999))
+        assertEquals("1min 5s", formatSharedThoughtDuration(65_999))
         assertEquals("1h 1min 1s", formatSharedThoughtDuration(3_661_000))
         assertEquals("12.3", formatSharedDecimal(12.34))
         assertEquals("0.0", formatSharedDecimal(-4.0))

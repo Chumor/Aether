@@ -63,6 +63,7 @@ fun OnboardingLandingStep(
     replayMode: Boolean,
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
+    timelineSpec: OnboardingTimelineSpec? = null,
 ) {
     var visible by remember(stepIndex, replayMode) { mutableStateOf(false) }
     LaunchedEffect(stepIndex, replayMode) {
@@ -70,87 +71,96 @@ fun OnboardingLandingStep(
         visible = true
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(AetherBackground),
-    ) {
-        Column(
+    OnboardingResponsiveFrame(timelineSpec = timelineSpec) { wideLayout ->
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .navigationBarsPadding(),
+                .background(AetherBackground),
         ) {
-            LandingChromeBar(
-                stepIndex = stepIndex,
-                stepCount = stepCount,
-                topRightLabel = stringResource(if (replayMode) Res.string.close_label else Res.string.skip_label),
-                onTopRight = onSecondary,
-            )
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(start = 28.dp, top = 4.dp, end = 28.dp, bottom = 20.dp),
+                    .navigationBarsPadding(),
             ) {
-                Spacer(modifier = Modifier.weight(0.72f))
-                AnimatedVisibility(
-                    visible = visible,
-                    enter = fadeIn(
-                        animationSpec = tween(
-                            durationMillis = LandingContentFadeDuration,
-                            easing = LandingTourEasing,
-                        ),
+                LandingChromeBar(
+                    stepIndex = stepIndex,
+                    stepCount = stepCount,
+                    topRightLabel = stringResource(
+                        if (replayMode) Res.string.close_label else Res.string.skip_label,
                     ),
-                    label = "landing_content",
+                    onTopRight = onSecondary,
+                    showProgress = !wideLayout,
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(start = 28.dp, top = 4.dp, end = 28.dp, bottom = 20.dp),
                 ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                    Spacer(modifier = Modifier.weight(0.72f))
+                    AnimatedVisibility(
+                        visible = visible,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        enter = fadeIn(
+                            animationSpec = tween(
+                                durationMillis = LandingContentFadeDuration,
+                                easing = LandingTourEasing,
+                            ),
+                        ),
+                        label = "landing_content",
                     ) {
-                        Image(
-                            painter = painterResource(Res.drawable.aether_mark),
-                            contentDescription = null,
-                            modifier = Modifier.size(104.dp),
-                        )
-                        Spacer(modifier = Modifier.height(28.dp))
-                        Text(
-                            text = stringResource(Res.string.onboarding_welcome_title),
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = AetherOnSurface,
-                            textAlign = TextAlign.Center,
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = stringResource(Res.string.onboarding_welcome_subtitle),
-                            modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AetherOnSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                        )
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Image(
+                                painter = painterResource(Res.drawable.aether_mark),
+                                contentDescription = null,
+                                modifier = Modifier.size(104.dp),
+                            )
+                            Spacer(modifier = Modifier.height(28.dp))
+                            Text(
+                                text = stringResource(Res.string.onboarding_welcome_title),
+                                modifier = Modifier.fillMaxWidth(),
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                ),
+                                color = AetherOnSurface,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = stringResource(Res.string.onboarding_welcome_subtitle),
+                                modifier = Modifier.fillMaxWidth(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = AetherOnSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                     }
-                }
-                Spacer(modifier = Modifier.weight(1.28f))
-                AnimatedVisibility(
-                    visible = visible,
-                    enter = fadeIn(
-                        animationSpec = tween(
-                            durationMillis = LandingContentFadeDuration,
-                            delayMillis = 220,
-                            easing = LandingTourEasing,
+                    Spacer(modifier = Modifier.weight(1.28f))
+                    AnimatedVisibility(
+                        visible = visible,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        enter = fadeIn(
+                            animationSpec = tween(
+                                durationMillis = LandingContentFadeDuration,
+                                delayMillis = 220,
+                                easing = LandingTourEasing,
+                            ),
                         ),
-                    ),
-                    label = "landing_actions",
-                ) {
-                    Button(
-                        onClick = onPrimary,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.Black,
-                            contentColor = Color.White,
-                        ),
+                        label = "landing_actions",
                     ) {
-                        Text(stringResource(Res.string.get_started))
+                        Button(
+                            onClick = onPrimary,
+                            modifier = if (wideLayout) Modifier.width(220.dp) else Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.Black,
+                                contentColor = Color.White,
+                            ),
+                        ) {
+                            Text(stringResource(Res.string.get_started))
+                        }
                     }
                 }
             }
@@ -164,6 +174,7 @@ private fun LandingChromeBar(
     stepCount: Int,
     topRightLabel: String,
     onTopRight: () -> Unit,
+    showProgress: Boolean = true,
 ) {
     Box(
         modifier = Modifier
@@ -178,21 +189,25 @@ private fun LandingChromeBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Spacer(modifier = Modifier.size(40.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                repeat(stepCount) { index ->
-                    Box(
-                        modifier = Modifier
-                            .width(if (index + 1 == stepIndex) 20.dp else 7.dp)
-                            .height(7.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(
-                                if (index + 1 == stepIndex) AetherOnSurface else AetherOutlineSoft,
-                            ),
-                    )
+            if (showProgress) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    repeat(stepCount) { index ->
+                        Box(
+                            modifier = Modifier
+                                .width(if (index + 1 == stepIndex) 20.dp else 7.dp)
+                                .height(7.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(
+                                    if (index + 1 == stepIndex) AetherOnSurface else AetherOutlineSoft,
+                                ),
+                        )
+                    }
                 }
+            } else {
+                Spacer(modifier = Modifier.size(40.dp))
             }
             TextButton(onClick = onTopRight) {
                 Text(text = topRightLabel, color = AetherOnSurfaceVariant)

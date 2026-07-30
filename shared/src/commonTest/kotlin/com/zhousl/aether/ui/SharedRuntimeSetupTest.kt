@@ -14,4 +14,9 @@ class SharedRuntimeSetupTest {
         assertEquals(4, runtimeSetupStepIndex("starting_bridge"))
         assertEquals(5, runtimeSetupStepIndex("verifying_bridge"))
     }
+
+    @Test
+    fun readyAgentDisplaysCompletedFiveStepProgress() {
+        assertEquals(5, runtimeSetupDisplayedStep("ready", ready = true))
+    }
 }

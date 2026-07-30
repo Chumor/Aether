@@ -124,6 +124,7 @@ internal fun SharedPersonalizationSettingsDetail(
     onBack: () -> Unit,
 ) {
     var systemPrompt by remember(settings.systemPrompt) { mutableStateOf(settings.systemPrompt) }
+    ReportSharedSettingsUnsavedChanges(systemPrompt != settings.systemPrompt)
     fun persistAndBack() {
         val updated = settings.copy(systemPrompt = systemPrompt)
         if (updated != settings) onSave(updated)
@@ -161,6 +162,9 @@ internal fun SharedWebToolsSettingsDetail(
 ) {
     var apiKey by remember(settings.tavilyApiKey) { mutableStateOf(settings.tavilyApiKey) }
     var baseUrl by remember(settings.tavilyBaseUrl) { mutableStateOf(settings.tavilyBaseUrl) }
+    ReportSharedSettingsUnsavedChanges(
+        apiKey != settings.tavilyApiKey || normalizeTavilyBaseUrl(baseUrl) != settings.tavilyBaseUrl,
+    )
     fun persistAndBack() {
         val updated = settings.copy(
             tavilyApiKey = apiKey,
@@ -217,15 +221,17 @@ internal fun SharedReliabilitySettingsDetail(
     var notify by remember(settings.notifyOnTaskCompletion) {
         mutableStateOf(settings.notifyOnTaskCompletion)
     }
+    fun currentSettings(): AppSettings = settings.copy(
+        llmInactivityReconnectTimeoutSeconds =
+            normalizeLlmInactivityReconnectTimeoutSeconds(reconnectSeconds.toIntOrNull()),
+        keepTasksRunningInBackground =
+            if (capabilities.persistentBackground) keepBackground else settings.keepTasksRunningInBackground,
+        notifyOnTaskCompletion =
+            if (capabilities.persistentBackground) notify else settings.notifyOnTaskCompletion,
+    )
+    ReportSharedSettingsUnsavedChanges(currentSettings() != settings)
     fun persistAndBack() {
-        val updated = settings.copy(
-            llmInactivityReconnectTimeoutSeconds =
-                normalizeLlmInactivityReconnectTimeoutSeconds(reconnectSeconds.toIntOrNull()),
-            keepTasksRunningInBackground =
-                if (capabilities.persistentBackground) keepBackground else settings.keepTasksRunningInBackground,
-            notifyOnTaskCompletion =
-                if (capabilities.persistentBackground) notify else settings.notifyOnTaskCompletion,
-        )
+        val updated = currentSettings()
         if (updated != settings) onSave(updated)
         onBack()
     }
@@ -478,6 +484,7 @@ internal fun SharedDeveloperSettingsDetail(
         oldCommandHistoryRetentionHours =
             normalizeOldCommandHistoryRetentionHours(retention.toIntOrNull()),
     )
+    ReportSharedSettingsUnsavedChanges(currentSettings() != settings)
     fun persistSettings() {
         val updated = currentSettings()
         if (updated != settings) onSave(updated)

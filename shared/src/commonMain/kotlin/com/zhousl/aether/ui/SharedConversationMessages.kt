@@ -146,7 +146,6 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.io.encoding.Base64
-import kotlin.math.roundToInt
 import kotlin.math.max
 import kotlin.math.roundToLong
 
@@ -667,8 +666,8 @@ internal fun SharedConversationMessage(
                             (message.text.isNotBlank() || message.reasoningText.isNotBlank() || message.tools.isNotEmpty())
                         )
                 )
-            val streamingWorkStartedAtMillis = remember(message.id, message.responseBlocks, message.createdAtMillis) {
-                message.responseBlocks.sharedWorkStartedAtMillis(message.createdAtMillis)
+            val streamingWorkStartedAtMillis = remember(message.id, message.createdAtMillis) {
+                message.createdAtMillis
             }
             val streamingWorkDurationMillis by produceState(
                 initialValue = sharedRunningWorkDurationMillis(streamingWorkStartedAtMillis),
@@ -3149,7 +3148,7 @@ internal fun formatSharedDuration(durationMillis: Long): String = when {
 }
 
 internal fun formatSharedThoughtDuration(durationMillis: Long): String {
-    val totalSeconds = (durationMillis / 1000f).roundToInt().coerceAtLeast(1)
+    val totalSeconds = (durationMillis / 1_000L).coerceAtLeast(1L)
     val hours = totalSeconds / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60

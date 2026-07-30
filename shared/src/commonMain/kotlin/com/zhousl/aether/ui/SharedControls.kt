@@ -35,8 +35,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -66,6 +73,45 @@ private const val SharedSettingsPageTransitionDuration = 320
 private val SharedSettingsPageTransitionEasing =
     CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
 
+internal class SharedSettingsDismissGuard {
+    private var activeReporter: Any? = null
+    var hasUnsavedChanges by mutableStateOf(false)
+        private set
+    var saveShakeRequest by mutableIntStateOf(0)
+        private set
+
+    fun report(reporter: Any, hasChanges: Boolean) {
+        activeReporter = reporter
+        hasUnsavedChanges = hasChanges
+    }
+
+    fun clear(reporter: Any) {
+        if (activeReporter === reporter) {
+            activeReporter = null
+            hasUnsavedChanges = false
+        }
+    }
+
+    fun rejectDismiss() {
+        saveShakeRequest += 1
+    }
+}
+
+internal val LocalSharedSettingsDismissGuard =
+    staticCompositionLocalOf<SharedSettingsDismissGuard?> { null }
+
+internal val LocalSharedSettingsRichMotion = staticCompositionLocalOf { false }
+
+@Composable
+internal fun ReportSharedSettingsUnsavedChanges(hasChanges: Boolean) {
+    val guard = LocalSharedSettingsDismissGuard.current ?: return
+    val reporter = remember { Any() }
+    SideEffect { guard.report(reporter, hasChanges) }
+    DisposableEffect(guard, reporter) {
+        onDispose { guard.clear(reporter) }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 internal fun Modifier.sharedSettingsBringIntoViewOnFocus(): Modifier = composed {
     val requester = remember { BringIntoViewRequester() }
@@ -89,10 +135,11 @@ internal fun <T> SharedSettingsPageTransition(
     label: String,
     content: @Composable (T) -> Unit,
 ) {
+    val richMotion = LocalSharedSettingsRichMotion.current
     AnimatedContent(
         targetState = targetState,
         transitionSpec = {
-            if (!currentPlatformCapabilities.layeredScreenTransitions) {
+            if (!currentPlatformCapabilities.layeredScreenTransitions && !richMotion) {
                 return@AnimatedContent fadeIn(tween(120)) togetherWith
                     fadeOut(tween(80))
             }

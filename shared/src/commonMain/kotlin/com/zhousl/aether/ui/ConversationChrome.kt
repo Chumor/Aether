@@ -52,6 +52,7 @@ fun AetherConversationTopBarFrame(
     newChatDescription: String,
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
+    showMenu: Boolean = true,
     modifier: Modifier = Modifier,
     centerContent: @Composable BoxScope.() -> Unit,
 ) {
@@ -61,18 +62,23 @@ fun AetherConversationTopBarFrame(
             .padding(horizontal = 15.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        HeaderCircleButton(
-            icon = Icons.Rounded.Menu,
-            contentDescription = menuDescription,
-            onClick = onMenu,
-            size = 38.dp,
-            iconSize = 19.dp,
-            containerColor = AetherSurface.copy(alpha = 0.96f),
-        )
+        if (showMenu) {
+            HeaderCircleButton(
+                icon = Icons.Rounded.Menu,
+                contentDescription = menuDescription,
+                onClick = onMenu,
+                size = 38.dp,
+                iconSize = 19.dp,
+                containerColor = AetherSurface.copy(alpha = 0.96f),
+            )
+        }
         Box(
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 12.dp),
+                .padding(
+                    start = if (showMenu) 12.dp else 5.dp,
+                    end = 12.dp,
+                ),
             content = centerContent,
         )
         HeaderCircleButton(

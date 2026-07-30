@@ -3,6 +3,7 @@ package com.zhousl.aether.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateEnterExit
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,17 +15,23 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.keyframes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -88,6 +95,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -116,6 +124,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -125,12 +134,14 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
@@ -190,6 +201,7 @@ import com.zhousl.aether.data.findModelOption
 import com.zhousl.aether.data.isSharedProviderSetupValid
 import com.zhousl.aether.data.resolveAutomaticModelKey
 import com.zhousl.aether.data.shouldMarkOnboardingCompleted
+import com.zhousl.aether.data.shouldRevealFollowUpTourCard
 import com.zhousl.aether.data.withModelOption
 import com.zhousl.aether.data.toJsonObject
 import com.zhousl.aether.data.providerModelsFromCatalog
@@ -277,9 +289,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
+import kotlin.math.roundToInt
 
 private enum class SharedRoute { Onboarding, Chat, Settings }
-private enum class OnboardingStage { Landing, Runtime, Provider }
+private enum class OnboardingStage { Landing, Runtime, Provider, Search }
 private const val SharedScreenTransitionDuration = 320
 private const val SharedOnboardingStepFadeDuration = 560
 private val SharedScreenTransitionEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
@@ -762,9 +775,44 @@ private val ControlShadow = Color(0x14000000)
 private val ComposerShadow = Color(0x18000000)
 private val ComposerPurple = Color(0xFF9B5CFF)
 private val SharedConversationMotionEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
+private const val SharedTabletLayoutMinWidthDp = 700f
 private const val SharedCompactCommand = "/compact"
 private const val SharedCompactingStatus = "compacting"
 private const val SharedCompactingMaxInputChars = 120_000
+
+private suspend fun playSharedJellyFeedback(
+    scaleX: Animatable<Float, *>,
+    scaleY: Animatable<Float, *>,
+) {
+    scaleX.snapTo(1f)
+    scaleY.snapTo(1f)
+    kotlinx.coroutines.coroutineScope {
+        launch {
+            scaleX.animateTo(
+                1f,
+                keyframes {
+                    durationMillis = 190
+                    0.965f at 42
+                    1.022f at 112
+                    0.994f at 154
+                    1f at 190
+                },
+            )
+        }
+        launch {
+            scaleY.animateTo(
+                1f,
+                keyframes {
+                    durationMillis = 190
+                    1.045f at 42
+                    0.986f at 112
+                    1.006f at 154
+                    1f at 190
+                },
+            )
+        }
+    }
+}
 private const val SharedInitialStreamingStatusText = "Thinking"
 private const val SharedInitialStreamingStatusDetail = "Aether is working on this turn."
 private const val SharedProviderValidationErrorText =
@@ -882,6 +930,8 @@ fun AetherSharedApp(
             onDispose { appScope.launch { bridgeClient.close() } }
         }
         var route by rememberSaveable { mutableStateOf(SharedRoute.Onboarding) }
+        var tabletSettingsVisible by rememberSaveable { mutableStateOf(false) }
+        var tabletSettingsDismissRequest by remember { mutableIntStateOf(0) }
         var startupResolved by remember { mutableStateOf(false) }
         val historyStore = remember(chatHistoryDatabase) {
             chatHistoryDatabase?.let(::SharedChatHistoryStore)
@@ -909,9 +959,9 @@ fun AetherSharedApp(
         var activeExtensionPageId by rememberSaveable { mutableStateOf("") }
         var transientMessage by remember { mutableStateOf("") }
         var onboardingReplayMode by remember { mutableStateOf(false) }
+        var onboardingEntryStage by remember { mutableStateOf(OnboardingStage.Landing) }
         var showStarterPromptHint by remember { mutableStateOf(false) }
         var awaitingFollowUpTour by remember { mutableStateOf(false) }
-        var followUpTourVisible by remember { mutableStateOf(false) }
         var alpineSetupPreviewVisible by remember { mutableStateOf(false) }
         var extensionManagerRef by remember { mutableStateOf<SharedAetherExtensionManager?>(null) }
         val backgroundExecutionManager = remember(platformServices) {
@@ -1158,9 +1208,9 @@ fun AetherSharedApp(
             if (backgroundLeases[target.id]?.isActive == true) return
             backgroundLeases.remove(target.id)?.end()
             backgroundLeases[target.id] = backgroundExecutionManager.begin("Aether Agent") {
+                target.job?.cancel()
+                target.job = null
                 appScope.launch {
-                    target.job?.cancel()
-                    target.job = null
                     target.streamingStatus = chatInterruptedStatus
                     val pending = target.messages.lastOrNull()
                     if (pending?.fromUser == false) {
@@ -1670,8 +1720,6 @@ fun AetherSharedApp(
             }
             val assistantId = platformRandomUuid()
             val turnStartedAt = platformCurrentTimeMillis()
-            var reasoningStartedAt = 0L
-            var reasoningLastActivityAt = 0L
             var responseStartedAt = 0L
             val reasoningTracker = SharedReasoningTurnTracker()
             target.messages += SharedChatMessage(
@@ -1794,8 +1842,6 @@ fun AetherSharedApp(
                             backgroundLeases[target.id]?.update("Reasoning")
                             reasoningTracker.finishDirectSummaryChunk()
                             val now = platformCurrentTimeMillis()
-                            if (reasoningStartedAt == 0L) reasoningStartedAt = now
-                            reasoningLastActivityAt = now
                             target.messages.updateMessage(assistantId) { current ->
                                 current.appendAssistantReasoningDelta(delta, now).copy(
                                     status = SharedInitialStreamingStatusText,
@@ -1813,8 +1859,6 @@ fun AetherSharedApp(
                         onAssistantReasoningSummaryDelta = { delta ->
                             backgroundLeases[target.id]?.update("Reasoning")
                             val now = platformCurrentTimeMillis()
-                            if (reasoningStartedAt == 0L) reasoningStartedAt = now
-                            reasoningLastActivityAt = now
                             target.messages.updateMessage(assistantId) { current ->
                                 current.appendDirectAssistantReasoningSummaryDelta(
                                     delta = delta,
@@ -1926,6 +1970,11 @@ fun AetherSharedApp(
                             } else {
                                 completed.withAssistantTextResultFallback(result)
                             }
+                            val hasAgentWork = current.reasoningText.isNotBlank() ||
+                                current.responseBlocks.any { block ->
+                                    block is SharedAssistantResponseBlock.Reasoning ||
+                                        block is SharedAssistantResponseBlock.ToolGroup
+                                }
                             finalized.copy(
                                 reasoningText = current.reasoningText.ifBlank { result.reasoningText },
                                 isError = false,
@@ -1938,8 +1987,9 @@ fun AetherSharedApp(
                                 providerId = result.provider.ifBlank { config.id },
                                 modelId = result.model.ifBlank { config.modelId },
                                 providerPayloadJson = result.providerPayloadJson,
-                                thoughtDurationMillis = if (reasoningStartedAt > 0L) {
-                                    (reasoningLastActivityAt - reasoningStartedAt).coerceAtLeast(0L)
+                                thoughtDurationMillis = if (hasAgentWork) {
+                                    ((responseStartedAt.takeIf { it > 0L } ?: completedAt) - turnStartedAt)
+                                        .coerceAtLeast(0L)
                                 } else {
                                     0L
                                 },
@@ -1962,12 +2012,19 @@ fun AetherSharedApp(
                             )
                             appScope.launch { settingsStore?.markOnboardingComplete() }
                         }
-                        if (result.errorMessage.isBlank() && awaitingFollowUpTour) {
+                        if (
+                            shouldRevealFollowUpTourCard(
+                                isAwaitingFollowUpTour = awaitingFollowUpTour,
+                                isSuccessfulAssistantReply = result.errorMessage.isBlank(),
+                            )
+                        ) {
                             awaitingFollowUpTour = false
                             appScope.launch {
                                 kotlinx.coroutines.delay(FollowUpTourAutoOpenDelayMillis)
                                 if (route == SharedRoute.Chat) {
-                                    followUpTourVisible = true
+                                    onboardingEntryStage = OnboardingStage.Search
+                                    onboardingReplayMode = false
+                                    route = SharedRoute.Onboarding
                                 }
                             }
                         }
@@ -2343,6 +2400,163 @@ fun AetherSharedApp(
             stringResource(Res.string.message_pause_before_deleting_session)
 
         SharedAetherExtensionUiProvider(extensionController) {
+        BoxWithConstraints {
+        val useTabletLayout = shouldUseSharedTabletLayout(
+            supportsTabletLayout = capabilities.supportsTabletLayout,
+            availableWidthDp = maxWidth.value,
+        )
+        val settingsContent: @Composable () -> Unit = {
+            SharedSettingsScreen(
+                capabilities = capabilities,
+                runtime = runtime,
+                platformServices = platformServices,
+                providerConfigs = providerConfigs,
+                appSettings = sharedAppSettings,
+                loadStatistics = {
+                    if (historyStore != null) {
+                        withContext(Dispatchers.Default) {
+                            historyStore.loadUsageStatistics()
+                        }
+                    } else {
+                        val persistedSessions =
+                            sessionStates.values.map(SharedSessionUiState::toPersistedSession)
+                        withContext(Dispatchers.Default) {
+                            com.zhousl.aether.data.buildSharedUsageStatisticsReport(
+                                persistedSessions,
+                            )
+                        }
+                    }
+                },
+                bridgeClient = bridgeClient,
+                extensionManager = extensionManager,
+                extensionStateStore = extensionStateStore,
+                onExtensionSnapshotChanged = { extensionSnapshot = it },
+                skillManager = skillManager,
+                installedSkills = installedSkills,
+                extensionCount = extensionSnapshot.extensions.size,
+                mcpManager = mcpManager,
+                mcpServers = mcpServers,
+                activeMcpServerIds = activeMcpServerIds.toSet(),
+                onMcpServersChanged = { servers ->
+                    mcpServers.clear()
+                    mcpServers.addAll(servers)
+                    retainEnabledMcpSelections(
+                        servers.filter(SharedMcpServerConfig::enabled)
+                            .map(SharedMcpServerConfig::id)
+                            .toSet(),
+                    )
+                },
+                chromeManager = chromeManager,
+                onSkillsChanged = { skills ->
+                    installedSkills.clear()
+                    installedSkills.addAll(skills)
+                    retainEnabledSkillSelections(
+                        skills.filter(SharedInstalledSkill::isEnabled)
+                            .map(SharedInstalledSkill::id)
+                            .toSet(),
+                    )
+                },
+                onProviderSaved = ::upsertProviderConfig,
+                onProviderEnabledChanged = ::setProviderEnabled,
+                onProviderRemoved = ::removeProviderConfig,
+                onGeneralSettingsSaved = ::persistResolvedAppSettings,
+                onAlpineResetSettingsSaved = { updated ->
+                    sharedAppSettings = updated
+                    settingsStore?.saveGeneralSettings(updated)
+                },
+                onExportAppData = { pendingSettings ->
+                    val manager = checkNotNull(appDataManager) { "App data storage is unavailable." }
+                    settingsStore?.saveGeneralSettings(pendingSettings)
+                    settingsStore?.saveProviders(providerConfigs.toList(), providerConfig?.id.orEmpty())
+                    persistSession()
+                    historyStore?.setCurrentSession(sessionId)
+                    manager.exportJson()
+                },
+                onImportAppData = { value ->
+                    val manager = checkNotNull(appDataManager) { "App data storage is unavailable." }
+                    val restored = manager.restoreJson(value)
+                    val persisted = restored.persistedSettings
+                    sharedAppSettings = persisted.appSettings
+                    providerConfigs.clear()
+                    providerConfigs.addAll(persisted.providerConfigs)
+                    providerConfig = persisted.activeProviderConfig
+                    installedSkills.clear()
+                    installedSkills.addAll(restored.installedSkills)
+                    mcpServers.clear()
+                    mcpServers.addAll(restored.mcpServers)
+                    sessionStates.clear()
+                    sessions.clear()
+                    restored.sessions.forEach { persistedSession ->
+                        val state = persistedSession.toSharedSessionUiState()
+                        sessionStates[state.id] = state
+                        sessions += SharedConversationSummary(state.id, state.title)
+                    }
+                    val restoredCurrent = if (restored.currentSessionId == SharedDraftSessionId) {
+                        SharedSessionUiState(
+                            id = SharedDraftSessionId,
+                            isDraft = true,
+                            selectedModelKey = persisted.appSettings.defaultChatModelKey,
+                        )
+                    } else {
+                        restored.currentSessionId?.let(sessionStates::get)
+                            ?: SharedSessionUiState(
+                                id = SharedDraftSessionId,
+                                isDraft = true,
+                                selectedModelKey = persisted.appSettings.defaultChatModelKey,
+                            )
+                    }
+                    currentSession = restoredCurrent
+                    sessionId = restoredCurrent.id
+                    if (restoredCurrent.isDraft) {
+                        historyStore?.setCurrentSession(SharedDraftSessionId)
+                    }
+                    chromeEnabled = false
+                    chromeManager.enabled = false
+                    restored
+                },
+                onBack = {
+                    tabletSettingsVisible = false
+                    route = SharedRoute.Chat
+                },
+                onReplayOnboarding = {
+                    tabletSettingsVisible = false
+                    onboardingReplayMode = true
+                    onboardingEntryStage = OnboardingStage.Landing
+                    route = SharedRoute.Onboarding
+                },
+                onReplayFollowUpOnboarding = {
+                    tabletSettingsVisible = false
+                    onboardingReplayMode = true
+                    onboardingEntryStage = OnboardingStage.Search
+                    route = SharedRoute.Onboarding
+                },
+                onReplayAlpineSetupPreview = {
+                    alpineSetupPreviewVisible = true
+                },
+                onExportLogs = {
+                    SharedDiagnosticLogger.event(
+                        category = "export",
+                        event = "diagnostic_export_start",
+                        details = mapOf(
+                            "screen" to if (tabletSettingsVisible) "Settings" else route.name,
+                            "session_count" to sessionStates.size,
+                        ),
+                    )
+                    buildSharedDiagnosticLogText(
+                        appVersion = platformAppVersion(),
+                        route = if (tabletSettingsVisible) SharedRoute.Settings else route,
+                        currentSession = currentSession,
+                        sessionStates = sessionStates.values,
+                        providerConfigs = providerConfigs,
+                        installedSkillCount = installedSkills.size,
+                        mcpServers = mcpServers,
+                        settings = sharedAppSettings,
+                    )
+                },
+                onTransientMessage = { transientMessage = it },
+                dismissRequestToken = tabletSettingsDismissRequest,
+            )
+        }
         val activeExtensionPage = extensionSnapshot.pages.firstOrNull { it.id == activeExtensionPageId }
         if (activeExtensionPage != null) {
             SharedAetherExtensionPageScreen(
@@ -2392,6 +2606,7 @@ fun AetherSharedApp(
                         )
                         appScope.launch { settingsStore?.markOnboardingSeen() }
                         onboardingReplayMode = false
+                        onboardingEntryStage = OnboardingStage.Landing
                         route = SharedRoute.Chat
                     },
                     onClose = {
@@ -2401,6 +2616,7 @@ fun AetherSharedApp(
                             SharedRoute.Chat
                         }
                         onboardingReplayMode = false
+                        onboardingEntryStage = OnboardingStage.Landing
                         route = returnRoute
                     },
                     onComplete = { configured ->
@@ -2415,6 +2631,7 @@ fun AetherSharedApp(
                             settingsStore?.markOnboardingSeen()
                         }
                         onboardingReplayMode = false
+                        onboardingEntryStage = OnboardingStage.Landing
                         val draft = createNewSession()
                         draft.input = OnboardingStarterPrompt
                         draft.selectedSkillIds.clear()
@@ -2425,11 +2642,27 @@ fun AetherSharedApp(
                         )
                         showStarterPromptHint = true
                         awaitingFollowUpTour = true
-                        followUpTourVisible = false
                         route = SharedRoute.Chat
                     },
+                    initialStage = onboardingEntryStage,
+                    initialSearchValue = sharedAppSettings.tavilyApiKey,
+                    onSearchDone = { apiKey ->
+                        if (apiKey.isNotBlank()) {
+                            sharedAppSettings = sharedAppSettings.copy(tavilyApiKey = apiKey)
+                            appScope.launch { settingsStore?.saveGeneralSettings(sharedAppSettings) }
+                        }
+                        val returnRoute = if (onboardingReplayMode) {
+                            SharedRoute.Settings
+                        } else {
+                            SharedRoute.Chat
+                        }
+                        onboardingReplayMode = false
+                        onboardingEntryStage = OnboardingStage.Landing
+                        route = returnRoute
+                    },
                 )
-                SharedRoute.Chat -> SharedChatScreen(
+                SharedRoute.Chat -> Box(Modifier.fillMaxSize()) {
+                    SharedChatScreen(
                     sessions = sessions.map { summary ->
                         val state = sessionStates[summary.id]
                         summary.copy(
@@ -2728,151 +2961,22 @@ fun AetherSharedApp(
                     onExportSession = ::exportSession,
                     extensionPages = extensionSnapshot.pages,
                     onExtensionPageSelected = { activeExtensionPageId = it },
-                    onOpenSettings = { route = SharedRoute.Settings },
+                    onOpenSettings = {
+                        if (useTabletLayout) tabletSettingsVisible = true
+                        else route = SharedRoute.Settings
+                    },
+                    useTabletLayout = useTabletLayout,
                 )
-                SharedRoute.Settings -> SharedSettingsScreen(
-                    capabilities = capabilities,
-                    runtime = runtime,
-                    platformServices = platformServices,
-                    providerConfigs = providerConfigs,
-                    appSettings = sharedAppSettings,
-                    loadStatistics = {
-                        if (historyStore != null) {
-                            withContext(Dispatchers.Default) {
-                                historyStore.loadUsageStatistics()
-                            }
-                        } else {
-                            val persistedSessions =
-                                sessionStates.values.map(SharedSessionUiState::toPersistedSession)
-                            withContext(Dispatchers.Default) {
-                                com.zhousl.aether.data.buildSharedUsageStatisticsReport(
-                                    persistedSessions,
-                                )
-                            }
+                    if (useTabletLayout) {
+                        SharedTabletSettingsOverlay(
+                            visible = tabletSettingsVisible,
+                            onDismiss = { tabletSettingsDismissRequest += 1 },
+                        ) {
+                            settingsContent()
                         }
-                    },
-                    bridgeClient = bridgeClient,
-                    extensionManager = extensionManager,
-                    extensionStateStore = extensionStateStore,
-                    onExtensionSnapshotChanged = { extensionSnapshot = it },
-                    skillManager = skillManager,
-                    installedSkills = installedSkills,
-                    extensionCount = extensionSnapshot.extensions.size,
-                    mcpManager = mcpManager,
-                    mcpServers = mcpServers,
-                    activeMcpServerIds = activeMcpServerIds.toSet(),
-                    onMcpServersChanged = { servers ->
-                        mcpServers.clear()
-                        mcpServers.addAll(servers)
-                        retainEnabledMcpSelections(
-                            servers.filter(SharedMcpServerConfig::enabled)
-                                .map(SharedMcpServerConfig::id)
-                                .toSet(),
-                        )
-                    },
-                    chromeManager = chromeManager,
-                    onSkillsChanged = { skills ->
-                        installedSkills.clear()
-                        installedSkills.addAll(skills)
-                        retainEnabledSkillSelections(
-                            skills.filter(SharedInstalledSkill::isEnabled)
-                                .map(SharedInstalledSkill::id)
-                                .toSet(),
-                        )
-                    },
-                    onProviderSaved = ::upsertProviderConfig,
-                    onProviderEnabledChanged = ::setProviderEnabled,
-                    onProviderRemoved = ::removeProviderConfig,
-                    onGeneralSettingsSaved = ::persistResolvedAppSettings,
-                    onAlpineResetSettingsSaved = { updated ->
-                        sharedAppSettings = updated
-                        settingsStore?.saveGeneralSettings(updated)
-                    },
-                    onExportAppData = { pendingSettings ->
-                        val manager = checkNotNull(appDataManager) { "App data storage is unavailable." }
-                        settingsStore?.saveGeneralSettings(pendingSettings)
-                        settingsStore?.saveProviders(providerConfigs.toList(), providerConfig?.id.orEmpty())
-                        persistSession()
-                        historyStore?.setCurrentSession(sessionId)
-                        manager.exportJson()
-                    },
-                    onImportAppData = { value ->
-                        val manager = checkNotNull(appDataManager) { "App data storage is unavailable." }
-                        val restored = manager.restoreJson(value)
-                        val persisted = restored.persistedSettings
-                        sharedAppSettings = persisted.appSettings
-                        providerConfigs.clear()
-                        providerConfigs.addAll(persisted.providerConfigs)
-                        providerConfig = persisted.activeProviderConfig
-                        installedSkills.clear()
-                        installedSkills.addAll(restored.installedSkills)
-                        mcpServers.clear()
-                        mcpServers.addAll(restored.mcpServers)
-                        sessionStates.clear()
-                        sessions.clear()
-                        restored.sessions.forEach { persistedSession ->
-                            val state = persistedSession.toSharedSessionUiState()
-                            sessionStates[state.id] = state
-                            sessions += SharedConversationSummary(state.id, state.title)
-                        }
-                        val restoredCurrent = if (restored.currentSessionId == SharedDraftSessionId) {
-                            SharedSessionUiState(
-                                id = SharedDraftSessionId,
-                                isDraft = true,
-                                selectedModelKey = persisted.appSettings.defaultChatModelKey,
-                            )
-                        } else {
-                            restored.currentSessionId?.let(sessionStates::get)
-                                ?: SharedSessionUiState(
-                                    id = SharedDraftSessionId,
-                                    isDraft = true,
-                                    selectedModelKey = persisted.appSettings.defaultChatModelKey,
-                                )
-                        }
-                        currentSession = restoredCurrent
-                        sessionId = restoredCurrent.id
-                        if (restoredCurrent.isDraft) {
-                            historyStore?.setCurrentSession(SharedDraftSessionId)
-                        }
-                        chromeEnabled = false
-                        chromeManager.enabled = false
-                        restored
-                    },
-                    onBack = {
-                        route = SharedRoute.Chat
-                    },
-                    onReplayOnboarding = {
-                        onboardingReplayMode = true
-                        route = SharedRoute.Onboarding
-                    },
-                    onReplayFollowUpOnboarding = {
-                        followUpTourVisible = true
-                    },
-                    onReplayAlpineSetupPreview = {
-                        alpineSetupPreviewVisible = true
-                    },
-                    onExportLogs = {
-                        SharedDiagnosticLogger.event(
-                            category = "export",
-                            event = "diagnostic_export_start",
-                            details = mapOf(
-                                "screen" to route.name,
-                                "session_count" to sessionStates.size,
-                            ),
-                        )
-                        buildSharedDiagnosticLogText(
-                            appVersion = platformAppVersion(),
-                            route = route,
-                            currentSession = currentSession,
-                            sessionStates = sessionStates.values,
-                            providerConfigs = providerConfigs,
-                            installedSkillCount = installedSkills.size,
-                            mcpServers = mcpServers,
-                            settings = sharedAppSettings,
-                        )
-                    },
-                    onTransientMessage = { transientMessage = it },
-                )
+                    }
+                }
+                SharedRoute.Settings -> settingsContent()
             }
         }
         SharedAetherExtensionOverlay(Modifier.fillMaxSize())
@@ -2916,19 +3020,64 @@ fun AetherSharedApp(
                 onClose = { alpineSetupPreviewVisible = false },
                 onContinue = { alpineSetupPreviewVisible = false },
             )
-        } else if (followUpTourVisible) {
-            SharedTavilyFollowUpTour(
-                initialValue = sharedAppSettings.tavilyApiKey,
-                onClose = { followUpTourVisible = false },
-                onDone = { apiKey ->
-                    if (apiKey.isNotBlank()) {
-                        sharedAppSettings = sharedAppSettings.copy(tavilyApiKey = apiKey)
-                        appScope.launch { settingsStore?.saveGeneralSettings(sharedAppSettings) }
-                    }
-                    followUpTourVisible = false
-                },
-            )
         }
+        }
+        }
+    }
+}
+
+internal fun shouldUseSharedTabletLayout(
+    supportsTabletLayout: Boolean,
+    availableWidthDp: Float,
+): Boolean = supportsTabletLayout && availableWidthDp >= SharedTabletLayoutMinWidthDp
+
+@Composable
+private fun SharedTabletSettingsOverlay(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(140, easing = SharedConversationMotionEasing)),
+        exit = fadeOut(tween(120, easing = SharedConversationMotionEasing)),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize()
+                .background(AetherScrim.copy(alpha = 0.38f))
+                .pointerInput(visible, onDismiss) {
+                    if (visible) detectTapGestures { onDismiss() }
+                }
+                .padding(horizontal = 56.dp, vertical = 44.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                modifier = Modifier
+                    .animateEnterExit(
+                        enter = fadeIn(tween(130, easing = SharedConversationMotionEasing)) +
+                            slideInVertically(
+                                animationSpec = tween(190, easing = SharedConversationMotionEasing),
+                                initialOffsetY = { it / 42 },
+                            ),
+                        exit = fadeOut(tween(90, easing = SharedConversationMotionEasing)) +
+                            slideOutVertically(
+                                animationSpec = tween(150, easing = SharedConversationMotionEasing),
+                                targetOffsetY = { it / 48 },
+                            ),
+                    )
+                    .widthIn(max = 720.dp).heightIn(max = 860.dp).fillMaxSize()
+                    .pointerInput(Unit) { detectTapGestures {} }
+                    .shadow(
+                        18.dp,
+                        RoundedCornerShape(24.dp),
+                        ambientColor = AetherScrim,
+                        spotColor = AetherScrim,
+                    ),
+                shape = RoundedCornerShape(24.dp),
+                color = AetherBackground,
+            ) {
+                content()
+            }
         }
     }
 }
@@ -3420,33 +3569,36 @@ private fun SharedOnboarding(
     onSkip: () -> Unit,
     onClose: () -> Unit,
     onComplete: (LlmProviderConfig) -> Unit,
+    initialStage: OnboardingStage = OnboardingStage.Landing,
+    initialSearchValue: String,
+    onSearchDone: (String) -> Unit,
 ) {
-    var stage by rememberSaveable(replayMode) { mutableStateOf(OnboardingStage.Landing) }
-    AnimatedContent(
-        targetState = stage,
-        transitionSpec = {
-            fadeIn(
-                animationSpec = tween(
-                    durationMillis = SharedOnboardingStepFadeDuration,
-                    delayMillis = 180,
-                    easing = SharedScreenTransitionEasing,
-                )
-            ) togetherWith fadeOut(
-                animationSpec = tween(
-                    durationMillis = 180,
-                    easing = SharedScreenTransitionEasing,
-                )
-            )
-        },
-        label = "onboarding_step_transition",
-    ) { currentStage ->
-        when (currentStage) {
+    var stage by rememberSaveable(replayMode, initialStage) { mutableStateOf(initialStage) }
+    val timelinePosition by animateFloatAsState(
+        targetValue = stage.ordinal.toFloat(),
+        animationSpec = tween(620, easing = SharedScreenTransitionEasing),
+        label = "shared_onboarding_timeline_position",
+    )
+    val onTimelineStepSelected: (OnboardingTimelineStep) -> Unit = { selected ->
+        stage = when (selected) {
+            OnboardingTimelineStep.Welcome -> OnboardingStage.Landing
+            OnboardingTimelineStep.Setup -> OnboardingStage.Runtime
+            OnboardingTimelineStep.Provider -> OnboardingStage.Provider
+            OnboardingTimelineStep.Search -> OnboardingStage.Search
+        }
+    }
+    CompositionLocalProvider(LocalOnboardingTimelinePosition provides timelinePosition) {
+    when (stage) {
             OnboardingStage.Landing -> OnboardingLandingStep(
                 stepIndex = 1,
                 stepCount = 3,
                 replayMode = replayMode,
                 onPrimary = { stage = OnboardingStage.Runtime },
                 onSecondary = if (replayMode) onClose else onSkip,
+                timelineSpec = OnboardingTimelineSpec(
+                    activeStep = OnboardingTimelineStep.Welcome,
+                    onStepSelected = onTimelineStepSelected,
+                ),
             )
             OnboardingStage.Runtime -> RuntimeSetupStep(
                 runtime = runtime,
@@ -3454,17 +3606,28 @@ private fun SharedOnboarding(
                 onBack = { stage = OnboardingStage.Landing },
                 onClose = onClose,
                 onContinue = { stage = OnboardingStage.Provider },
+                onTimelineStepSelected = onTimelineStepSelected,
             )
             OnboardingStage.Provider -> SharedProviderSetupStep(
                 bridgeClient = bridgeClient,
                 existingProviderConfig = existingProviderConfig,
                 onTransientMessage = onTransientMessage,
-                onBack = { stage = OnboardingStage.Landing },
+                onBack = { stage = OnboardingStage.Runtime },
                 replayMode = replayMode,
                 onSkip = if (replayMode) onClose else onSkip,
                 onComplete = onComplete,
+                onTimelineStepSelected = onTimelineStepSelected,
             )
-        }
+            OnboardingStage.Search -> SharedTavilyFollowUpTour(
+                initialValue = initialSearchValue,
+                onClose = onClose,
+                onDone = onSearchDone,
+                timelineSpec = OnboardingTimelineSpec(
+                    activeStep = OnboardingTimelineStep.Search,
+                    onStepSelected = onTimelineStepSelected,
+                ),
+            )
+    }
     }
 }
 
@@ -3477,6 +3640,7 @@ private fun SharedProviderSetupStep(
     replayMode: Boolean,
     onSkip: () -> Unit,
     onComplete: (LlmProviderConfig) -> Unit,
+    onTimelineStepSelected: (OnboardingTimelineStep) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val oauthWaitingMessage = "Waiting for authorization."
@@ -3634,6 +3798,7 @@ private fun SharedProviderSetupStep(
         onClose = onSkip,
         onReturnToLanding = onBack,
         onComplete = { onComplete(formState.buildConfig()) },
+        onTimelineStepSelected = onTimelineStepSelected,
     )
 }
 
@@ -3690,6 +3855,7 @@ private fun RuntimeSetupStep(
     onBack: () -> Unit,
     onClose: () -> Unit,
     onContinue: () -> Unit,
+    onTimelineStepSelected: (OnboardingTimelineStep) -> Unit = {},
 ) {
     var retryKey by rememberSaveable { mutableIntStateOf(0) }
     var alpineReady by rememberSaveable { mutableStateOf(false) }
@@ -3709,7 +3875,7 @@ private fun RuntimeSetupStep(
             return@LaunchedEffect
         }
         alpineReady = installed
-        if (!installed && retryKey == 0) return@LaunchedEffect
+        if (retryKey == 0) return@LaunchedEffect
 
         running = true
         try {
@@ -3761,6 +3927,17 @@ private fun RuntimeSetupStep(
         onBack = onBack,
         topRightLabel = stringResource(Res.string.close_label),
         onTopRight = onClose,
+        timelineSpec = OnboardingTimelineSpec(
+            activeStep = OnboardingTimelineStep.Setup,
+            onStepSelected = onTimelineStepSelected,
+        ),
+        wideAuxiliaryVisible = retryKey > 0 && (running || progress.output.isNotBlank()),
+        wideAuxiliaryContent = {
+            RuntimeSetupLogPane(
+                output = progress.output,
+                running = running,
+            )
+        },
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -3787,6 +3964,7 @@ private fun RuntimeSetupStep(
                     error = error,
                     nodeVersion = nodeVersion,
                     onShowDetails = { showDetails = true },
+                    showDetailsAction = !LocalOnboardingWideLayout.current,
                 )
             }
             OnboardingActionRow(
@@ -3817,14 +3995,65 @@ private fun RuntimeSetupStep(
 }
 
 @Composable
+private fun RuntimeSetupLogPane(
+    output: String,
+    running: Boolean,
+) {
+    val scrollState = rememberScrollState()
+    LaunchedEffect(output) {
+        if (output.isNotBlank()) scrollState.animateScrollTo(scrollState.maxValue)
+    }
+    Column(
+        modifier = Modifier.fillMaxSize().background(AetherSurfaceHigh.copy(alpha = 0.54f))
+            .statusBarsPadding().navigationBarsPadding()
+            .padding(start = 34.dp, top = 34.dp, end = 34.dp, bottom = 28.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(Res.string.onboarding_setup_log_title),
+                style = MaterialTheme.typography.headlineSmall,
+                color = AetherOnSurface,
+            )
+            if (running) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = AetherPrimary,
+                )
+            }
+        }
+        Spacer(Modifier.height(22.dp))
+        SelectionContainer(
+            modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState),
+        ) {
+            Text(
+                text = output.ifBlank {
+                    stringResource(Res.string.onboarding_setup_log_waiting)
+                },
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 19.sp,
+                ),
+                color = AetherOnSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun RuntimeSetupProgressPanel(
     progress: RuntimeSetupProgress,
     ready: Boolean,
     error: String,
     nodeVersion: String,
     onShowDetails: () -> Unit,
+    showDetailsAction: Boolean,
 ) {
-    val currentStep = runtimeSetupStepIndex(progress.phase)
+    val currentStep = runtimeSetupDisplayedStep(progress.phase, ready)
     val fraction = if (ready) 1f else currentStep / 5f
     val animatedFraction by animateFloatAsState(
         targetValue = fraction,
@@ -3865,12 +4094,14 @@ private fun RuntimeSetupProgressPanel(
             } else {
                 Spacer(Modifier.weight(1f))
             }
-            Text(
-                text = stringResource(Res.string.onboarding_pi_setup_details),
-                modifier = Modifier.clickable(onClick = onShowDetails).padding(vertical = 4.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = AetherOnSurfaceVariant,
-            )
+            if (showDetailsAction) {
+                Text(
+                    text = stringResource(Res.string.onboarding_pi_setup_details),
+                    modifier = Modifier.clickable(onClick = onShowDetails).padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AetherOnSurfaceVariant,
+                )
+            }
         }
         Box(
             modifier = Modifier
@@ -3932,6 +4163,9 @@ internal fun runtimeSetupStepIndex(phase: String): Int = when (normalizeRuntimeS
     RuntimePhaseVerifyingBridge -> 5
     else -> 0
 }
+
+internal fun runtimeSetupDisplayedStep(phase: String, ready: Boolean): Int =
+    if (ready) 5 else runtimeSetupStepIndex(phase)
 
 private fun PiBridgeSetupPhase.runtimeSetupPhase(): String = when (this) {
     PiBridgeSetupPhase.PreparingBridge -> RuntimePhasePreparingBridge
@@ -4165,6 +4399,7 @@ private fun SharedChatScreen(
     extensionPages: List<SharedAetherExtensionPage>,
     onExtensionPageSelected: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    useTabletLayout: Boolean,
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -4178,6 +4413,9 @@ private fun SharedChatScreen(
     var composerFocused by remember(selectedSessionId) { mutableStateOf(false) }
     var previewAttachment by remember(selectedSessionId) { mutableStateOf<SharedChatAttachment?>(null) }
     val density = LocalDensity.current
+    val edgeBounce = remember(selectedSessionId) { Animatable(0f) }
+    val maxEdgeBouncePx = with(density) { 34.dp.toPx() }
+    val branchBlur = remember(selectedSessionId) { Animatable(0f) }
     val fallbackTopBarBodyHeight = with(density) {
         WindowInsets.statusBars.getTop(this).toDp() + 68.dp
     }
@@ -4258,7 +4496,7 @@ private fun SharedChatScreen(
             append(streamingStatus)
         }
     }
-    val conversationScrollConnection = remember(listState) {
+    val conversationScrollConnection = remember(listState, maxEdgeBouncePx) {
         object : NestedScrollConnection {
             override fun onPostScroll(
                 consumed: Offset,
@@ -4267,14 +4505,34 @@ private fun SharedChatScreen(
             ): Offset {
                 if (source == NestedScrollSource.UserInput) {
                     shouldAutoFollow = listState.isAtSharedConversationBottom()
+                    if (available.y != 0f) {
+                        val resisted = (edgeBounce.value + available.y * 0.18f)
+                            .coerceIn(-maxEdgeBouncePx, maxEdgeBouncePx)
+                        scope.launch { edgeBounce.snapTo(resisted) }
+                    }
                 }
                 return Offset.Zero
             }
 
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
                 shouldAutoFollow = listState.isAtSharedConversationBottom()
+                edgeBounce.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = 720f,
+                    ),
+                )
                 return Velocity.Zero
             }
+        }
+    }
+    fun switchUserBranch(messageId: String, branchIndex: Int) {
+        scope.launch {
+            branchBlur.animateTo(5.5f, tween(52, easing = SharedConversationMotionEasing))
+            onSelectUserBranch(messageId, branchIndex)
+            kotlinx.coroutines.yield()
+            branchBlur.animateTo(0f, tween(86, easing = SharedConversationMotionEasing))
         }
     }
     suspend fun scrollToBottom() {
@@ -4308,7 +4566,8 @@ private fun SharedChatScreen(
             if (!listState.isScrollInProgress) scrollToBottom()
         }
     }
-    ModalNavigationDrawer(
+    SharedAdaptiveConversationLayout(
+        useTabletLayout = useTabletLayout,
         drawerState = drawerState,
         drawerContent = {
             AetherConversationDrawer(
@@ -4331,6 +4590,7 @@ private fun SharedChatScreen(
                         onOpenSettings()
                     }
                 },
+                permanent = useTabletLayout,
                 extraContent = { dismissSearch ->
                     SharedAetherExtensionSlot(SharedExtensionSlotDrawer)
                     extensionPages.forEach { page ->
@@ -4383,7 +4643,10 @@ private fun SharedChatScreen(
                 } else {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize().nestedScroll(conversationScrollConnection),
+                        modifier = Modifier.fillMaxSize()
+                            .nestedScroll(conversationScrollConnection)
+                            .graphicsLayer { translationY = edgeBounce.value }
+                            .blur(branchBlur.value.dp),
                         contentPadding = PaddingValues(
                             start = 20.dp,
                             end = 20.dp,
@@ -4422,10 +4685,14 @@ private fun SharedChatScreen(
                                 },
                                 onEdit = { onEditUserMessage(message.id) },
                                 onPreviousBranch = {
-                                    if (message.fromUser) onSelectUserBranch(message.id, message.branchIndex - 1)
+                                    if (message.fromUser) {
+                                        switchUserBranch(message.id, message.branchIndex - 1)
+                                    }
                                 },
                                 onNextBranch = {
-                                    if (message.fromUser) onSelectUserBranch(message.id, message.branchIndex + 1)
+                                    if (message.fromUser) {
+                                        switchUserBranch(message.id, message.branchIndex + 1)
+                                    }
                                 },
                                 onDelete = if (message.fromUser) null else {
                                     { onDeleteMessage(message.id) }
@@ -4515,6 +4782,7 @@ private fun SharedChatScreen(
                     modifier = Modifier.align(Alignment.TopCenter),
                     onHeightChanged = { topBarBodyHeightPx = it },
                     onMenu = { scope.launch { drawerState.open() } },
+                    showMenu = !useTabletLayout,
                     onNewChat = onNewChat,
                     selectedModelKey = selectedModelKey,
                     modelOptions = modelOptions,
@@ -4587,6 +4855,30 @@ private fun SharedChatScreen(
     }
 }
 
+@Composable
+private fun SharedAdaptiveConversationLayout(
+    useTabletLayout: Boolean,
+    drawerState: DrawerState,
+    drawerContent: @Composable () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    if (useTabletLayout) {
+        Row(Modifier.fillMaxSize()) {
+            drawerContent()
+            Box(Modifier.fillMaxHeight().width(1.dp).background(AetherOutlineSoft))
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                content()
+            }
+        }
+    } else {
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = drawerContent,
+            content = content,
+        )
+    }
+}
+
 private fun LazyListState.isAtSharedConversationBottom(): Boolean {
     val layout = layoutInfo
     if (layout.totalItemsCount == 0) return true
@@ -4601,6 +4893,7 @@ private fun ConversationTopBar(
     modifier: Modifier,
     onHeightChanged: (Int) -> Unit,
     onMenu: () -> Unit,
+    showMenu: Boolean,
     onNewChat: () -> Unit,
     selectedModelKey: String,
     modelOptions: List<ProviderModelOption>,
@@ -4633,6 +4926,7 @@ private fun ConversationTopBar(
                     newChatDescription = stringResource(Res.string.common_new_chat),
                     onMenu = onMenu,
                     onNewChat = onNewChat,
+                    showMenu = showMenu,
                 ) {
                     SharedConversationModelSelector(
                         options = modelOptions,
@@ -4686,6 +4980,9 @@ private fun SharedConversationModelSelector(
     var anchorHeightPx by remember { mutableIntStateOf(0) }
     val menuVisibility = remember { MutableTransitionState(false) }
     menuVisibility.targetState = expanded
+    val scope = rememberCoroutineScope()
+    val selectorScaleX = remember { Animatable(1f) }
+    val selectorScaleY = remember { Animatable(1f) }
     val density = LocalDensity.current
     val selectedOption = options.findModelOption(menuSelectedModelKey) ?: options.firstOrNull()
     val thinkingKey = selectedOption?.let { option ->
@@ -4717,11 +5014,16 @@ private fun SharedConversationModelSelector(
                 .onGloballyPositioned { coordinates ->
                     anchorHeightPx = coordinates.boundsInWindow().height.toInt()
                 }
+                .graphicsLayer {
+                    scaleX = selectorScaleX.value
+                    scaleY = selectorScaleY.value
+                }
                 .height(38.dp)
                 .shadow(4.dp, RoundedCornerShape(999.dp), ambientColor = ControlShadow, spotColor = ControlShadow)
                 .clip(RoundedCornerShape(999.dp))
                 .background(AetherSurface.copy(alpha = 0.96f))
                 .clickable(enabled = options.isNotEmpty()) {
+                    scope.launch { playSharedJellyFeedback(selectorScaleX, selectorScaleY) }
                     onOpened()
                     menuSelectedModelKey = selectedModelKey
                     showingReasoningEffort = false
@@ -4759,8 +5061,21 @@ private fun SharedConversationModelSelector(
             ) {
                 androidx.compose.animation.AnimatedVisibility(
                     visibleState = menuVisibility,
-                    enter = fadeIn(tween(120)),
-                    exit = fadeOut(tween(80)),
+                    enter = fadeIn(tween(90, easing = SharedConversationMotionEasing)) +
+                        scaleIn(
+                            initialScale = 0.90f,
+                            transformOrigin = TransformOrigin(0f, 0f),
+                            animationSpec = tween(150, easing = SharedConversationMotionEasing),
+                        ) + slideInVertically(
+                            animationSpec = tween(150, easing = SharedConversationMotionEasing),
+                            initialOffsetY = { -it / 12 },
+                        ),
+                    exit = fadeOut(tween(70, easing = SharedConversationMotionEasing)) +
+                        scaleOut(
+                            targetScale = 0.96f,
+                            transformOrigin = TransformOrigin(0f, 0f),
+                            animationSpec = tween(95, easing = SharedConversationMotionEasing),
+                        ),
                 ) {
                     AnimatedContent(
                         targetState = showingReasoningEffort && supportedThinkingLevels.isNotEmpty(),
@@ -6692,6 +7007,7 @@ private fun SharedSettingsScreen(
     onReplayAlpineSetupPreview: () -> Unit,
     onExportLogs: suspend () -> String,
     onTransientMessage: (String) -> Unit,
+    dismissRequestToken: Int = 0,
 ) {
     val terminalTitle = stringResource(Res.string.terminal_title)
     val terminalSubtitle = stringResource(Res.string.terminal_subtitle)
@@ -6731,6 +7047,16 @@ private fun SharedSettingsScreen(
     fun persistAndReplayFollowUpOnboarding() {
         commitPendingSettings()
         onReplayFollowUpOnboarding()
+    }
+
+    val dismissGuard = remember { SharedSettingsDismissGuard() }
+    var handledDismissRequestToken by remember { mutableIntStateOf(dismissRequestToken) }
+    LaunchedEffect(dismissRequestToken) {
+        if (dismissRequestToken != handledDismissRequestToken) {
+            handledDismissRequestToken = dismissRequestToken
+            if (dismissGuard.hasUnsavedChanges) dismissGuard.rejectDismiss()
+            else persistAndExit()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -7006,11 +7332,12 @@ private fun SharedSettingsScreen(
         stringResource(Res.string.settings_release_summary, platformAppVersion()),
         SharedSettingsKind.About,
     )
-    SharedSettingsPageTransition(
-        targetState = destination,
-        depth = { it.depth() },
-        label = "settings_page_transition",
-    ) { selected ->
+    CompositionLocalProvider(LocalSharedSettingsDismissGuard provides dismissGuard) {
+        SharedSettingsPageTransition(
+            targetState = destination,
+            depth = { it.depth() },
+            label = "settings_page_transition",
+        ) { selected ->
         if (selected != null) {
             detailContent(selected)
         } else {
@@ -7175,6 +7502,7 @@ private fun SharedSettingsScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -7245,6 +7573,26 @@ internal fun SettingsTopBar(
     trailingContentDescription: String = "",
     onTrailingAction: () -> Unit = {},
 ) {
+    val dismissGuard = LocalSharedSettingsDismissGuard.current
+    val saveShakeOffset = remember { Animatable(0f) }
+    val saveShakeRequest = dismissGuard?.saveShakeRequest ?: 0
+    LaunchedEffect(saveShakeRequest) {
+        if (saveShakeRequest > 0) {
+            saveShakeOffset.snapTo(0f)
+            saveShakeOffset.animateTo(
+                targetValue = 0f,
+                animationSpec = keyframes {
+                    durationMillis = 420
+                    -9f at 55
+                    9f at 110
+                    -7f at 165
+                    7f at 220
+                    -4f at 285
+                    4f at 340
+                },
+            )
+        }
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier.fillMaxWidth().background(
@@ -7281,7 +7629,9 @@ internal fun SettingsTopBar(
                         contentDescription = trailingContentDescription,
                         onClick = onTrailingAction,
                         enabled = trailingEnabled,
-                        modifier = Modifier.align(Alignment.CenterEnd),
+                        modifier = Modifier.align(Alignment.CenterEnd).offset {
+                            IntOffset(saveShakeOffset.value.roundToInt(), 0)
+                        },
                     )
                 } else {
                     Spacer(Modifier.align(Alignment.CenterEnd).size(44.dp))

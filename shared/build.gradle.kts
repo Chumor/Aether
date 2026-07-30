@@ -20,6 +20,9 @@ kotlin {
     iosSimulatorArm64()
 
     targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach {
+        binaries.all {
+            freeCompilerArgs += "-Xoverride-konan-properties=minVersion.ios=17.0"
+        }
         binaries.framework {
             baseName = "AetherShared"
             isStatic = true

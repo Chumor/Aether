@@ -14,7 +14,6 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -1438,56 +1437,65 @@ private fun SharedUserMessageActionPopup(
     onEdit: () -> Unit,
     onRetry: (() -> Unit)?,
 ) {
-    val visibility = remember { MutableTransitionState(false) }
-    visibility.targetState = expanded
-    if (!visibility.currentState && !visibility.targetState) return
     val density = LocalDensity.current
-    Popup(
-        alignment = Alignment.TopEnd,
-        offset = with(density) { IntOffset(0, 30.dp.roundToPx()) },
-        onDismissRequest = onDismissRequest,
-        properties = PopupProperties(
-            focusable = true,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-        ),
-    ) {
-        AnimatedVisibility(
-            visibleState = visibility,
-            enter = androidx.compose.animation.fadeIn() +
-                androidx.compose.animation.scaleIn(
+    SharedAnimatedPopupHost(visible = expanded) { visibility ->
+        Popup(
+            alignment = Alignment.TopEnd,
+            offset = with(density) { IntOffset(0, 30.dp.roundToPx()) },
+            onDismissRequest = onDismissRequest,
+            properties = PopupProperties(
+                focusable = true,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = true,
+            ),
+        ) {
+            AnimatedVisibility(
+                visibleState = visibility,
+                enter = androidx.compose.animation.fadeIn(
+                    tween(160, easing = SharedStatisticsPopupEasing),
+                ) + androidx.compose.animation.scaleIn(
                     initialScale = 0.92f,
                     transformOrigin = TransformOrigin(1f, 0f),
-                ) + androidx.compose.animation.slideInVertically(initialOffsetY = { -it / 10 }),
-            exit = androidx.compose.animation.fadeOut() +
-                androidx.compose.animation.scaleOut(
+                    animationSpec = tween(220, easing = SharedStatisticsPopupEasing),
+                ) + androidx.compose.animation.slideInVertically(
+                    animationSpec = tween(240, easing = SharedStatisticsPopupEasing),
+                    initialOffsetY = { -it / 10 },
+                ),
+                exit = androidx.compose.animation.fadeOut(
+                    tween(120, easing = SharedStatisticsPopupEasing),
+                ) + androidx.compose.animation.scaleOut(
                     targetScale = 0.96f,
                     transformOrigin = TransformOrigin(1f, 0f),
-                ) + androidx.compose.animation.slideOutVertically(targetOffsetY = { -it / 12 }),
-        ) {
-            Column(
-                modifier = Modifier.width(228.dp)
-                    .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
-                    .clip(RoundedCornerShape(30.dp))
-                    .background(AetherSurface)
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                    animationSpec = tween(160, easing = SharedStatisticsPopupEasing),
+                ) + androidx.compose.animation.slideOutVertically(
+                    animationSpec = tween(180, easing = SharedStatisticsPopupEasing),
+                    targetOffsetY = { -it / 12 },
+                ),
             ) {
-                if (timestamp.isNotBlank()) {
-                    Text(
-                        timestamp,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = AetherOnSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-                SharedUserMessageActionRow(Icons.Rounded.ContentCopy, stringResource(Res.string.common_copy), onCopy)
-                SharedUserMessageActionRow(Icons.Rounded.Description, stringResource(Res.string.common_select_text), onSelectText)
-                SharedUserMessageActionRow(Icons.Rounded.Edit, stringResource(Res.string.common_edit_message), onEdit)
-                onRetry?.let { retry ->
-                    SharedUserMessageActionRow(Icons.Rounded.Refresh, stringResource(Res.string.common_retry), retry)
+                Column(
+                    modifier = Modifier.width(228.dp)
+                        .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
+                        .clip(RoundedCornerShape(30.dp))
+                        .background(AetherSurface)
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    if (timestamp.isNotBlank()) {
+                        Text(
+                            timestamp,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = AetherOnSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    SharedUserMessageActionRow(Icons.Rounded.ContentCopy, stringResource(Res.string.common_copy), onCopy)
+                    SharedUserMessageActionRow(Icons.Rounded.Description, stringResource(Res.string.common_select_text), onSelectText)
+                    SharedUserMessageActionRow(Icons.Rounded.Edit, stringResource(Res.string.common_edit_message), onEdit)
+                    onRetry?.let { retry ->
+                        SharedUserMessageActionRow(Icons.Rounded.Refresh, stringResource(Res.string.common_retry), retry)
+                    }
                 }
             }
         }

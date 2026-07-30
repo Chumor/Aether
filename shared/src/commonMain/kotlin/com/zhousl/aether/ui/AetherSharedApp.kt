@@ -13,7 +13,6 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
@@ -775,44 +774,15 @@ private val ControlShadow = Color(0x14000000)
 private val ComposerShadow = Color(0x18000000)
 private val ComposerPurple = Color(0xFF9B5CFF)
 private val SharedConversationMotionEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
+private val SharedBranchBlurInEasing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
+private val SharedBranchBlurOutEasing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+private const val SharedBranchBlurInDurationMillis = 180
+private const val SharedBranchBlurOutDurationMillis = 340
 private const val SharedTabletLayoutMinWidthDp = 700f
 private const val SharedCompactCommand = "/compact"
 private const val SharedCompactingStatus = "compacting"
 private const val SharedCompactingMaxInputChars = 120_000
 
-private suspend fun playSharedJellyFeedback(
-    scaleX: Animatable<Float, *>,
-    scaleY: Animatable<Float, *>,
-) {
-    scaleX.snapTo(1f)
-    scaleY.snapTo(1f)
-    kotlinx.coroutines.coroutineScope {
-        launch {
-            scaleX.animateTo(
-                1f,
-                keyframes {
-                    durationMillis = 190
-                    0.965f at 42
-                    1.022f at 112
-                    0.994f at 154
-                    1f at 190
-                },
-            )
-        }
-        launch {
-            scaleY.animateTo(
-                1f,
-                keyframes {
-                    durationMillis = 190
-                    1.045f at 42
-                    0.986f at 112
-                    1.006f at 154
-                    1f at 190
-                },
-            )
-        }
-    }
-}
 private const val SharedInitialStreamingStatusText = "Thinking"
 private const val SharedInitialStreamingStatusDetail = "Aether is working on this turn."
 private const val SharedProviderValidationErrorText =
@@ -4525,10 +4495,22 @@ private fun SharedChatScreen(
     }
     fun switchUserBranch(messageId: String, branchIndex: Int) {
         scope.launch {
-            branchBlur.animateTo(5.5f, tween(52, easing = SharedConversationMotionEasing))
+            branchBlur.animateTo(
+                targetValue = 5.5f,
+                animationSpec = tween(
+                    durationMillis = SharedBranchBlurInDurationMillis,
+                    easing = SharedBranchBlurInEasing,
+                ),
+            )
             onSelectUserBranch(messageId, branchIndex)
             kotlinx.coroutines.yield()
-            branchBlur.animateTo(0f, tween(86, easing = SharedConversationMotionEasing))
+            branchBlur.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(
+                    durationMillis = SharedBranchBlurOutDurationMillis,
+                    easing = SharedBranchBlurOutEasing,
+                ),
+            )
         }
     }
     suspend fun scrollToBottom() {
@@ -4974,11 +4956,6 @@ private fun SharedConversationModelSelector(
     var showingReasoningEffort by remember { mutableStateOf(false) }
     var menuSelectedModelKey by remember { mutableStateOf(selectedModelKey) }
     var anchorHeightPx by remember { mutableIntStateOf(0) }
-    val menuVisibility = remember { MutableTransitionState(false) }
-    menuVisibility.targetState = expanded
-    val scope = rememberCoroutineScope()
-    val selectorScaleX = remember { Animatable(1f) }
-    val selectorScaleY = remember { Animatable(1f) }
     val density = LocalDensity.current
     val selectedOption = options.findModelOption(menuSelectedModelKey) ?: options.firstOrNull()
     val thinkingKey = selectedOption?.let { option ->
@@ -5010,16 +4987,11 @@ private fun SharedConversationModelSelector(
                 .onGloballyPositioned { coordinates ->
                     anchorHeightPx = coordinates.boundsInWindow().height.toInt()
                 }
-                .graphicsLayer {
-                    scaleX = selectorScaleX.value
-                    scaleY = selectorScaleY.value
-                }
                 .height(38.dp)
                 .shadow(4.dp, RoundedCornerShape(999.dp), ambientColor = ControlShadow, spotColor = ControlShadow)
                 .clip(RoundedCornerShape(999.dp))
                 .background(AetherSurface.copy(alpha = 0.96f))
                 .clickable(enabled = options.isNotEmpty()) {
-                    scope.launch { playSharedJellyFeedback(selectorScaleX, selectorScaleY) }
                     onOpened()
                     menuSelectedModelKey = selectedModelKey
                     showingReasoningEffort = false
@@ -5044,7 +5016,7 @@ private fun SharedConversationModelSelector(
             }
         }
 
-        if (menuVisibility.currentState || menuVisibility.targetState) {
+        SharedAnimatedPopupHost(visible = expanded) { menuVisibility ->
             Popup(
                 alignment = Alignment.TopStart,
                 offset = IntOffset(0, anchorHeightPx + with(density) { 10.dp.roundToPx() }),
@@ -5057,20 +5029,20 @@ private fun SharedConversationModelSelector(
             ) {
                 androidx.compose.animation.AnimatedVisibility(
                     visibleState = menuVisibility,
-                    enter = fadeIn(tween(90, easing = SharedConversationMotionEasing)) +
+                    enter = fadeIn(tween(140, easing = SharedConversationMotionEasing)) +
                         scaleIn(
                             initialScale = 0.90f,
                             transformOrigin = TransformOrigin(0f, 0f),
-                            animationSpec = tween(150, easing = SharedConversationMotionEasing),
+                            animationSpec = tween(220, easing = SharedConversationMotionEasing),
                         ) + slideInVertically(
-                            animationSpec = tween(150, easing = SharedConversationMotionEasing),
+                            animationSpec = tween(240, easing = SharedConversationMotionEasing),
                             initialOffsetY = { -it / 12 },
                         ),
-                    exit = fadeOut(tween(70, easing = SharedConversationMotionEasing)) +
+                    exit = fadeOut(tween(120, easing = SharedConversationMotionEasing)) +
                         scaleOut(
                             targetScale = 0.96f,
                             transformOrigin = TransformOrigin(0f, 0f),
-                            animationSpec = tween(95, easing = SharedConversationMotionEasing),
+                            animationSpec = tween(160, easing = SharedConversationMotionEasing),
                         ),
                 ) {
                     AnimatedContent(
@@ -5482,10 +5454,6 @@ private fun SharedComposer(
     var textFieldFocused by remember(sessionKey) { mutableStateOf(false) }
     var measuredTextLineCount by remember(sessionKey) { mutableIntStateOf(1) }
     var measuredTextHeight by remember(sessionKey) { mutableStateOf(22.dp) }
-    val menuVisibility = remember(sessionKey) { MutableTransitionState(false) }
-    menuVisibility.targetState = menuOpen
-    val followUpMenuVisibility = remember(sessionKey) { MutableTransitionState(false) }
-    followUpMenuVisibility.targetState = followUpMenuOpen
     val density = LocalDensity.current
     val selectedSkills = availableSkills.filter { it.id in selectedSkillIds }
     val selectedMcpServers = mcpServers.filter { it.id in activeMcpServerIds }
@@ -5855,7 +5823,7 @@ private fun SharedComposer(
                                         )
                                         if (isSending) {
                                             SharedFollowUpMenu(
-                                                visibility = followUpMenuVisibility,
+                                                visible = followUpMenuOpen,
                                                 density = density,
                                                 onDismiss = { followUpMenuOpen = false },
                                                 onSteer = {
@@ -5898,7 +5866,7 @@ private fun SharedComposer(
                             )
                         }
                         SharedComposerPlusMenu(
-                            visibility = menuVisibility,
+                            visible = menuOpen,
                             density = density,
                             chromeAvailable = chromeAvailable,
                             chromeEnabled = chromeEnabled,
@@ -5991,47 +5959,60 @@ private fun SharedComposerSubmitButton(
 
 @Composable
 private fun SharedFollowUpMenu(
-    visibility: MutableTransitionState<Boolean>,
+    visible: Boolean,
     density: androidx.compose.ui.unit.Density,
     onDismiss: () -> Unit,
     onSteer: () -> Unit,
     onQueue: () -> Unit,
 ) {
-    if (!visibility.currentState && !visibility.targetState) return
-    Popup(
-        alignment = Alignment.BottomEnd,
-        offset = IntOffset(0, -with(density) { 12.dp.roundToPx() }),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
-    ) {
-        AnimatedVisibility(
-            visibleState = visibility,
-            enter = fadeIn() + scaleIn(initialScale = 0.92f, transformOrigin = TransformOrigin(1f, 1f)) +
-                slideInVertically(initialOffsetY = { it / 10 }),
-            exit = fadeOut() + scaleOut(targetScale = 0.96f, transformOrigin = TransformOrigin(1f, 1f)) +
-                slideOutVertically(targetOffsetY = { it / 12 }),
+    SharedAnimatedPopupHost(visible = visible) { visibility ->
+        Popup(
+            alignment = Alignment.BottomEnd,
+            offset = IntOffset(0, -with(density) { 12.dp.roundToPx() }),
+            onDismissRequest = onDismiss,
+            properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
         ) {
-            Column(
-                modifier = Modifier.widthIn(min = 252.dp, max = 284.dp)
-                    .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
-                    .clip(RoundedCornerShape(30.dp)).background(AetherSurface)
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            AnimatedVisibility(
+                visibleState = visibility,
+                enter = fadeIn(tween(160, easing = SharedConversationMotionEasing)) + scaleIn(
+                    initialScale = 0.92f,
+                    transformOrigin = TransformOrigin(1f, 1f),
+                    animationSpec = tween(220, easing = SharedConversationMotionEasing),
+                ) + slideInVertically(
+                    animationSpec = tween(240, easing = SharedConversationMotionEasing),
+                    initialOffsetY = { it / 10 },
+                ),
+                exit = fadeOut(tween(120, easing = SharedConversationMotionEasing)) + scaleOut(
+                    targetScale = 0.96f,
+                    transformOrigin = TransformOrigin(1f, 1f),
+                    animationSpec = tween(160, easing = SharedConversationMotionEasing),
+                ) + slideOutVertically(
+                    animationSpec = tween(180, easing = SharedConversationMotionEasing),
+                    targetOffsetY = { it / 12 },
+                ),
             ) {
-                SharedComposerPlusMenuRow(
-                    title = stringResource(Res.string.branch_steer_current_run),
-                    icon = Icons.Rounded.AutoAwesome,
-                    iconTint = Color(0xFF8D6C2F),
-                    iconContainerColor = Color(0xFFFFF3DE),
-                    onClick = onSteer,
-                )
-                SharedComposerPlusMenuRow(
-                    title = stringResource(Res.string.branch_queue_next_turn),
-                    icon = Icons.Rounded.ArrowUpward,
-                    iconTint = Color(0xFF2F6DA3),
-                    iconContainerColor = Color(0xFFEAF2FF),
-                    onClick = onQueue,
-                )
+                Column(
+                    modifier = Modifier.widthIn(min = 252.dp, max = 284.dp)
+                        .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
+                        .clip(RoundedCornerShape(30.dp)).background(AetherSurface)
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    SharedComposerPlusMenuRow(
+                        title = stringResource(Res.string.branch_steer_current_run),
+                        icon = Icons.Rounded.AutoAwesome,
+                        iconTint = Color(0xFF8D6C2F),
+                        iconContainerColor = Color(0xFFFFF3DE),
+                        onClick = onSteer,
+                    )
+                    SharedComposerPlusMenuRow(
+                        title = stringResource(Res.string.branch_queue_next_turn),
+                        icon = Icons.Rounded.ArrowUpward,
+                        iconTint = Color(0xFF2F6DA3),
+                        iconContainerColor = Color(0xFFEAF2FF),
+                        onClick = onQueue,
+                    )
+                }
             }
         }
     }
@@ -6039,7 +6020,7 @@ private fun SharedFollowUpMenu(
 
 @Composable
 private fun SharedComposerPlusMenu(
-    visibility: MutableTransitionState<Boolean>,
+    visible: Boolean,
     density: androidx.compose.ui.unit.Density,
     chromeAvailable: Boolean,
     chromeEnabled: Boolean,
@@ -6054,83 +6035,96 @@ private fun SharedComposerPlusMenu(
     onSkillSelected: (String, Boolean) -> Unit,
     onMcpServerSelected: (String, Boolean) -> Unit,
 ) {
-    if (!visibility.currentState && !visibility.targetState) return
-    Popup(
-        alignment = Alignment.BottomStart,
-        offset = IntOffset(0, -with(density) { 42.dp.roundToPx() }),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
-    ) {
-        AnimatedVisibility(
-            visibleState = visibility,
-            enter = fadeIn() + scaleIn(initialScale = 0.92f, transformOrigin = TransformOrigin(0f, 1f)) +
-                slideInVertically(initialOffsetY = { it / 10 }),
-            exit = fadeOut() + scaleOut(targetScale = 0.96f, transformOrigin = TransformOrigin(0f, 1f)) +
-                slideOutVertically(targetOffsetY = { it / 12 }),
+    SharedAnimatedPopupHost(visible = visible) { visibility ->
+        Popup(
+            alignment = Alignment.BottomStart,
+            offset = IntOffset(0, -with(density) { 42.dp.roundToPx() }),
+            onDismissRequest = onDismiss,
+            properties = PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
         ) {
-            Box(
-                modifier = Modifier.widthIn(min = 284.dp, max = 304.dp)
-                    .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
-                    .clip(RoundedCornerShape(30.dp)).background(AetherSurface),
+            AnimatedVisibility(
+                visibleState = visibility,
+                enter = fadeIn(tween(160, easing = SharedConversationMotionEasing)) + scaleIn(
+                    initialScale = 0.92f,
+                    transformOrigin = TransformOrigin(0f, 1f),
+                    animationSpec = tween(220, easing = SharedConversationMotionEasing),
+                ) + slideInVertically(
+                    animationSpec = tween(240, easing = SharedConversationMotionEasing),
+                    initialOffsetY = { it / 10 },
+                ),
+                exit = fadeOut(tween(120, easing = SharedConversationMotionEasing)) + scaleOut(
+                    targetScale = 0.96f,
+                    transformOrigin = TransformOrigin(0f, 1f),
+                    animationSpec = tween(160, easing = SharedConversationMotionEasing),
+                ) + slideOutVertically(
+                    animationSpec = tween(180, easing = SharedConversationMotionEasing),
+                    targetOffsetY = { it / 12 },
+                ),
             ) {
-                Column(
-                    modifier = Modifier.heightIn(max = ComposerPlusMenuMaxHeight)
-                        .verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                Box(
+                    modifier = Modifier.widthIn(min = 284.dp, max = 304.dp)
+                        .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = AetherScrim, spotColor = AetherScrim)
+                        .clip(RoundedCornerShape(30.dp)).background(AetherSurface),
                 ) {
-                    SharedComposerPlusMenuRow(
-                        title = stringResource(Res.string.chat_photos),
-                        icon = Icons.Rounded.Image,
-                        iconTint = Color(0xFF4E8D5A),
-                        onClick = onPickImages,
-                    )
-                    SharedComposerPlusMenuRow(
-                        title = stringResource(Res.string.chat_files),
-                        icon = Icons.Rounded.AttachFile,
-                        iconTint = AetherOnSurface,
-                        onClick = onPickFiles,
-                    )
-                    if (chromeAvailable || availableSkills.isNotEmpty() || mcpServers.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                    }
-                    if (chromeAvailable) {
+                    Column(
+                        modifier = Modifier.heightIn(max = ComposerPlusMenuMaxHeight)
+                            .verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
                         SharedComposerPlusMenuRow(
-                            title = stringResource(Res.string.chrome_label),
-                            icon = Icons.Rounded.Public,
-                            iconTint = Color(0xFF2F6DA3),
-                            selected = chromeEnabled,
-                            onClick = {
-                                onDismiss()
-                                onChromeSelected(!chromeEnabled)
-                            },
+                            title = stringResource(Res.string.chat_photos),
+                            icon = Icons.Rounded.Image,
+                            iconTint = Color(0xFF4E8D5A),
+                            onClick = onPickImages,
                         )
-                    }
-                    availableSkills.forEach { skill ->
-                        val selected = skill.id in selectedSkillIds
                         SharedComposerPlusMenuRow(
-                            title = skill.sharedQuickActionLabel(),
-                            icon = Icons.Rounded.Extension,
-                            iconTint = Color(0xFF9C6B2F),
-                            selected = selected,
-                            onClick = {
-                                onDismiss()
-                                onSkillSelected(skill.id, !selected)
-                            },
+                            title = stringResource(Res.string.chat_files),
+                            icon = Icons.Rounded.AttachFile,
+                            iconTint = AetherOnSurface,
+                            onClick = onPickFiles,
                         )
-                    }
-                    mcpServers.forEach { server ->
-                        val selected = server.id in activeMcpServerIds
-                        val stdio = server.transport == SharedMcpTransport.Stdio
-                        SharedComposerPlusMenuRow(
-                            title = server.sharedQuickActionLabel(),
-                            icon = if (stdio) Icons.Rounded.Terminal else Icons.Rounded.Cloud,
-                            iconTint = if (stdio) Color(0xFF2F6DA3) else Color(0xFF2A9C9A),
-                            selected = selected,
-                            onClick = {
-                                onDismiss()
-                                onMcpServerSelected(server.id, !selected)
-                            },
-                        )
+                        if (chromeAvailable || availableSkills.isNotEmpty() || mcpServers.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        if (chromeAvailable) {
+                            SharedComposerPlusMenuRow(
+                                title = stringResource(Res.string.chrome_label),
+                                icon = Icons.Rounded.Public,
+                                iconTint = Color(0xFF2F6DA3),
+                                selected = chromeEnabled,
+                                onClick = {
+                                    onDismiss()
+                                    onChromeSelected(!chromeEnabled)
+                                },
+                            )
+                        }
+                        availableSkills.forEach { skill ->
+                            val selected = skill.id in selectedSkillIds
+                            SharedComposerPlusMenuRow(
+                                title = skill.sharedQuickActionLabel(),
+                                icon = Icons.Rounded.Extension,
+                                iconTint = Color(0xFF9C6B2F),
+                                selected = selected,
+                                onClick = {
+                                    onDismiss()
+                                    onSkillSelected(skill.id, !selected)
+                                },
+                            )
+                        }
+                        mcpServers.forEach { server ->
+                            val selected = server.id in activeMcpServerIds
+                            val stdio = server.transport == SharedMcpTransport.Stdio
+                            SharedComposerPlusMenuRow(
+                                title = server.sharedQuickActionLabel(),
+                                icon = if (stdio) Icons.Rounded.Terminal else Icons.Rounded.Cloud,
+                                iconTint = if (stdio) Color(0xFF2F6DA3) else Color(0xFF2A9C9A),
+                                selected = selected,
+                                onClick = {
+                                    onDismiss()
+                                    onMcpServerSelected(server.id, !selected)
+                                },
+                            )
+                        }
                     }
                 }
             }

@@ -7,6 +7,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -36,6 +37,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -72,6 +75,37 @@ import kotlinx.coroutines.launch
 private const val SharedSettingsPageTransitionDuration = 320
 private val SharedSettingsPageTransitionEasing =
     CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
+
+/**
+ * Popup content is hosted in a separate native window on iOS. Mount that window for a complete
+ * composition/draw frame before starting the transition, then retain it until exit completes.
+ */
+@Composable
+internal fun SharedAnimatedPopupHost(
+    visible: Boolean,
+    content: @Composable (MutableTransitionState<Boolean>) -> Unit,
+) {
+    val transitionState = remember { MutableTransitionState(false) }
+    var mounted by remember { mutableStateOf(false) }
+
+    LaunchedEffect(visible) {
+        if (visible) {
+            mounted = true
+            withFrameNanos { }
+            withFrameNanos { }
+            transitionState.targetState = true
+        } else {
+            transitionState.targetState = false
+        }
+    }
+    LaunchedEffect(visible, transitionState.currentState, transitionState.isIdle) {
+        if (!visible && transitionState.isIdle && !transitionState.currentState) {
+            mounted = false
+        }
+    }
+
+    if (mounted) content(transitionState)
+}
 
 internal class SharedSettingsDismissGuard {
     private var activeReporter: Any? = null

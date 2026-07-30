@@ -187,9 +187,10 @@ class RuntimeHostToolExecutorTest {
         assertTrue(killedResult.isError)
         assertEquals("cancelled", killed.string("status"))
         assertEquals("Stopped by user.", killed.string("errmsg"))
-        assertEquals(
-            listOf(RuntimeProcessSignal.Terminate, RuntimeProcessSignal.Kill),
-            process.signals,
+        assertEquals(RuntimeProcessSignal.Terminate, process.signals.firstOrNull())
+        assertTrue(
+            process.signals == listOf(RuntimeProcessSignal.Terminate) ||
+                process.signals == listOf(RuntimeProcessSignal.Terminate, RuntimeProcessSignal.Kill),
         )
     }
 

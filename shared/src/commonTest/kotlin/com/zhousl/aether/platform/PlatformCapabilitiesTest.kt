@@ -17,7 +17,7 @@ class PlatformCapabilitiesTest {
         assertFalse(PlatformCapabilities.Ios.scheduledTasks)
         assertFalse(PlatformCapabilities.Ios.persistentBackground)
         assertFalse(PlatformCapabilities.Ios.nativeMods)
-        assertFalse(PlatformCapabilities.Ios.layeredScreenTransitions)
+        assertTrue(PlatformCapabilities.Ios.layeredScreenTransitions)
         assertTrue(PlatformCapabilities.Android.layeredScreenTransitions)
     }
 }

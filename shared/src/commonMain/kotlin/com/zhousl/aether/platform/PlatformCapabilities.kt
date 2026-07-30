@@ -33,7 +33,7 @@ data class PlatformCapabilities(
             persistentBackground = false,
             nativeMods = false,
             alpineChrome = false,
-            layeredScreenTransitions = false,
+            layeredScreenTransitions = true,
             supportsTabletLayout = true,
         )
     }

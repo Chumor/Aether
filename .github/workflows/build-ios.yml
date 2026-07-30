@@ -61,5 +61,6 @@ jobs:
             -project iosApp/Aether.xcodeproj \
             -scheme Aether \
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -parallel-testing-enabled NO \
             -only-testing:AetherRuntimeTests \
             -only-testing:AetherUITests

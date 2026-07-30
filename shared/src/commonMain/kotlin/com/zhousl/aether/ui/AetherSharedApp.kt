@@ -3,7 +3,6 @@ package com.zhousl.aether.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.animateEnterExit
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -109,6 +108,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -3039,8 +3039,16 @@ private fun SharedTabletSettingsOverlay(
 ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(140, easing = SharedConversationMotionEasing)),
-        exit = fadeOut(tween(120, easing = SharedConversationMotionEasing)),
+        enter = fadeIn(tween(140, easing = SharedConversationMotionEasing)) +
+            slideInVertically(
+                animationSpec = tween(190, easing = SharedConversationMotionEasing),
+                initialOffsetY = { it / 42 },
+            ),
+        exit = fadeOut(tween(120, easing = SharedConversationMotionEasing)) +
+            slideOutVertically(
+                animationSpec = tween(150, easing = SharedConversationMotionEasing),
+                targetOffsetY = { it / 48 },
+            ),
     ) {
         Box(
             modifier = Modifier.fillMaxSize()
@@ -3053,18 +3061,6 @@ private fun SharedTabletSettingsOverlay(
         ) {
             Surface(
                 modifier = Modifier
-                    .animateEnterExit(
-                        enter = fadeIn(tween(130, easing = SharedConversationMotionEasing)) +
-                            slideInVertically(
-                                animationSpec = tween(190, easing = SharedConversationMotionEasing),
-                                initialOffsetY = { it / 42 },
-                            ),
-                        exit = fadeOut(tween(90, easing = SharedConversationMotionEasing)) +
-                            slideOutVertically(
-                                animationSpec = tween(150, easing = SharedConversationMotionEasing),
-                                targetOffsetY = { it / 48 },
-                            ),
-                    )
                     .widthIn(max = 720.dp).heightIn(max = 860.dp).fillMaxSize()
                     .pointerInput(Unit) { detectTapGestures {} }
                     .shadow(

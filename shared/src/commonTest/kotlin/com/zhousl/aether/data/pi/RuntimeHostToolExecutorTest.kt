@@ -13,9 +13,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -182,7 +184,9 @@ class RuntimeHostToolExecutorTest {
         assertEquals("world", fetched.string("stdout"))
         assertEquals("running", fetched.string("status"))
 
-        val killedResult = executor.execute("kill_bash", args { put("run_id", runId) })
+        val killedResult = withContext(Dispatchers.Default) {
+            executor.execute("kill_bash", args { put("run_id", runId) })
+        }
         val killed = killedResult.json()
         assertTrue(killedResult.isError)
         assertEquals("cancelled", killed.string("status"))

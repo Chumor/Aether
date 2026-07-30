@@ -61,6 +61,7 @@ jobs:
             -scheme Aether \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
             -parallel-testing-enabled NO \
+            -test-timeouts-enabled NO \
             -only-testing:AetherRuntimeTests
 
       - name: Reset iOS simulator app data

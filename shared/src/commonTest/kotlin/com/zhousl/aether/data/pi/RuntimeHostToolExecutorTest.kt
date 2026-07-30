@@ -187,7 +187,10 @@ class RuntimeHostToolExecutorTest {
         assertTrue(killedResult.isError)
         assertEquals("cancelled", killed.string("status"))
         assertEquals("Stopped by user.", killed.string("errmsg"))
-        assertEquals(listOf(RuntimeProcessSignal.Terminate), process.signals)
+        assertEquals(
+            listOf(RuntimeProcessSignal.Terminate, RuntimeProcessSignal.Kill),
+            process.signals,
+        )
     }
 
     @Test
@@ -216,7 +219,7 @@ class RuntimeHostToolExecutorTest {
     }
 
     @Test
-    fun definitionsMatchAndroidRequiredAndOptionalParameters() {
+    fun definitionsExposeOnlyTheBuiltInIosRuntime() {
         val definitions = RuntimeHostToolExecutor(HostToolFakeRuntime()).definitions
         val byName = definitions.associateBy { it.jsonObject.string("name") }
 
@@ -236,6 +239,11 @@ class RuntimeHostToolExecutorTest {
         assertEquals(listOf("path"), readParameters["required"]!!.jsonArray.strings())
         assertTrue("limit" in readParameters["properties"]!!.jsonObject)
         assertTrue("working_directory" in readParameters["properties"]!!.jsonObject)
+        definitions.forEach { definition ->
+            val properties = definition.jsonObject["parameters"]!!.jsonObject["properties"]!!.jsonObject
+            assertFalse("environment" in properties)
+        }
+        assertFalse(definitions.toString().contains("termux", ignoreCase = true))
     }
 
     private fun args(block: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit): JsonObject =

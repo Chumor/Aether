@@ -667,10 +667,9 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
     add(
         toolDefinition(
             name = "read",
-            description = "Read a text file from the selected local runtime with optional line-based offset and limit. path accepts ~ or ~/... for that runtime's home directory.",
+            description = "Read a text file from the built-in local runtime with optional line-based offset and limit. path accepts ~ or ~/... for the runtime's home directory.",
             executionMode = "parallel",
             required = listOf("path"),
-            "environment" to runtimeEnvironmentProperty(),
             "path" to stringProperty("The file path to read."),
             "offset" to integerProperty("Optional zero-based line offset to start reading from."),
             "limit" to integerProperty("Optional maximum number of lines to return."),
@@ -683,10 +682,9 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
     add(
         toolDefinition(
             name = "edit",
-            description = "Precisely edit a text file in the selected local runtime using exact oldText/newText replacements. For multiple edits use only edits[]. path accepts ~ or ~/... for that runtime's home directory.",
+            description = "Precisely edit a text file in the built-in local runtime using exact oldText/newText replacements. For multiple edits use only edits[]. path accepts ~ or ~/... for the runtime's home directory.",
             executionMode = "sequential",
             required = listOf("path"),
-            "environment" to runtimeEnvironmentProperty(),
             "path" to stringProperty("The file path to edit."),
             "oldText" to stringProperty("For a single edit only, the exact text to replace. Omit this when using edits[]."),
             "newText" to stringProperty("For a single edit only, the replacement text. Omit this when using edits[]."),
@@ -713,10 +711,9 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
     add(
         toolDefinition(
             name = "write",
-            description = "Create a new text file or completely overwrite an existing text file in the selected local runtime. path accepts ~ or ~/... for that runtime's home directory.",
+            description = "Create a new text file or completely overwrite an existing text file in the built-in local runtime. path accepts ~ or ~/... for the runtime's home directory.",
             executionMode = "sequential",
             required = listOf("path", "content"),
-            "environment" to runtimeEnvironmentProperty(),
             "path" to stringProperty("The file path to create or overwrite."),
             "content" to stringProperty("The full file contents to write."),
             "workingDirectory" to stringProperty("Optional working directory used to resolve relative paths."),
@@ -726,10 +723,9 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
     add(
         toolDefinition(
             name = "grep",
-            description = "Search for text or a regex pattern inside a file or directory tree in the selected local runtime. path accepts ~ or ~/... for that runtime's home directory.",
+            description = "Search for text or a regex pattern inside a file or directory tree in the built-in local runtime. path accepts ~ or ~/... for the runtime's home directory.",
             executionMode = "parallel",
             required = listOf("path", "pattern"),
-            "environment" to runtimeEnvironmentProperty(),
             "path" to stringProperty("The file or directory path to search."),
             "pattern" to stringProperty("The text or regex pattern to search for."),
             "isRegex" to booleanProperty("Whether pattern should be treated as a regex."),
@@ -742,10 +738,9 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
     add(
         toolDefinition(
             name = "find",
-            description = "Find files or directories by glob pattern in the selected local runtime. path accepts ~ or ~/... for that runtime's home directory.",
+            description = "Find files or directories by glob pattern in the built-in local runtime. path accepts ~ or ~/... for the runtime's home directory.",
             executionMode = "parallel",
             required = listOf("path", "pattern"),
-            "environment" to runtimeEnvironmentProperty(),
             "path" to stringProperty("The directory path to search in."),
             "pattern" to stringProperty("The glob pattern to match, such as *.kt."),
             "type" to stringProperty("Optional match type: any, file, or directory."),
@@ -759,10 +754,9 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
     add(
         toolDefinition(
             name = "ls",
-            description = "List the contents of a directory or inspect a file path in the selected local runtime. path accepts ~ or ~/... for that runtime's home directory.",
+            description = "List the contents of a directory or inspect a file path in the built-in local runtime. path accepts ~ or ~/... for the runtime's home directory.",
             executionMode = "parallel",
             required = listOf("path"),
-            "environment" to runtimeEnvironmentProperty(),
             "path" to stringProperty("The file or directory path to list."),
             "recursive" to booleanProperty("Whether to list recursively."),
             "includeHidden" to booleanProperty("Whether to include hidden files and directories."),
@@ -775,12 +769,11 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
     add(
         toolDefinition(
             name = "bash",
-            description = "Execute a bash command in the selected local runtime. If it is still running after the live window, the tool returns status=running and a runtime-prefixed run_id.",
+            description = "Execute a bash command in the built-in local runtime. If it is still running after the live window, the tool returns status=running and a runtime-prefixed run_id.",
             executionMode = "sequential",
             required = listOf("command"),
-            "environment" to runtimeEnvironmentProperty(),
             "command" to stringProperty("The bash command or script to execute."),
-            "working_directory" to stringProperty("Optional working directory inside the selected runtime."),
+            "working_directory" to stringProperty("Optional working directory inside the local runtime."),
             "workingDirectory" to stringProperty("Alias of working_directory."),
         ),
     )
@@ -792,7 +785,6 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
             required = listOf("run_id"),
             "run_id" to stringProperty("The run_id returned by bash when it reported status=running."),
             "runId" to stringProperty("Alias of run_id."),
-            "environment" to runtimeEnvironmentProperty(),
             "tail_bytes" to integerProperty("Optional maximum number of bytes to return from the end of stdout and stderr."),
             "tailBytes" to integerProperty("Alias of tail_bytes."),
         ),
@@ -805,7 +797,6 @@ private fun sharedRuntimeHostToolDefinitions(): JsonArray = buildJsonArray {
             required = listOf("run_id"),
             "run_id" to stringProperty("The run_id returned by bash when it reported status=running."),
             "runId" to stringProperty("Alias of run_id."),
-            "environment" to runtimeEnvironmentProperty(),
             "tail_bytes" to integerProperty("Optional maximum number of bytes to return from the end of stdout and stderr."),
             "tailBytes" to integerProperty("Alias of tail_bytes."),
         ),
@@ -845,9 +836,6 @@ private fun toolDefinition(
 private fun stringProperty(description: String): JsonObject = property("string", description)
 private fun integerProperty(description: String): JsonObject = property("integer", description)
 private fun booleanProperty(description: String): JsonObject = property("boolean", description)
-private fun runtimeEnvironmentProperty(): JsonObject = stringProperty(
-    "Optional local runtime: default, termux, or alpine. Use alpine for the built-in Linux VM and Termux for Android/phone integration.",
-)
 
 private fun property(type: String, description: String): JsonObject = buildJsonObject {
     put("type", type)

@@ -356,7 +356,7 @@ class SharedPiBridgeClient(
                             request(
                                 type = "abort",
                                 payload = buildJsonObject { put("request_id", requestId) },
-                                timeoutMillis = 15_000,
+                                timeoutMillis = 2_000,
                                 abortOnCancellation = false,
                             )
                         }

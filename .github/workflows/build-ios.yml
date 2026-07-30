@@ -55,12 +55,23 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Test iOS runtime and UI
+      - name: Test iOS runtime
         run: |
           xcodebuild test \
             -project iosApp/Aether.xcodeproj \
             -scheme Aether \
             -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
             -parallel-testing-enabled NO \
-            -only-testing:AetherRuntimeTests \
+            -only-testing:AetherRuntimeTests
+
+      - name: Reset iOS simulator app data
+        run: xcrun simctl uninstall booted com.baimoqilin.aether
+
+      - name: Test iOS UI
+        run: |
+          xcodebuild test \
+            -project iosApp/Aether.xcodeproj \
+            -scheme Aether \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -parallel-testing-enabled NO \
             -only-testing:AetherUITests

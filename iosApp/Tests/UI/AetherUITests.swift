@@ -21,8 +21,11 @@ final class AetherUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Set up the built-in Alpine Linux environment. It stays inside Aether's private app storage."].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["Initialize"].waitForExistence(timeout: 20))
         app.buttons["Initialize"].tap()
-        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 20))
-        app.buttons["Details"].tap()
+        let setupDetails = app.descendants(matching: .any)
+            .matching(identifier: "Details")
+            .firstMatch
+        XCTAssertTrue(setupDetails.waitForExistence(timeout: 20))
+        setupDetails.tap()
         XCTAssertTrue(app.staticTexts["Setup details"].waitForExistence(timeout: 10))
         app.buttons["Close"].tap()
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 300))
@@ -49,16 +52,16 @@ final class AetherUITests: XCTestCase {
         }
         app.buttons["Settings"].tap()
 
-        XCTAssertTrue(app.staticTexts["General"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["Providers"].exists)
+        XCTAssertTrue(app.staticTexts["General Settings"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Model Providers"].exists)
         XCTAssertTrue(app.staticTexts["Personalization"].exists)
-        XCTAssertTrue(app.staticTexts["Web tools"].exists)
+        XCTAssertTrue(app.staticTexts["Web Tools"].exists)
         XCTAssertTrue(app.staticTexts["Reliability"].exists)
-        XCTAssertTrue(app.staticTexts["Skills"].exists)
+        XCTAssertTrue(app.staticTexts["Agent Skills"].exists)
         XCTAssertTrue(app.staticTexts["Extensions"].exists)
         app.swipeUp()
         XCTAssertTrue(app.staticTexts["MCP Servers"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Alpine Runtime"].exists)
+        XCTAssertTrue(app.staticTexts["Alpine"].exists)
         app.swipeUp()
         XCTAssertTrue(app.staticTexts["About"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.staticTexts["Termux"].exists)
@@ -71,18 +74,29 @@ final class AetherUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(app.staticTexts["Settings"].waitForExistence(timeout: 10))
 
-        for _ in 0..<3 where !app.staticTexts["General"].isHittable {
+        for _ in 0..<3 where !app.staticTexts["General Settings"].isHittable {
             app.swipeDown()
         }
-        XCTAssertTrue(app.staticTexts["General"].isHittable)
+        XCTAssertTrue(app.staticTexts["General Settings"].isHittable)
 
-        let generalSettings = app.buttons["General, Language, appearance, and app behavior"]
+        let generalSettings = app.buttons
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "General Settings,"))
+            .firstMatch
         XCTAssertTrue(generalSettings.waitForExistence(timeout: 10))
         generalSettings.tap()
         XCTAssertTrue(app.staticTexts["Language"].waitForExistence(timeout: 10))
-        app.buttons["简体中文"].tap()
-        app.buttons["Dark"].tap()
-        app.buttons["Save"].tap()
+        app.buttons["System, Theme"].tap()
+        let darkTheme = app.descendants(matching: .any)
+            .matching(identifier: "Dark")
+            .firstMatch
+        XCTAssertTrue(darkTheme.waitForExistence(timeout: 10))
+        darkTheme.tap()
+        app.buttons["English, Language"].tap()
+        let simplifiedChinese = app.descendants(matching: .any)
+            .matching(identifier: "简体中文")
+            .firstMatch
+        XCTAssertTrue(simplifiedChinese.waitForExistence(timeout: 10))
+        simplifiedChinese.tap()
 
         app.terminate()
         let localizedApp = XCUIApplication()

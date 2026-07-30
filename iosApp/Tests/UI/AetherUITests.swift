@@ -10,17 +10,23 @@ final class AetherUITests: XCTestCase {
         app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
 
+        let privacyAgreement = app.buttons["Agree"]
+        if privacyAgreement.waitForExistence(timeout: 10) {
+            privacyAgreement.tap()
+        }
         XCTAssertTrue(app.buttons["Get started"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.staticTexts["Welcome to Aether"].exists)
         app.buttons["Get started"].tap()
 
-        XCTAssertTrue(app.staticTexts["Let's prepare the Alpine workspace used by Aether's local tools."].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["Details"].waitForExistence(timeout: 20))
-        app.staticTexts["Details"].tap()
-        XCTAssertTrue(app.staticTexts["Installation details"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Set up the built-in Alpine Linux environment. It stays inside Aether's private app storage."].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["Initialize"].waitForExistence(timeout: 20))
+        app.buttons["Initialize"].tap()
+        XCTAssertTrue(app.buttons["Details"].waitForExistence(timeout: 20))
+        app.buttons["Details"].tap()
+        XCTAssertTrue(app.staticTexts["Setup details"].waitForExistence(timeout: 10))
         app.buttons["Close"].tap()
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 300))
-        XCTAssertTrue(app.staticTexts["Alpine is ready"].exists)
+        XCTAssertTrue(app.staticTexts["Alpine is ready and will be used as the default local runtime."].exists)
         app.buttons["Continue"].tap()
 
         XCTAssertTrue(app.buttons["Skip"].waitForExistence(timeout: 30))
@@ -33,9 +39,14 @@ final class AetherUITests: XCTestCase {
         composer.typeText("keyboard-e2e")
         XCTAssertTrue((composer.value as? String)?.contains("keyboard-e2e") == true)
 
-        XCTAssertTrue(app.buttons["Menu"].exists)
-        app.buttons["Menu"].tap()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCTAssertFalse(app.buttons["Menu"].exists)
+            XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        } else {
+            XCTAssertTrue(app.buttons["Menu"].exists)
+            app.buttons["Menu"].tap()
+            XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        }
         app.buttons["Settings"].tap()
 
         XCTAssertTrue(app.staticTexts["General"].waitForExistence(timeout: 15))

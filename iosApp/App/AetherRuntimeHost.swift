@@ -980,8 +980,11 @@ private final class AetherBackgroundExecutionCoordinator {
     private var registrationAttempted = false
     private var continuedTask: AnyObject?
     private var continuedTaskSubmitted = false
+    private var pendingCompletionSuccess: Bool?
+    private var progressTimer: DispatchSourceTimer?
     private var progressActivityCount: Int64 = 0
     private var lastProgressUpdate = Date.distantPast
+    private var lastProgressAdvance = Date.distantPast
 
     private var taskIdentifier: String {
         "\(Bundle.main.bundleIdentifier ?? "com.baimoqilin.aether").agent"
@@ -1008,6 +1011,7 @@ private final class AetherBackgroundExecutionCoordinator {
         onMainSync {
             let identifier = UUID().uuidString
             leases[identifier] = Lease(name: name, onExpired: onExpired, detail: "Starting")
+            pendingCompletionSuccess = nil
             ensureBriefBackgroundTask(name: name)
             if #available(iOS 26.0, *) {
                 ensureContinuedProcessingTask(name: name)
@@ -1024,10 +1028,9 @@ private final class AetherBackgroundExecutionCoordinator {
             guard #available(iOS 26.0, *),
                   let task = self.continuedTask as? BGContinuedProcessingTask else { return }
             let now = Date()
+            self.advanceProgress(task, now: now)
             guard now.timeIntervalSince(self.lastProgressUpdate) >= 1 else { return }
             self.lastProgressUpdate = now
-            self.progressActivityCount = min(self.progressActivityCount + 1, 9_999)
-            task.progress.completedUnitCount = self.progressActivityCount
             task.updateTitle(lease.name, subtitle: detail)
         }
     }
@@ -1052,7 +1055,7 @@ private final class AetherBackgroundExecutionCoordinator {
     private func ensureContinuedProcessingTask(name: String) {
         let scheduler = BGTaskScheduler.shared
         register()
-        guard !continuedTaskSubmitted else { return }
+        guard !continuedTaskSubmitted, continuedTask == nil else { return }
         let request = BGContinuedProcessingTaskRequest(
             identifier: taskIdentifier,
             title: name,
@@ -1069,42 +1072,93 @@ private final class AetherBackgroundExecutionCoordinator {
 
     @available(iOS 26.0, *)
     private func attach(_ task: BGContinuedProcessingTask) {
+        continuedTaskSubmitted = false
+        if let success = pendingCompletionSuccess {
+            pendingCompletionSuccess = nil
+            task.progress.totalUnitCount = 1
+            task.progress.completedUnitCount = success ? 1 : 0
+            task.setTaskCompleted(success: success)
+            endBriefBackgroundTask()
+            return
+        }
         guard !leases.isEmpty else {
-            continuedTaskSubmitted = false
             task.setTaskCompleted(success: true)
             endBriefBackgroundTask()
             return
         }
         continuedTask = task
         progressActivityCount = 1
+        lastProgressUpdate = .distantPast
+        lastProgressAdvance = Date()
         task.progress.totalUnitCount = 10_000
         task.progress.completedUnitCount = progressActivityCount
         task.expirationHandler = { [weak self] in
             self?.onMain { self?.expireAll() }
         }
+        startProgressHeartbeat()
         endBriefBackgroundTask()
+    }
+
+    @available(iOS 26.0, *)
+    private func startProgressHeartbeat() {
+        stopProgressHeartbeat()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 15, repeating: 15, leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self,
+                  !self.leases.isEmpty,
+                  let task = self.continuedTask as? BGContinuedProcessingTask else { return }
+            self.advanceProgress(task, now: Date())
+        }
+        progressTimer = timer
+        timer.resume()
+    }
+
+    @available(iOS 26.0, *)
+    private func advanceProgress(_ task: BGContinuedProcessingTask, now: Date) {
+        guard now.timeIntervalSince(lastProgressAdvance) >= 14 else { return }
+        lastProgressAdvance = now
+        // Agent turns have no knowable total work. Move an activity proxy toward, but never
+        // reach, completion so the scheduler can distinguish a long tool call from a stall.
+        let remaining = 9_999 - progressActivityCount
+        let increment = max(remaining / 120, 1)
+        progressActivityCount = min(progressActivityCount + increment, 9_999)
+        task.progress.completedUnitCount = progressActivityCount
+    }
+
+    private func stopProgressHeartbeat() {
+        progressTimer?.setEventHandler {}
+        progressTimer?.cancel()
+        progressTimer = nil
     }
 
     private func expireAll() {
         let callbacks = leases.values.map(\.onExpired)
         leases.removeAll()
-        finishAll(success: false)
         callbacks.forEach { $0() }
+        finishAll(success: false)
     }
 
     private func finishAll(success: Bool) {
         if #available(iOS 26.0, *), let task = continuedTask as? BGContinuedProcessingTask {
+            task.expirationHandler = nil
             if success {
                 task.progress.completedUnitCount = task.progress.totalUnitCount
             }
             task.setTaskCompleted(success: success)
+        } else if #available(iOS 26.0, *), continuedTaskSubmitted {
+            // Cancelling a successfully submitted request is presented by the system as
+            // Task Failed. Retain its result and complete it when the launch handler runs.
+            pendingCompletionSuccess = success
         }
         continuedTask = nil
-        if #available(iOS 26.0, *), continuedTaskSubmitted {
-            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskIdentifier)
+        if !continuedTaskSubmitted {
+            pendingCompletionSuccess = nil
         }
-        continuedTaskSubmitted = false
+        stopProgressHeartbeat()
         progressActivityCount = 0
+        lastProgressUpdate = .distantPast
+        lastProgressAdvance = .distantPast
         endBriefBackgroundTask()
     }
 

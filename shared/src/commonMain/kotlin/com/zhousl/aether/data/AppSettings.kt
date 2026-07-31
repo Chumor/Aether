@@ -50,6 +50,10 @@ enum class AppLanguage(
     SimplifiedChinese(
         storageValue = "zh-CN",
         languageTag = "zh-CN",
+    ),
+    Persian(
+        storageValue = "fa",
+        languageTag = "fa",
     );
 
     companion object {

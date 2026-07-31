@@ -99,6 +99,23 @@ class SharedPiBridgeClientTest {
     }
 
     @Test
+    fun resetStopsCurrentBridgeAndAllowsCleanRestart() = runTest {
+        val transport = RestartingBridgeTransport(ProtocolFakeProcess(), ProtocolFakeProcess())
+        val client = SharedPiBridgeClient(
+            transport = transport,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+
+        assertEquals("ready", client.ping()["status"]?.jsonPrimitive?.content)
+        client.reset()
+        assertEquals("ready", client.ping()["status"]?.jsonPrimitive?.content)
+
+        assertEquals(2, transport.startCount)
+        assertEquals(1, transport.stopCount)
+        client.close()
+    }
+
+    @Test
     fun listProvidersDoesNotStartBridgeWhenDisabled() = runTest {
         val transport = CountingBridgeTransport()
         val client = SharedPiBridgeClient(

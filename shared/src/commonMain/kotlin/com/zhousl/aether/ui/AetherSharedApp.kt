@@ -3836,17 +3836,33 @@ private fun RuntimeSetupStep(
     var showDetails by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(retryKey) {
+        val shouldReset = retryKey > 0 && error.isNotBlank()
         ready = false
         error = ""
+        if (retryKey > 0) running = true
+        if (shouldReset) {
+            try {
+                bridgeClient.reset()
+                runtime.resetForRetry()
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                error = failure.message ?: "AI engine setup failed."
+                progress = progress.copy(
+                    output = (progress.output + "Setup failed: $error\n").takeLast(120_000),
+                )
+                running = false
+                return@LaunchedEffect
+            }
+        }
         val installed = runSharedAppCatching { runtime.isReady() }.getOrElse { failure ->
             alpineReady = false
             error = failure.message.orEmpty()
+            running = false
             return@LaunchedEffect
         }
         alpineReady = installed
         if (retryKey == 0) return@LaunchedEffect
 
-        running = true
         try {
             progress = RuntimeSetupProgress(
                 phase = RuntimePhaseCheckingAlpine,

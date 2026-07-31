@@ -208,6 +208,7 @@ fun OnboardingScreen(
     onInstallTermux: () -> Unit,
     onRefreshTermuxSetup: () -> Unit,
     onInitializeAlpineRuntime: () -> Unit,
+    onRetryAlpineSetup: () -> Unit,
     onRefreshAlpineSetup: () -> Unit,
     onRefreshRootSetup: () -> Unit,
     onConfigureWithRoot: () -> Unit,
@@ -322,6 +323,7 @@ fun OnboardingScreen(
                 },
                 onClose = onClose,
                 onInitialize = onInitializeAlpineRuntime,
+                onRetry = onRetryAlpineSetup,
                 onRefresh = onRefreshAlpineSetup,
                 onContinue = {
                     if (setupPreviewMode) {
@@ -847,6 +849,7 @@ private fun AlpineRuntimeStep(
     onBack: () -> Unit,
     onClose: () -> Unit,
     onInitialize: () -> Unit,
+    onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onContinue: () -> Unit,
 ) {
@@ -903,8 +906,8 @@ private fun AlpineRuntimeStep(
                     TourActionRow(
                         primaryLabel = if (piCoreSetupState.isChecking) {
                             stringResource(R.string.onboarding_pi_setup_working)
-                        } else stringResource(R.string.settings_initialize),
-                        onPrimary = if (piCoreSetupState.isChecking) onRefresh else onInitialize,
+                        } else stringResource(R.string.common_retry),
+                        onPrimary = onRetry,
                         primaryEnabled = !piCoreSetupState.isChecking,
                         primaryLoading = piCoreSetupState.isChecking,
                         secondaryLabel = stringResource(R.string.common_back),
@@ -951,7 +954,7 @@ private fun AlpineRuntimeStep(
                         } else {
                             stringResource(R.string.common_retry)
                         },
-                        onPrimary = if (piCoreSetupState.isChecking) onRefresh else onInitialize,
+                        onPrimary = if (piCoreSetupState.isChecking) onRefresh else onRetry,
                         primaryEnabled = !piCoreSetupState.isChecking,
                         primaryLoading = piCoreSetupState.isChecking,
                         secondaryLabel = stringResource(R.string.common_back),
@@ -960,7 +963,7 @@ private fun AlpineRuntimeStep(
                 } else {
                     TourActionRow(
                         primaryLabel = stringResource(R.string.common_retry),
-                        onPrimary = onInitialize,
+                        onPrimary = onRetry,
                         secondaryLabel = stringResource(R.string.common_skip),
                         onSecondary = onContinue,
                     )

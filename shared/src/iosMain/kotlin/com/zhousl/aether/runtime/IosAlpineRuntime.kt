@@ -72,6 +72,13 @@ class IosAlpineRuntime(
         })
     }
 
+    override suspend fun resetForRetry() = suspendCancellableCoroutine { continuation ->
+        host.resetRuntimeForRetry(object : NativeUnitResultListener {
+            override fun onSuccess() = continuation.resume(Unit)
+            override fun onError(message: String) = continuation.resumeFailure(message)
+        })
+    }
+
     private companion object {
         const val MaxSetupOutputCharacters = 120_000
         const val RuntimeStderrBufferChunks = 64

@@ -596,72 +596,157 @@ class AetherViewModel(
 
     fun initializeAlpineRuntime(makeDefault: Boolean = true) {
         viewModelScope.launch {
+            initializeAlpineRuntimeAfterReset(makeDefault)
+        }
+    }
+
+    fun retryAlpineRuntimeSetup(makeDefault: Boolean = true) {
+        viewModelScope.launch {
             _uiState.update { current ->
                 current.copy(
+                    alpineSetupState = LocalRuntimeSetupState(
+                        runtimeId = LocalRuntimeId.Alpine,
+                        issue = LocalRuntimeIssue.NotInstalled,
+                    ),
                     piCoreSetupState = PiCoreSetupState(
                         isChecking = true,
                         phase = PiCoreSetupPhase.CheckingAlpine,
                         output = "Starting Alpine setup...\n",
-                    )
+                    ),
                 )
             }
-            val setupState = withContext(Dispatchers.IO) {
-                runtime.alpineRuntime.initialize { progress ->
-                    applyPiCoreSetupUpdate(
-                        PiCoreSetupUpdate(
-                            phase = PiCoreSetupPhase.CheckingAlpine,
-                            activity = when (progress.activity) {
-                                AlpineSetupActivity.Extracting -> PiCoreSetupActivity.Extracting
-                                AlpineSetupActivity.Downloading -> PiCoreSetupActivity.Downloading
-                                AlpineSetupActivity.Installing -> PiCoreSetupActivity.None
-                                AlpineSetupActivity.None -> PiCoreSetupActivity.None
-                            },
-                            bytesPerSecond = progress.bytesPerSecond,
-                            output = progress.output,
-                        )
-                    )
+            val resetFailure = try {
+                withContext(Dispatchers.IO) {
+                    runtime.alpineChromeController.stop()
+                    runtime.piKernelBridge.stop()
+                    runtime.alpineRuntime.reset()
                 }
+                null
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                error
             }
-            if (setupState.isReady) {
-                settingsRepository.updateSettings(
-                    _uiState.value.settings.withRuntimeEnabled(
-                        runtimeId = LocalRuntimeId.Alpine,
-                        makeDefault = makeDefault,
-                    )
-                )
-            }
-            _uiState.update { current -> current.copy(alpineSetupState = setupState) }
-            if (setupState.isReady) {
+            if (resetFailure != null) {
+                val detail = resetFailure.userFacingMessage()
                 _uiState.update { current ->
                     current.copy(
-                        piCoreSetupState = current.piCoreSetupState.copy(
-                            isChecking = false,
-                            activity = PiCoreSetupActivity.None,
-                            bytesPerSecond = 0L,
+                        alpineSetupState = LocalRuntimeSetupState(
+                            runtimeId = LocalRuntimeId.Alpine,
+                            issue = LocalRuntimeIssue.Failed,
+                            detail = detail,
                         ),
-                    )
-                }
-                refreshPiCoreSetup()
-            } else {
-                _uiState.update { current ->
-                    current.copy(
                         piCoreSetupState = current.piCoreSetupState.copy(
                             isChecking = false,
                             phase = PiCoreSetupPhase.Failed,
                             failedAtPhase = PiCoreSetupPhase.CheckingAlpine,
-                            detail = setupState.detail,
-                            activity = PiCoreSetupActivity.None,
-                            bytesPerSecond = 0L,
+                            detail = detail,
                             output = appendSetupOutput(
                                 current.piCoreSetupState.output,
-                                "Setup failed: ${setupState.detail}\n",
+                                "Setup failed: $detail\n",
                             ),
-                        )
+                        ),
                     )
                 }
+                emitTransientMessage(UiText.Raw(detail))
+                return@launch
             }
-            emitTransientMessage(UiText.Raw(setupState.detail.ifBlank { "Alpine runtime status refreshed." }))
+            val settings = _uiState.value.settings
+            val remainingRuntimeIds = settings.enabledRuntimeIds - LocalRuntimeId.Alpine
+            settingsRepository.updateSettings(
+                settings.copy(
+                    alpineSetupCompleted = false,
+                    alpinePackageProfiles = emptyMap(),
+                    enabledRuntimeIds = remainingRuntimeIds,
+                    defaultRuntimeId = if (settings.defaultRuntimeId == LocalRuntimeId.Alpine) {
+                        remainingRuntimeIds.firstOrNull()
+                    } else {
+                        settings.defaultRuntimeId
+                    },
+                )
+            )
+            _uiState.update { current ->
+                current.copy(
+                    alpinePackageInstallProgress = emptyMap(),
+                    draftChromeEnabled = false,
+                    sessions = current.sessions.map { it.copy(chromeEnabled = false) },
+                )
+            }
+            chatStateStore.updateAndFlush { persisted ->
+                persisted.copy(
+                    sessions = persisted.sessions.map { it.copy(chromeEnabled = false) },
+                )
+            }
+            initializeAlpineRuntimeAfterReset(makeDefault)
         }
+    }
+
+    private suspend fun initializeAlpineRuntimeAfterReset(makeDefault: Boolean) {
+        _uiState.update { current ->
+            current.copy(
+                piCoreSetupState = PiCoreSetupState(
+                    isChecking = true,
+                    phase = PiCoreSetupPhase.CheckingAlpine,
+                    output = "Starting Alpine setup...\n",
+                )
+            )
+        }
+        val setupState = withContext(Dispatchers.IO) {
+            runtime.alpineRuntime.initialize { progress ->
+                applyPiCoreSetupUpdate(
+                    PiCoreSetupUpdate(
+                        phase = PiCoreSetupPhase.CheckingAlpine,
+                        activity = when (progress.activity) {
+                            AlpineSetupActivity.Extracting -> PiCoreSetupActivity.Extracting
+                            AlpineSetupActivity.Downloading -> PiCoreSetupActivity.Downloading
+                            AlpineSetupActivity.Installing -> PiCoreSetupActivity.None
+                            AlpineSetupActivity.None -> PiCoreSetupActivity.None
+                        },
+                        bytesPerSecond = progress.bytesPerSecond,
+                        output = progress.output,
+                    )
+                )
+            }
+        }
+        if (setupState.isReady) {
+            settingsRepository.updateSettings(
+                _uiState.value.settings.withRuntimeEnabled(
+                    runtimeId = LocalRuntimeId.Alpine,
+                    makeDefault = makeDefault,
+                )
+            )
+        }
+        _uiState.update { current -> current.copy(alpineSetupState = setupState) }
+        if (setupState.isReady) {
+            _uiState.update { current ->
+                current.copy(
+                    piCoreSetupState = current.piCoreSetupState.copy(
+                        isChecking = false,
+                        activity = PiCoreSetupActivity.None,
+                        bytesPerSecond = 0L,
+                    ),
+                )
+            }
+            refreshPiCoreSetup()
+        } else {
+            _uiState.update { current ->
+                current.copy(
+                    piCoreSetupState = current.piCoreSetupState.copy(
+                        isChecking = false,
+                        phase = PiCoreSetupPhase.Failed,
+                        failedAtPhase = PiCoreSetupPhase.CheckingAlpine,
+                        detail = setupState.detail,
+                        activity = PiCoreSetupActivity.None,
+                        bytesPerSecond = 0L,
+                        output = appendSetupOutput(
+                            current.piCoreSetupState.output,
+                            "Setup failed: ${setupState.detail}\n",
+                        ),
+                    )
+                )
+            }
+        }
+        emitTransientMessage(UiText.Raw(setupState.detail.ifBlank { "Alpine runtime status refreshed." }))
     }
 
     private suspend fun refreshPiCoreSetup() {

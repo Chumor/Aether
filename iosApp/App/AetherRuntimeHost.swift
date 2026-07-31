@@ -116,6 +116,31 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         }
     }
 
+    func resetRuntimeForRetry(listener: NativeUnitResultListener) {
+        operations.async { [self] in
+            do {
+                let marker = try alpineResetMarkerURL()
+                if FileManager.default.fileExists(atPath: marker.path) {
+                    try purgePendingAlpineReset()
+                }
+
+                initialized = false
+                guard !runtime.isInitialized else {
+                    complete { listener.onSuccess() }
+                    return
+                }
+
+                let root = try alpineRuntimeRootURL()
+                if FileManager.default.fileExists(atPath: root.path) {
+                    try FileManager.default.removeItem(at: root)
+                }
+                complete { listener.onSuccess() }
+            } catch {
+                complete { listener.onError(message: error.localizedDescription) }
+            }
+        }
+    }
+
     private func finishInitialization(listener: NativeRuntimeInitializationListener) {
         operations.async { [self] in
             do {

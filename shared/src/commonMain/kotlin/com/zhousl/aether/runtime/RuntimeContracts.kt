@@ -85,6 +85,7 @@ interface MultiplatformLocalRuntime {
 
     suspend fun isReady(): Boolean = fileSystem.exists("/etc/alpine-release")
     suspend fun initialize(onProgress: (RuntimeSetupProgress) -> Unit = {})
+    suspend fun resetForRetry() = reset()
     suspend fun reset() {
         throw UnsupportedOperationException("This runtime cannot be reset.")
     }

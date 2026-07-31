@@ -9,6 +9,15 @@ final class AetherRuntimeTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testInternetPermissionProbeUsesFiniteHeadRequest() throws {
+        let request = makeInternetPermissionRequest()
+
+        XCTAssertEqual(request.url?.absoluteString, "https://models.dev/catalog.json")
+        XCTAssertEqual(request.httpMethod, "HEAD")
+        XCTAssertEqual(request.cachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertEqual(request.timeoutInterval, 5)
+    }
+
     func testNodeAndNpmAreReadyAfterRuntimeInitialization() throws {
         try initializeRuntime()
 

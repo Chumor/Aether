@@ -1,15 +1,55 @@
+import Foundation
 import SwiftUI
 import UIKit
 import AetherShared
 
 private final class AetherAppDelegate: NSObject, UIApplicationDelegate {
+    private let internetPermissionRequester = AetherInternetPermissionRequester()
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         AetherRuntimeHost.shared.registerBackgroundExecution()
+        internetPermissionRequester.requestAccess()
         return true
     }
+}
+
+/// iOS does not expose an explicit API for the Wireless LAN & Cellular Data prompt.
+/// Starting a real internet request on first launch lets the system present it before
+/// onboarding needs provider access. The system remembers the choice per installation.
+final class AetherInternetPermissionRequester {
+    private static let requestRecordedKey = "internetPermissionRequestRecorded"
+    private var session: URLSession?
+
+    func requestAccess() {
+        guard
+            session == nil,
+            !UserDefaults.standard.bool(forKey: Self.requestRecordedKey)
+        else { return }
+        UserDefaults.standard.set(true, forKey: Self.requestRecordedKey)
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        configuration.timeoutIntervalForResource = 5
+        let session = URLSession(configuration: configuration)
+        self.session = session
+        session.dataTask(with: makeInternetPermissionRequest()) { [weak self] _, _, _ in
+            session.finishTasksAndInvalidate()
+            self?.session = nil
+        }.resume()
+    }
+}
+
+func makeInternetPermissionRequest() -> URLRequest {
+    var request = URLRequest(
+        url: URL(string: "https://models.dev/catalog.json")!,
+        cachePolicy: .reloadIgnoringLocalCacheData,
+        timeoutInterval: 5
+    )
+    request.httpMethod = "HEAD"
+    return request
 }
 
 @main

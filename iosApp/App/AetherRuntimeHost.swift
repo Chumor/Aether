@@ -986,8 +986,8 @@ private final class AetherBackgroundExecutionCoordinator {
     private var lastProgressUpdate = Date.distantPast
     private var lastProgressAdvance = Date.distantPast
 
-    private var taskIdentifier: String {
-        "\(Bundle.main.bundleIdentifier ?? "com.baimoqilin.aether").agent"
+    private var taskIdentifierPattern: String {
+        "\(Bundle.main.bundleIdentifier ?? "com.baimoqilin.aether").agent.*"
     }
 
     func register() {
@@ -995,7 +995,7 @@ private final class AetherBackgroundExecutionCoordinator {
             guard #available(iOS 26.0, *), !registrationAttempted else { return }
             registrationAttempted = true
             BGTaskScheduler.shared.register(
-                forTaskWithIdentifier: taskIdentifier,
+                forTaskWithIdentifier: taskIdentifierPattern,
                 using: nil
             ) { [weak self] task in
                 guard let self, let task = task as? BGContinuedProcessingTask else {
@@ -1057,7 +1057,7 @@ private final class AetherBackgroundExecutionCoordinator {
         register()
         guard !continuedTaskSubmitted, continuedTask == nil else { return }
         let request = BGContinuedProcessingTaskRequest(
-            identifier: taskIdentifier,
+            identifier: taskIdentifierPattern,
             title: name,
             subtitle: "Agent is working"
         )

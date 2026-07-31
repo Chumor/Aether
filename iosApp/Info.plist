@@ -26,7 +26,7 @@
 	<string>Aether accesses local network services only when you connect a self-hosted AI provider or MCP server.</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).agent</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).agent.*</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

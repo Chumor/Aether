@@ -76,7 +76,7 @@ room {
 
 android {
     namespace = "com.zhousl.aether.shared"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26

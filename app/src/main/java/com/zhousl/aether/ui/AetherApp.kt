@@ -1015,7 +1015,7 @@ private fun AetherAppContent(
                     onRefreshTermuxSetup = viewModel::refreshTermuxSetup,
                     onInitializeAlpineRuntime = { viewModel.initializeAlpineRuntime(makeDefault = false) },
                     onResetAlpineRuntime = viewModel::resetAlpineRuntime,
-                    onRefreshAlpineSetup = viewModel::refreshAlpineSetup,
+                    onRefreshAlpineSetup = { viewModel.refreshAlpineSetup(startPiIfReady = true) },
                     onInstallAlpinePackageProfile = viewModel::installAlpinePackageProfile,
                     onCreateAlpineTerminalLaunchSpec = viewModel::createAlpineTerminalLaunchSpec,
                     onStartAlpineChrome = viewModel::startAlpineChrome,

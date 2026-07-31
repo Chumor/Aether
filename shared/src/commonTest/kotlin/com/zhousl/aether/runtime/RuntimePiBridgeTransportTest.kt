@@ -48,10 +48,23 @@ class RuntimePiBridgeTransportTest {
 
         assertFailsWith<IllegalStateException> { transport.start() }
     }
+
+    @Test
+    fun refusesToInitializeRuntimeWhenAlpineIsNotReady() = runTest {
+        val runtime = FakeRuntime(bridgeInstalled = false, runtimeReady = false)
+        val transport = RuntimePiBridgeTransport(runtime)
+
+        val failure = assertFailsWith<IllegalStateException> { transport.start() }
+
+        assertEquals("Initialize Alpine before starting the agent runtime.", failure.message)
+        assertEquals(0, runtime.initializeCount)
+        assertEquals(0, runtime.startCount)
+    }
 }
 
 private class FakeRuntime(
     private val bridgeInstalled: Boolean,
+    private val runtimeReady: Boolean = true,
 ) : MultiplatformLocalRuntime {
     override val homeDirectory = "/root"
     override val workspaceRoot = "/workspace"
@@ -66,6 +79,8 @@ private class FakeRuntime(
     var initializeCount = 0
     var startCount = 0
     var lastSpec: RuntimeProcessSpec? = null
+
+    override suspend fun isReady() = runtimeReady
 
     override suspend fun initialize(onProgress: (RuntimeSetupProgress) -> Unit) {
         initializeCount++

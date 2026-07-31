@@ -21,6 +21,18 @@ final class AetherRuntimeTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("v22."), result.stdout)
     }
 
+    func testRuntimeReportsReadyAfterInitializationCompletes() throws {
+        try initializeRuntime()
+
+        let checked = expectation(description: "Alpine runtime readiness checked")
+        let listener = BooleanCapture(expectation: checked)
+        host.isRuntimeReady(listener: listener)
+        wait(for: [checked], timeout: 10)
+
+        if let error = listener.error { throw RuntimeTestError.failed(error) }
+        XCTAssertEqual(listener.value, true)
+    }
+
     func testRetryResetAllowsMountedRuntimeToInitializeAgain() throws {
         try initializeRuntime()
 
@@ -557,6 +569,16 @@ private final class InitializationCapture: NSObject, NativeRuntimeInitialization
     func onProgress(phase: String, detail: String, fraction: Double) {}
     func onOutput(text: String) {}
     func onReady() { expectation.fulfill() }
+    func onError(message: String) { error = message; expectation.fulfill() }
+}
+
+private final class BooleanCapture: NSObject, NativeBooleanResultListener {
+    private let expectation: XCTestExpectation
+    var value: Bool?
+    var error: String?
+
+    init(expectation: XCTestExpectation) { self.expectation = expectation }
+    func onSuccess(value: Bool) { self.value = value; expectation.fulfill() }
     func onError(message: String) { error = message; expectation.fulfill() }
 }
 

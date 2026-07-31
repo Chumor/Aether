@@ -29,20 +29,17 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         operations.async { [self] in
             do {
                 try purgePendingAlpineReset()
-                let applicationSupport = try FileManager.default.url(
-                    for: .applicationSupportDirectory,
-                    in: .userDomainMask,
-                    appropriateFor: nil,
-                    create: true
-                )
-                let root = applicationSupport.appendingPathComponent("AetherAlpine", isDirectory: true)
+                let root = try alpineRuntimeRootURL()
                 let hasData = FileManager.default.fileExists(
                     atPath: root.appendingPathComponent("data", isDirectory: true).path
                 )
                 let hasDatabase = FileManager.default.fileExists(
                     atPath: root.appendingPathComponent("meta.db", isDirectory: false).path
                 )
-                onMain { listener.onSuccess(value: hasData && hasDatabase) }
+                let hasSetupMarker = FileManager.default.fileExists(
+                    atPath: try alpineSetupCompleteMarkerURL().path
+                )
+                onMain { listener.onSuccess(value: hasData && hasDatabase && hasSetupMarker) }
             } catch {
                 onMain { listener.onError(message: error.localizedDescription) }
             }
@@ -277,10 +274,15 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
 
     private func markRuntimeReady(listener: NativeRuntimeInitializationListener) {
         operations.async {
-            self.initialized = true
-            self.onMain {
-                listener.onProgress(phase: "ready", detail: "Alpine is ready", fraction: 1.0)
-                listener.onReady()
+            do {
+                try Data().write(to: self.alpineSetupCompleteMarkerURL(), options: .atomic)
+                self.initialized = true
+                self.onMain {
+                    listener.onProgress(phase: "ready", detail: "Alpine is ready", fraction: 1.0)
+                    listener.onReady()
+                }
+            } catch {
+                self.onMain { listener.onError(message: error.localizedDescription) }
             }
         }
     }
@@ -348,6 +350,10 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
 
     func fileExists(path: String, listener: NativeBooleanResultListener) {
         operations.async { [self] in
+            guard runtime.isInitialized else {
+                complete { listener.onSuccess(value: false) }
+                return
+            }
             complete { listener.onSuccess(value: self.runtime.fileExists(path)) }
         }
     }
@@ -891,6 +897,11 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
             create: true
         )
         return applicationSupport.appendingPathComponent(".AetherAlpineResetPending", isDirectory: false)
+    }
+
+    private func alpineSetupCompleteMarkerURL() throws -> URL {
+        try alpineRuntimeRootURL()
+            .appendingPathComponent(".aether-setup-complete", isDirectory: false)
     }
 
     private func purgePendingAlpineReset() throws {

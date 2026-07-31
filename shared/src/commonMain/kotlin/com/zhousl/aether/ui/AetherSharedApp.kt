@@ -1261,6 +1261,9 @@ fun AetherSharedApp(
 
         LaunchedEffect(route) {
             if (route == SharedRoute.Chat || route == SharedRoute.Settings) {
+                val runtimeReady = runSharedAppCatching { runtime.isReady() }
+                    .getOrDefault(false)
+                if (!runtimeReady) return@LaunchedEffect
                 runSharedAppCatching {
                     runtime.initialize()
                     skillManager.list()

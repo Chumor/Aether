@@ -395,12 +395,12 @@ class SharedPiBridgeClient(
         )
     }
 
-    suspend fun close() {
+    suspend fun reset() {
         stateMutex.withLock {
             pending.values.forEach { request ->
                 request.events.close()
                 request.eventJob.cancel()
-                request.response.completeExceptionally(PiBridgeRequestException("Pi Bridge closed."))
+                request.response.completeExceptionally(PiBridgeRequestException("Pi Bridge reset."))
             }
             pending.clear()
             readerJob?.cancel()
@@ -410,6 +410,10 @@ class SharedPiBridgeClient(
             process = null
         }
         transport.stop()
+    }
+
+    suspend fun close() {
+        reset()
         scope.cancel()
     }
 

@@ -731,6 +731,13 @@ private fun AetherAppContent(
                                 viewModel.initializeAlpineRuntime(makeDefault = true)
                             }
                         },
+                        onRetryAlpineSetup = {
+                            if (uiState.developerAlpineSetupPreviewState != null) {
+                                viewModel.restartDeveloperAlpineSetupPreview()
+                            } else {
+                                viewModel.retryAlpineRuntimeSetup(makeDefault = true)
+                            }
+                        },
                         onRefreshAlpineSetup = {
                             if (uiState.developerAlpineSetupPreviewState != null) {
                                 viewModel.restartDeveloperAlpineSetupPreview()

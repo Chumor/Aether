@@ -39,6 +39,7 @@ class AlpineRuntime(
 ) : LocalRuntime {
     private val appContext = context.applicationContext
     private val runtimeRoot = File(appContext.filesDir, "runtimes/alpine")
+    private val stagingRoot = File(runtimeRoot.parentFile, "alpine-installing")
     private val rootfsDir = File(runtimeRoot, "rootfs")
     private val workspaceDir = File(runtimeRoot, "workspace")
     private val hostBinDir = File(runtimeRoot, "bin")
@@ -136,7 +137,22 @@ class AlpineRuntime(
     }
 
     suspend fun reset(): LocalRuntimeSetupState = withContext(Dispatchers.IO) {
-        runtimeRoot.deleteRecursively()
+        runs.values.forEach { run ->
+            run.process?.takeIf(Process::isAlive)?.let { process ->
+                run.cancelled = true
+                runCatching { process.destroy() }
+                if (!process.waitFor(800, TimeUnit.MILLISECONDS)) {
+                    runCatching { process.destroyForcibly() }
+                }
+            }
+        }
+        runs.clear()
+        check(!runtimeRoot.exists() || runtimeRoot.deleteRecursively()) {
+            "Unable to reset Alpine runtime data."
+        }
+        check(!stagingRoot.exists() || stagingRoot.deleteRecursively()) {
+            "Unable to reset incomplete Alpine installation data."
+        }
         LocalRuntimeSetupState(
             runtimeId = id,
             issue = LocalRuntimeIssue.NotInstalled,
@@ -608,7 +624,7 @@ class AlpineRuntime(
         onProgress: (AlpineSetupProgress) -> Unit,
     ) {
         onProgress(AlpineSetupProgress(output = "Preparing Alpine runtime files...\n"))
-        val stagingRoot = File(runtimeRoot.parentFile, "alpine-installing").apply {
+        stagingRoot.apply {
             deleteRecursively()
             mkdirs()
         }

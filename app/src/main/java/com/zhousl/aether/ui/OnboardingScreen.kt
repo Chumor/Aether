@@ -208,6 +208,7 @@ fun OnboardingScreen(
     onInstallTermux: () -> Unit,
     onRefreshTermuxSetup: () -> Unit,
     onInitializeAlpineRuntime: () -> Unit,
+    onRetryAlpineSetup: () -> Unit,
     onRefreshAlpineSetup: () -> Unit,
     onRefreshRootSetup: () -> Unit,
     onConfigureWithRoot: () -> Unit,
@@ -322,6 +323,7 @@ fun OnboardingScreen(
                 },
                 onClose = onClose,
                 onInitialize = onInitializeAlpineRuntime,
+                onRetry = onRetryAlpineSetup,
                 onRefresh = onRefreshAlpineSetup,
                 onContinue = {
                     if (setupPreviewMode) {
@@ -847,6 +849,7 @@ private fun AlpineRuntimeStep(
     onBack: () -> Unit,
     onClose: () -> Unit,
     onInitialize: () -> Unit,
+    onRetry: () -> Unit,
     onRefresh: () -> Unit,
     onContinue: () -> Unit,
 ) {
@@ -904,7 +907,7 @@ private fun AlpineRuntimeStep(
                         primaryLabel = if (piCoreSetupState.isChecking) {
                             stringResource(R.string.onboarding_pi_setup_working)
                         } else stringResource(R.string.common_retry),
-                        onPrimary = onRefresh,
+                        onPrimary = onRetry,
                         primaryEnabled = !piCoreSetupState.isChecking,
                         primaryLoading = piCoreSetupState.isChecking,
                         secondaryLabel = stringResource(R.string.common_back),
@@ -917,14 +920,14 @@ private fun AlpineRuntimeStep(
                 LocalRuntimeIssue.Failed -> if (required) {
                     TourActionRow(
                         primaryLabel = stringResource(R.string.common_refresh),
-                        onPrimary = onRefresh,
+                        onPrimary = if (setupState.issue == LocalRuntimeIssue.Failed) onRetry else onRefresh,
                         secondaryLabel = stringResource(R.string.common_back),
                         onSecondary = onBack,
                     )
                 } else {
                     TourActionRow(
                         primaryLabel = stringResource(R.string.common_refresh),
-                        onPrimary = onRefresh,
+                        onPrimary = if (setupState.issue == LocalRuntimeIssue.Failed) onRetry else onRefresh,
                         secondaryLabel = stringResource(R.string.common_skip),
                         onSecondary = onContinue,
                     )

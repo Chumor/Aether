@@ -7,6 +7,7 @@ package com.zhousl.aether.runtime
 interface NativeRuntimeHost {
     fun isRuntimeReady(listener: NativeBooleanResultListener)
     fun initialize(listener: NativeRuntimeInitializationListener)
+    fun resetRuntimeForRetry(listener: NativeUnitResultListener)
     fun resetRuntime(listener: NativeUnitResultListener)
     fun startProcess(
         executable: String,

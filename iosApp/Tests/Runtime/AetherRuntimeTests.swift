@@ -21,6 +21,25 @@ final class AetherRuntimeTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("v22."), result.stdout)
     }
 
+    func testRetryResetAllowsMountedRuntimeToInitializeAgain() throws {
+        try initializeRuntime()
+
+        let reset = expectation(description: "Alpine retry reset completes")
+        let listener = UnitCapture(expectation: reset)
+        host.resetRuntimeForRetry(listener: listener)
+        wait(for: [reset], timeout: 10)
+        if let error = listener.error {
+            throw RuntimeTestError.failed(error)
+        }
+
+        try initializeRuntime()
+        let result = try run(
+            "/bin/sh",
+            arguments: ["-c", "node --version && test -f /root/.aether/pi-bridge/bridge.mjs"]
+        )
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+    }
+
     func testLastWorkerThreadReportsTheLeaderProcessExit() throws {
         try initializeRuntime()
 

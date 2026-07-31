@@ -20,7 +20,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            AetherApp(onPrivacyPolicyAccepted = ::maybeRequestNotificationPermission)
+            AetherApp(onNotificationPermissionRequested = ::requestNotificationPermission)
         }
     }
 
@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
         (application as AetherApplication).runtime.nativeModManager.notifyUiStable()
     }
 
-    private fun maybeRequestNotificationPermission() {
+    private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (
             ContextCompat.checkSelfPermission(

@@ -331,8 +331,8 @@ private val PageTransitionEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
 private val SettingsTopFadeHeight = 40.dp
 private val StatisticsInputColor = Color(0xFF5D7CFF)
 private val StatisticsOutputColor = Color(0xFF7B68EE)
-private val StatisticsReasoningColor = Color(0xFFA9B8FF)
-private val StatisticsNeutralChartColor = Color(0xFFDCE4FF)
+private val StatisticsReasoningColor = Color(0xFF6E56CF)
+private val StatisticsNeutralChartColor = Color(0xFF747C89)
 
 
 
@@ -503,6 +503,7 @@ fun SettingsScreen(
     onToggleScheduledTaskEnabled: (String, Boolean) -> Unit,
     onRemoveScheduledTask: (String) -> Unit,
     onRequestTermuxPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onImportAppData: () -> Unit,
     onExportAppData: () -> Unit,
     onExportLogs: () -> Unit,
@@ -795,7 +796,6 @@ fun SettingsScreen(
                         else -> stringResource(R.string.settings_no_providers_configured)
                     }
                 },
-                systemPromptSnippet = systemPromptValue.text.take(60),
                 tavilyConfigured = tavilyApiKeyValue.text.isNotBlank(),
                 reliabilitySummary = buildString {
                     append(
@@ -1004,7 +1004,10 @@ fun SettingsScreen(
                 keepTasksRunningInBackground = keepTasksRunningInBackgroundValue,
                 onKeepTasksRunningInBackgroundChanged = { keepTasksRunningInBackgroundValue = it },
                 notifyOnTaskCompletion = notifyOnTaskCompletionValue,
-                onNotifyOnTaskCompletionChanged = { notifyOnTaskCompletionValue = it },
+                onNotifyOnTaskCompletionChanged = { enabled ->
+                    notifyOnTaskCompletionValue = enabled
+                    if (enabled) onRequestNotificationPermission()
+                },
                 onBack = { currentPage = SettingsPage.Hub.name },
             )
 
@@ -1306,7 +1309,6 @@ fun SettingsScreen(
 private fun SettingsHub(
     generalSettingsSummary: String,
     activeProviderName: String,
-    systemPromptSnippet: String,
     tavilyConfigured: Boolean,
     reliabilitySummary: String,
     termuxReady: Boolean,
@@ -1383,7 +1385,7 @@ private fun SettingsHub(
                 SettingsNavRow(
                     icon = Icons.Rounded.Person,
                     title = stringResource(R.string.settings_personalization),
-                    subtitle = systemPromptSnippet.ifBlank { stringResource(R.string.settings_custom_instructions) },
+                    subtitle = stringResource(R.string.settings_personalization_summary),
                     onClick = { onNavigate(SettingsPage.Personalization) },
                 )
                 CardDivider()
@@ -2595,7 +2597,7 @@ private fun ProviderCard(
             Icon(
                 Icons.Rounded.Delete,
                 contentDescription = stringResource(R.string.action_remove),
-                tint = Color(0xFFD25757),
+                tint = MaterialTheme.colorScheme.error,
             )
         }
     }
@@ -3137,7 +3139,7 @@ private fun SkillCard(
                 Icon(
                     Icons.Rounded.Delete,
                     contentDescription = stringResource(R.string.action_remove),
-                    tint = Color(0xFFD25757),
+                    tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -4421,7 +4423,7 @@ private fun McpServerCard(
                 Icon(
                     Icons.Rounded.Delete,
                     contentDescription = stringResource(R.string.action_remove),
-                    tint = Color(0xFFD25757),
+                    tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -4589,7 +4591,7 @@ private fun ScheduledTaskCard(
                 Icon(
                     Icons.Rounded.Delete,
                     contentDescription = stringResource(R.string.action_delete),
-                    tint = Color(0xFFD25757),
+                    tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),
                 )
             }

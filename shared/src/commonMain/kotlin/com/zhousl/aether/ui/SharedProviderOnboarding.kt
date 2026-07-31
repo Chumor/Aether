@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -198,6 +201,7 @@ fun SharedProviderOnboardingStep(
             providerSearch = providerSearch,
             onProviderSearchChange = { providerSearch = it },
             providerChoices = providerChoices,
+            authMethod = selectedAuthMethod,
             onProviderSelected = { provider ->
                 onClearAuthState()
                 formState.applyProviderDefaults(provider)
@@ -305,8 +309,9 @@ fun SharedProviderOnboardingStep(
                     ) {
                         ProviderWizardChoiceRow(
                             icon = Icons.Rounded.VerifiedUser,
-                            title = stringResource(Res.string.provider_add_subscription),
-                            subtitle = stringResource(Res.string.provider_add_subscription_description),
+                            title = stringResource(Res.string.onboarding_provider_subscription),
+                            subtitle = stringResource(Res.string.onboarding_provider_subscription_description),
+                            bareIcon = true,
                             onClick = {
                                 selectedAuthMethodName = ProviderAuthMethod.OAuth.name
                                 providerSearch = ""
@@ -316,8 +321,9 @@ fun SharedProviderOnboardingStep(
                         )
                         ProviderWizardChoiceRow(
                             icon = Icons.Rounded.Key,
-                            title = stringResource(Res.string.provider_add_api_key),
-                            subtitle = stringResource(Res.string.provider_add_api_key_description),
+                            title = stringResource(Res.string.onboarding_provider_api_key),
+                            subtitle = stringResource(Res.string.onboarding_provider_api_key_description),
+                            bareIcon = true,
                             onClick = {
                                 selectedAuthMethodName = ProviderAuthMethod.ApiKey.name
                                 providerSearch = ""
@@ -327,8 +333,9 @@ fun SharedProviderOnboardingStep(
                         )
                         ProviderWizardChoiceRow(
                             icon = Icons.Rounded.Cloud,
-                            title = stringResource(Res.string.provider_add_environment),
-                            subtitle = stringResource(Res.string.provider_add_environment_description),
+                            title = stringResource(Res.string.onboarding_provider_environment),
+                            subtitle = stringResource(Res.string.onboarding_provider_environment_description),
+                            bareIcon = true,
                             onClick = {
                                 selectedAuthMethodName = ProviderAuthMethod.Ambient.name
                                 providerSearch = ""
@@ -357,11 +364,11 @@ fun SharedProviderOnboardingStep(
                             style = MaterialTheme.typography.bodySmall,
                             color = SharedProviderTourTextSecondary,
                         )
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            modelChoices.take(8).forEach { model ->
+                            items(modelChoices, key = { model -> model }) { model ->
                                 SharedProviderModelOptionButton(
                                     label = model,
                                     selected = formState.modelId.trim().equals(model, ignoreCase = true),
@@ -412,6 +419,7 @@ private fun SharedProviderPickerContent(
     providerSearch: String,
     onProviderSearchChange: (String) -> Unit,
     providerChoices: List<PiProviderDefinition>,
+    authMethod: ProviderAuthMethod,
     onProviderSelected: (PiProviderDefinition) -> Unit,
 ) {
     Column(
@@ -427,7 +435,7 @@ private fun SharedProviderPickerContent(
         providerChoices.forEach { provider ->
             SharedProviderStageButton(
                 label = provider.displayName,
-                subtitle = "${provider.category} · ${provider.id}",
+                subtitle = sharedProviderTourSubtitle(provider, authMethod),
                 provider = provider,
                 onClick = { onProviderSelected(provider) },
             )
@@ -439,6 +447,24 @@ private fun SharedProviderPickerContent(
             color = SharedProviderTourTextSecondary,
         )
     }
+}
+
+@Composable
+private fun sharedProviderTourSubtitle(
+    provider: PiProviderDefinition,
+    authMethod: ProviderAuthMethod,
+): String = when {
+    authMethod == ProviderAuthMethod.OAuth && provider.id == "openai-codex" ->
+        stringResource(Res.string.onboarding_provider_openai_codex_oauth_summary)
+    authMethod == ProviderAuthMethod.OAuth && provider.id == "anthropic" ->
+        stringResource(Res.string.onboarding_provider_anthropic_oauth_summary)
+    authMethod == ProviderAuthMethod.OAuth && provider.id == "github-copilot" ->
+        stringResource(Res.string.onboarding_provider_github_copilot_oauth_summary)
+    authMethod == ProviderAuthMethod.ApiKey && provider.id == "openai" ->
+        stringResource(Res.string.onboarding_provider_openai_api_summary)
+    authMethod == ProviderAuthMethod.ApiKey && provider.id == "openai-compatible" ->
+        stringResource(Res.string.onboarding_provider_custom_api_summary)
+    else -> "${provider.category} · ${provider.id}"
 }
 
 @Composable

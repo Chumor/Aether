@@ -1,5 +1,7 @@
 package com.zhousl.aether.ui
 
+import com.zhousl.aether.platform.LocalReduceMotion
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
@@ -587,6 +589,7 @@ internal fun SharedConversationMessage(
                             ) {
                                 SharedBranchStepButton(
                                     icon = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                                    contentDescription = stringResource(Res.string.chat_previous_branch),
                                     enabled = message.branchIndex > 0,
                                     onClick = onPreviousBranch,
                                 )
@@ -597,6 +600,7 @@ internal fun SharedConversationMessage(
                                 )
                                 SharedBranchStepButton(
                                     icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                    contentDescription = stringResource(Res.string.chat_next_branch),
                                     enabled = message.branchIndex < message.branchCount - 1,
                                     onClick = onNextBranch,
                                 )
@@ -1516,14 +1520,19 @@ private fun SharedUserMessageActionRow(icon: ImageVector, label: String, onClick
 }
 
 @Composable
-private fun SharedBranchStepButton(enabled: Boolean, icon: ImageVector, onClick: () -> Unit) {
+private fun SharedBranchStepButton(
+    enabled: Boolean,
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
     Box(
-        modifier = Modifier.size(32.dp).clip(CircleShape).clickable(enabled = enabled, onClick = onClick),
+        modifier = Modifier.size(44.dp).clip(CircleShape).clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             icon,
-            contentDescription = null,
+            contentDescription = contentDescription,
             tint = if (enabled) AetherOnSurfaceVariant else AetherOnSurfaceVariant.copy(alpha = 0.32f),
             modifier = Modifier.size(30.dp),
         )
@@ -1616,6 +1625,15 @@ internal fun SharedReasoningShimmerText(
     travelDurationMillis: Int = 1_800,
     pauseDurationMillis: Int = 1_000,
 ) {
+    if (LocalReduceMotion.current) {
+        Text(
+            text = text,
+            modifier = modifier,
+            style = MaterialTheme.typography.bodyMedium,
+            color = AetherOnSurfaceVariant,
+        )
+        return
+    }
     val totalDurationMillis = travelDurationMillis + pauseDurationMillis
     val travelDistance = (280f + text.length * 18f).coerceIn(280f, 760f)
     val shimmerOffset by rememberInfiniteTransition(label = "shared_reasoning_status_shimmer").animateFloat(

@@ -41,7 +41,7 @@ val LightAetherPalette = AetherPalette(
     outlineSoft = Color(0xFFE7E3DA),
     onSurface = Color(0xFF202123),
     onSurfaceVariant = Color(0xFF6E6A62),
-    primary = Color(0xFF7C5CFA),
+    primary = Color(0xFF7250E8),
     onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFFF1E5FF),
     onPrimaryContainer = Color(0xFF4D2F8E),
@@ -50,7 +50,7 @@ val LightAetherPalette = AetherPalette(
     secondaryContainer = Color(0xFFDDF1E8),
     onSecondaryContainer = Color(0xFF1E4A3B),
     tertiary = Color(0xFF9A7DF8),
-    error = Color(0xFFD25757),
+    error = Color(0xFFB43E3E),
     messageBubble = Color(0xFFF0E3FF),
     scrim = Color(0x22000000),
 )
@@ -80,13 +80,36 @@ val DarkAetherPalette = AetherPalette(
     scrim = Color(0x66000000),
 )
 
+val LightHighContrastAetherPalette = LightAetherPalette.copy(
+    outline = Color(0xFFA39E95),
+    outlineSoft = Color(0xFFBBB6AC),
+    onSurface = Color(0xFF111214),
+    onSurfaceVariant = Color(0xFF514D46),
+    primary = Color(0xFF6545D6),
+    primaryContainer = Color(0xFFE7D5FF),
+    onPrimaryContainer = Color(0xFF35186F),
+    error = Color(0xFFB43E3E),
+)
+
+val DarkHighContrastAetherPalette = DarkAetherPalette.copy(
+    outline = Color(0xFF777F89),
+    outlineSoft = Color(0xFF656C75),
+    onSurface = Color(0xFFFFFFFF),
+    onSurfaceVariant = Color(0xFFD2CCC1),
+    primary = Color(0xFFD5C8FF),
+    primaryContainer = Color(0xFF4C3378),
+    onPrimaryContainer = Color(0xFFFFFFFF),
+    error = Color(0xFFFFB0B0),
+)
+
 private var currentPalette by mutableStateOf(LightAetherPalette)
 
-fun updateAetherPalette(darkTheme: Boolean) {
-    val palette = if (darkTheme) {
-        DarkAetherPalette
-    } else {
-        LightAetherPalette
+fun updateAetherPalette(darkTheme: Boolean, increasedContrast: Boolean = false) {
+    val palette = when {
+        darkTheme && increasedContrast -> DarkHighContrastAetherPalette
+        darkTheme -> DarkAetherPalette
+        increasedContrast -> LightHighContrastAetherPalette
+        else -> LightAetherPalette
     }
     if (currentPalette != palette) {
         currentPalette = palette

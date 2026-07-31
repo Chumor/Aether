@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -310,6 +312,7 @@ fun OnboardingScreen(
                 setupState = alpineSetupState,
                 piCoreSetupState = piCoreSetupState,
                 required = isInitialFlow,
+                replayMode = replayMode,
                 onBack = {
                     if (setupPreviewMode) {
                         onClose()
@@ -581,8 +584,9 @@ private fun ProviderSetupStep(
                     ) {
                         ProviderWizardChoiceRow(
                             icon = Icons.Rounded.VerifiedUser,
-                            title = stringResource(R.string.provider_add_subscription),
-                            subtitle = stringResource(R.string.provider_add_subscription_description),
+                            title = stringResource(R.string.onboarding_provider_subscription),
+                            subtitle = stringResource(R.string.onboarding_provider_subscription_description),
+                            bareIcon = true,
                             onClick = {
                                 selectedAuthMethodName = ProviderAuthMethod.OAuth.name
                                 providerSearch = ""
@@ -592,8 +596,9 @@ private fun ProviderSetupStep(
                         )
                         ProviderWizardChoiceRow(
                             icon = Icons.Rounded.Key,
-                            title = stringResource(R.string.provider_add_api_key),
-                            subtitle = stringResource(R.string.provider_add_api_key_description),
+                            title = stringResource(R.string.onboarding_provider_api_key),
+                            subtitle = stringResource(R.string.onboarding_provider_api_key_description),
+                            bareIcon = true,
                             onClick = {
                                 selectedAuthMethodName = ProviderAuthMethod.ApiKey.name
                                 providerSearch = ""
@@ -603,8 +608,9 @@ private fun ProviderSetupStep(
                         )
                         ProviderWizardChoiceRow(
                             icon = Icons.Rounded.Cloud,
-                            title = stringResource(R.string.provider_add_environment),
-                            subtitle = stringResource(R.string.provider_add_environment_description),
+                            title = stringResource(R.string.onboarding_provider_environment),
+                            subtitle = stringResource(R.string.onboarding_provider_environment_description),
+                            bareIcon = true,
                             onClick = {
                                 selectedAuthMethodName = ProviderAuthMethod.Ambient.name
                                 providerSearch = ""
@@ -629,7 +635,7 @@ private fun ProviderSetupStep(
                         providerChoices.forEach { provider ->
                             ProviderStageButton(
                                 label = provider.displayName,
-                                subtitle = "${provider.category} · ${provider.id}",
+                                subtitle = providerTourSubtitle(provider, selectedAuthMethod),
                                 provider = provider,
                                 onClick = {
                                     onClearAuthState()
@@ -708,11 +714,11 @@ private fun ProviderSetupStep(
                             style = MaterialTheme.typography.bodySmall,
                             color = TourTextSecondary,
                         )
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            modelChoices.take(8).forEach { model ->
+                            items(modelChoices, key = { model -> model }) { model ->
                                 ModelOptionButton(
                                     label = model,
                                     selected = formState.modelId.trim().equals(model, ignoreCase = true),
@@ -754,6 +760,24 @@ private fun ProviderSetupStep(
             }
         }
     }
+}
+
+@Composable
+private fun providerTourSubtitle(
+    provider: PiProviderDefinition,
+    authMethod: ProviderAuthMethod,
+): String = when {
+    authMethod == ProviderAuthMethod.OAuth && provider.id == "openai-codex" ->
+        stringResource(R.string.onboarding_provider_openai_codex_oauth_summary)
+    authMethod == ProviderAuthMethod.OAuth && provider.id == "anthropic" ->
+        stringResource(R.string.onboarding_provider_anthropic_oauth_summary)
+    authMethod == ProviderAuthMethod.OAuth && provider.id == "github-copilot" ->
+        stringResource(R.string.onboarding_provider_github_copilot_oauth_summary)
+    authMethod == ProviderAuthMethod.ApiKey && provider.id == "openai" ->
+        stringResource(R.string.onboarding_provider_openai_api_summary)
+    authMethod == ProviderAuthMethod.ApiKey && provider.id == "openai-compatible" ->
+        stringResource(R.string.onboarding_provider_custom_api_summary)
+    else -> "${provider.category} · ${provider.id}"
 }
 
 @Composable
@@ -846,6 +870,7 @@ private fun AlpineRuntimeStep(
     setupState: LocalRuntimeSetupState,
     piCoreSetupState: PiCoreSetupState,
     required: Boolean,
+    replayMode: Boolean,
     onBack: () -> Unit,
     onClose: () -> Unit,
     onInitialize: () -> Unit,
@@ -895,9 +920,11 @@ private fun AlpineRuntimeStep(
                 PiCoreSetupProgress(piCoreSetupState)
             }
             when (setupState.issue) {
-                LocalRuntimeIssue.Ready -> if (!required || piCoreSetupState.isReady) {
+                LocalRuntimeIssue.Ready -> if (replayMode || !required || piCoreSetupState.isReady) {
                     TourActionRow(
-                        primaryLabel = stringResource(R.string.common_continue),
+                        primaryLabel = stringResource(
+                            if (replayMode) R.string.common_next else R.string.common_continue,
+                        ),
                         onPrimary = onContinue,
                         secondaryLabel = stringResource(R.string.common_refresh),
                         onSecondary = onRefresh,

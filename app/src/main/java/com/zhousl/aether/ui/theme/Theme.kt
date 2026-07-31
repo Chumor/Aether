@@ -5,6 +5,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.text.TextStyle
@@ -12,6 +13,46 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.zhousl.aether.data.AppThemeMode
+import com.zhousl.aether.platform.LocalReduceMotion
+import com.zhousl.aether.platform.rememberPlatformAccessibilityPreferences
+
+private val LightHighContrastAetherColors = lightColorScheme(
+    primary = LightHighContrastAetherPalette.primary,
+    onPrimary = LightHighContrastAetherPalette.onPrimary,
+    primaryContainer = LightHighContrastAetherPalette.primaryContainer,
+    onPrimaryContainer = LightHighContrastAetherPalette.onPrimaryContainer,
+    secondary = LightHighContrastAetherPalette.secondary,
+    onSecondary = LightHighContrastAetherPalette.onSecondary,
+    secondaryContainer = LightHighContrastAetherPalette.secondaryContainer,
+    onSecondaryContainer = LightHighContrastAetherPalette.onSecondaryContainer,
+    background = LightHighContrastAetherPalette.background,
+    surface = LightHighContrastAetherPalette.surface,
+    surfaceVariant = LightHighContrastAetherPalette.surfaceVariant,
+    onSurface = LightHighContrastAetherPalette.onSurface,
+    onSurfaceVariant = LightHighContrastAetherPalette.onSurfaceVariant,
+    tertiary = LightHighContrastAetherPalette.tertiary,
+    error = LightHighContrastAetherPalette.error,
+    outline = LightHighContrastAetherPalette.outline,
+)
+
+private val DarkHighContrastAetherColors = darkColorScheme(
+    primary = DarkHighContrastAetherPalette.primary,
+    onPrimary = DarkHighContrastAetherPalette.onPrimary,
+    primaryContainer = DarkHighContrastAetherPalette.primaryContainer,
+    onPrimaryContainer = DarkHighContrastAetherPalette.onPrimaryContainer,
+    secondary = DarkHighContrastAetherPalette.secondary,
+    onSecondary = DarkHighContrastAetherPalette.onSecondary,
+    secondaryContainer = DarkHighContrastAetherPalette.secondaryContainer,
+    onSecondaryContainer = DarkHighContrastAetherPalette.onSecondaryContainer,
+    background = DarkHighContrastAetherPalette.background,
+    surface = DarkHighContrastAetherPalette.surface,
+    surfaceVariant = DarkHighContrastAetherPalette.surfaceVariant,
+    onSurface = DarkHighContrastAetherPalette.onSurface,
+    onSurfaceVariant = DarkHighContrastAetherPalette.onSurfaceVariant,
+    tertiary = DarkHighContrastAetherPalette.tertiary,
+    error = DarkHighContrastAetherPalette.error,
+    outline = DarkHighContrastAetherPalette.outline,
+)
 
 private val LightAetherColors = lightColorScheme(
     primary = LightAetherPalette.primary,
@@ -120,12 +161,20 @@ fun AetherTheme(
         AppThemeMode.Light -> false
         AppThemeMode.Dark -> true
     }
+    val accessibility = rememberPlatformAccessibilityPreferences()
     SideEffect {
-        updateAetherPalette(darkTheme)
+        updateAetherPalette(darkTheme, accessibility.increasedContrast)
     }
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkAetherColors else LightAetherColors,
-        typography = AetherTypography,
-        content = content
-    )
+    CompositionLocalProvider(LocalReduceMotion provides accessibility.reduceMotion) {
+        MaterialTheme(
+            colorScheme = when {
+                darkTheme && accessibility.increasedContrast -> DarkHighContrastAetherColors
+                darkTheme -> DarkAetherColors
+                accessibility.increasedContrast -> LightHighContrastAetherColors
+                else -> LightAetherColors
+            },
+            typography = AetherTypography,
+            content = content
+        )
+    }
 }

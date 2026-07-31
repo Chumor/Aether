@@ -72,6 +72,8 @@ import com.zhousl.aether.shared.resources.settings_default_runtime_help
 import com.zhousl.aether.shared.resources.settings_environment
 import com.zhousl.aether.shared.resources.settings_headers
 import com.zhousl.aether.shared.resources.settings_mcp_prompts
+import com.zhousl.aether.shared.resources.settings_mcp_refresh_failed
+import com.zhousl.aether.shared.resources.settings_mcp_test_failed
 import com.zhousl.aether.shared.resources.settings_mcp_resources
 import com.zhousl.aether.shared.resources.settings_mcp_servers
 import com.zhousl.aether.shared.resources.settings_mcp_servers_description
@@ -131,6 +133,9 @@ internal fun SharedMcpSettingsDetail(
     val toolsLabel = stringResource(Res.string.settings_mcp_tools)
     val resourcesLabel = stringResource(Res.string.settings_mcp_resources)
     val promptsLabel = stringResource(Res.string.settings_mcp_prompts)
+    val refreshFailedMessage = stringResource(Res.string.settings_mcp_refresh_failed)
+    val testErrorPlaceholder = "{mcp_test_error}"
+    val testFailedTemplate = stringResource(Res.string.settings_mcp_test_failed, testErrorPlaceholder)
 
     fun persist(updated: List<SharedMcpServerConfig>, afterSuccess: () -> Unit = {}): Boolean {
         if (persistBusy) return false
@@ -149,7 +154,7 @@ internal fun SharedMcpSettingsDetail(
                 }
                     .onFailure {
                         if (it is CancellationException) throw it
-                        status = it.message.orEmpty().ifBlank { "Unable to refresh MCP tools." }
+                        status = it.message.orEmpty().ifBlank { refreshFailedMessage }
                         statusIsError = true
                     }
             } catch (failure: CancellationException) {
@@ -181,7 +186,10 @@ internal fun SharedMcpSettingsDetail(
             } catch (failure: CancellationException) {
                 throw failure
             } catch (failure: Throwable) {
-                status = "Test failed: ${failure.message ?: "Unknown MCP error."}"
+                status = testFailedTemplate.replace(
+                    testErrorPlaceholder,
+                    failure.message.orEmpty().ifBlank { refreshFailedMessage },
+                )
                 statusIsError = true
             }
         }
@@ -377,7 +385,7 @@ private fun SharedMcpServerCard(
                 Icon(
                     Icons.Rounded.Delete,
                     contentDescription = stringResource(Res.string.action_remove),
-                    tint = Color(0xFFD25757),
+                    tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),
                 )
             }

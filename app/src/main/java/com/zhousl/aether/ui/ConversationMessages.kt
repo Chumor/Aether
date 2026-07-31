@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.SystemClock
 import android.widget.Toast
+import com.zhousl.aether.platform.LocalReduceMotion
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
@@ -1967,6 +1968,15 @@ fun ShimmerStatusText(
     travelDurationMillis: Int = 1800,
     pauseDurationMillis: Int = 1000,
 ) {
+    if (LocalReduceMotion.current) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = AetherOnSurfaceVariant,
+            modifier = modifier,
+        )
+        return
+    }
     val travelDistance = (280f + text.length * 18f).coerceIn(280f, 760f)
     val sweepHalfWidth = 180f
     val totalDurationMillis = travelDurationMillis + pauseDurationMillis
@@ -3191,7 +3201,7 @@ private fun IconOnlyAction(
 ) {
     Box(
         modifier = Modifier
-            .size(28.dp)
+            .size(44.dp)
             .clip(CircleShape)
             .background(
                 if (enabled) AetherSurface.copy(alpha = 0.72f) else AetherSurface.copy(alpha = 0.35f)
@@ -3217,7 +3227,7 @@ private fun AssistantMessageAction(
 ) {
     Box(
         modifier = Modifier
-            .size(24.dp)
+            .size(44.dp)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

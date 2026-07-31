@@ -373,7 +373,7 @@ private fun SharedProviderCard(
             Icon(
                 imageVector = Icons.Rounded.Delete,
                 contentDescription = stringResource(Res.string.action_remove),
-                tint = Color(0xFFD25757),
+                tint = MaterialTheme.colorScheme.error,
             )
         }
     }
@@ -643,10 +643,13 @@ private fun SharedProviderEditPage(
     var authState by remember(existingConfig?.id) { mutableStateOf(PiProviderAuthState()) }
     var authJob by remember(existingConfig?.id) { mutableStateOf<Job?>(null) }
     var fetchingModels by remember(existingConfig?.id) { mutableStateOf(false) }
-    val oauthWaitingMessage = "Waiting for authorization."
-    val credentialsWaitingMessage = "Waiting for credentials."
-    val oauthConnectedMessage = "Connected with OAuth."
-    val apiKeyConfiguredMessage = "API key configured."
+    val oauthWaitingMessage = stringResource(Res.string.provider_form_oauth_waiting)
+    val credentialsWaitingMessage = stringResource(Res.string.provider_form_credentials_waiting)
+    val oauthConnectedMessage = stringResource(Res.string.provider_form_oauth_connected)
+    val apiKeyConfiguredMessage = stringResource(Res.string.provider_form_api_key_configured)
+    val completeAuthorizationMessage = stringResource(Res.string.provider_form_complete_authorization_browser)
+    val enterDeviceCodeMessage = stringResource(Res.string.provider_form_enter_device_code_browser)
+    val unknownErrorMessage = stringResource(Res.string.common_unknown_error)
     val fetchErrorPlaceholder = "{fetch_error}"
     val fetchModelsFailedTemplate = stringResource(
         Res.string.message_fetch_models_failed,
@@ -667,7 +670,7 @@ private fun SharedProviderEditPage(
                     onTransientMessage(
                         fetchModelsFailedTemplate.replace(
                             fetchErrorPlaceholder,
-                            error.trim().ifBlank { "Unknown error." },
+                            error.trim().ifBlank { unknownErrorMessage },
                         ),
                     )
                 }
@@ -713,7 +716,12 @@ private fun SharedProviderEditPage(
                         authState.providerId == normalizedProviderId &&
                         authState.authMethod == authMethod
                     ) {
-                        authState = authState.withSharedProviderBridgeEvent(event, payload)
+                        authState = authState.withSharedProviderBridgeEvent(
+                            event,
+                            payload,
+                            completeAuthorizationMessage,
+                            enterDeviceCodeMessage,
+                        )
                     }
                 }
             }.fold(
@@ -859,17 +867,19 @@ private fun SharedProviderPageScaffold(
 private fun PiProviderAuthState.withSharedProviderBridgeEvent(
     event: String,
     payload: JsonObject,
+    completeAuthorizationMessage: String,
+    enterDeviceCodeMessage: String,
 ): PiProviderAuthState = when (event) {
     "auth_url" -> copy(
         authorizationUrl = payload.sharedProviderString("url"),
         statusMessage = payload.sharedProviderString("instructions").ifBlank {
-            "Complete authorization in your browser."
+            completeAuthorizationMessage
         },
     )
     "auth_device_code" -> copy(
         deviceCode = payload.sharedProviderString("user_code"),
         verificationUrl = payload.sharedProviderString("verification_uri"),
-        statusMessage = "Enter the device code in your browser.",
+        statusMessage = enterDeviceCodeMessage,
     )
     "auth_prompt" -> copy(
         prompt = payload.toPiOAuthPrompt(),

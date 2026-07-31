@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -103,6 +105,7 @@ import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
 
 private val ProviderFormPrimary = Color(0xFF5C5C5C)
+private val ProviderTourAppleBlue = Color(0xFF007AFF)
 private val ProviderWizardEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
 private val InteractiveCredentialProviderIds = setOf(
     "cloudflare-ai-gateway",
@@ -484,7 +487,7 @@ fun ProviderConfigurationForm(
             Text(
                 text = providerIdError,
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFD25757),
+                color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
@@ -554,11 +557,13 @@ fun ProviderConfigurationForm(
         }
 
         ProviderFormCard(cardColor = cardColor) {
-            ProviderBaseUrlField(
-                state = state,
-                definition = selectedDefinition,
-            )
-            ProviderFormDivider()
+            if (shouldShowEditableBaseUrl(selectedDefinition, state.authMethod)) {
+                ProviderBaseUrlField(
+                    state = state,
+                    definition = selectedDefinition,
+                )
+                ProviderFormDivider()
+            }
             ProviderFormTextField(
                 label = stringResource(Res.string.provider_form_manual_model_ids),
                 value = state.modelId,
@@ -775,7 +780,10 @@ fun ProviderAuthenticationSetup(
                     },
                     cardColor = cardColor,
                 )
-                if (definition.supportsCustomBaseUrl) {
+                if (
+                    definition.supportsCustomBaseUrl &&
+                    shouldShowEditableBaseUrl(definition, state.authMethod)
+                ) {
                     ProviderFormCard(cardColor = cardColor) {
                         ProviderBaseUrlField(
                             state = state,
@@ -796,7 +804,10 @@ fun ProviderAuthenticationSetup(
             }
         }
 
-        if (definition.requiresBaseUrl || (!definition.isBuiltIn && !definition.supportsCustomBaseUrl)) {
+        if (
+            shouldShowEditableBaseUrl(definition, state.authMethod) &&
+            (definition.requiresBaseUrl || (!definition.isBuiltIn && !definition.supportsCustomBaseUrl))
+        ) {
             ProviderFormCard(cardColor = cardColor) {
                 ProviderBaseUrlField(
                     state = state,
@@ -845,7 +856,7 @@ private fun ProviderApiKeyLoginField(
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (authState?.errorMessage?.isNotBlank() == true) {
-                    Color(0xFFD25757)
+                    MaterialTheme.colorScheme.error
                 } else {
                     AetherOnSurface
                 },
@@ -1229,7 +1240,11 @@ fun AddProviderWizard(
                             value = state.providerId,
                             onValueChange = state::setProviderIdFromUser,
                         )
-                        if (!state.selectedDefinition.requiresBaseUrl && state.selectedDefinition.isBuiltIn) {
+                        if (
+                            !state.selectedDefinition.requiresBaseUrl &&
+                            state.selectedDefinition.isBuiltIn &&
+                            shouldShowEditableBaseUrl(state.selectedDefinition, state.authMethod)
+                        ) {
                             ProviderFormDivider()
                             ProviderBaseUrlField(
                                 state = state,
@@ -1295,6 +1310,7 @@ fun ProviderWizardChoiceRow(
     onClick: () -> Unit,
     icon: ImageVector? = null,
     provider: PiProviderDefinition? = null,
+    bareIcon: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -1317,13 +1333,22 @@ fun ProviderWizardChoiceRow(
             Box(
                 modifier = Modifier
                     .size(36.dp)
-                    .background(AetherPrimary.copy(alpha = 0.10f), RoundedCornerShape(8.dp)),
+                    .then(
+                        if (bareIcon) {
+                            Modifier
+                        } else {
+                            Modifier.background(
+                                AetherPrimary.copy(alpha = 0.10f),
+                                RoundedCornerShape(8.dp),
+                            )
+                        },
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = AetherPrimary,
+                    tint = if (bareIcon) ProviderTourAppleBlue else AetherPrimary,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -1570,6 +1595,11 @@ private fun ProviderBaseUrlField(
         },
     )
 }
+
+private fun shouldShowEditableBaseUrl(
+    definition: PiProviderDefinition,
+    authMethod: ProviderAuthMethod,
+): Boolean = definition.id != "anthropic" || authMethod != ProviderAuthMethod.OAuth
 
 @Composable
 private fun ProviderFormTextField(
@@ -1839,7 +1869,7 @@ private fun ProviderOAuthField(
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (oauthState?.errorMessage?.isNotBlank() == true) {
-                    Color(0xFFD25757)
+                    MaterialTheme.colorScheme.error
                 } else {
                     AetherOnSurface
                 },
@@ -2019,8 +2049,11 @@ private fun ProviderModelListField(
                 )
             }
             Spacer(modifier = Modifier.height(10.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                models.forEach { model ->
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(models, key = { model -> model }) { model ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

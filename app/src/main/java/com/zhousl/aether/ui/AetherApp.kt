@@ -122,6 +122,7 @@ import com.zhousl.aether.data.availableModelOptions
 import com.zhousl.aether.data.isOnboardingComplete
 import com.zhousl.aether.data.resolveAutomaticModelKey
 import com.zhousl.aether.data.LocalRuntimeId
+import com.zhousl.aether.platform.LocalReduceMotion
 import com.zhousl.aether.mod.AetherNativeModState
 import com.zhousl.aether.runtime.LocalRuntimeIssue
 import com.zhousl.aether.runtime.LocalRuntimeSetupState
@@ -219,7 +220,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 @Composable
 fun AetherApp(
     viewModel: AetherViewModel = viewModel(),
-    onPrivacyPolicyAccepted: () -> Unit = {},
+    onNotificationPermissionRequested: () -> Unit = {},
 ) {
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
     val context = LocalContext.current
@@ -317,7 +318,7 @@ fun AetherApp(
                             viewModel = viewModel,
                             uiState = uiState,
                             nativeModState = nativeModState,
-                            onPrivacyPolicyAccepted = onPrivacyPolicyAccepted,
+                            onNotificationPermissionRequested = onNotificationPermissionRequested,
                         )
                     }
                     selectedExtensionPage?.let { page ->
@@ -338,8 +339,9 @@ private fun AetherAppContent(
     viewModel: AetherViewModel,
     uiState: AetherUiState,
     nativeModState: AetherNativeModState,
-    onPrivacyPolicyAccepted: () -> Unit,
+    onNotificationPermissionRequested: () -> Unit,
 ) {
+    val reduceMotion = LocalReduceMotion.current
     val drawerState = rememberDrawerState(initialValue = androidx.compose.material3.DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -412,16 +414,13 @@ private fun AetherAppContent(
             viewModel.consumePendingUpdateInstallUri()
         }
     }
-    LaunchedEffect(uiState.settings.privacyPolicyAccepted) {
-        if (uiState.settings.privacyPolicyAccepted) {
-            onPrivacyPolicyAccepted()
-        }
-    }
     var pendingSaveTarget by remember { mutableStateOf<PendingSaveTarget?>(null) }
     var pendingSessionExportId by remember { mutableStateOf<String?>(null) }
     var pendingSkillZipCompletion by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
     var pendingTermuxPermissionSource by remember { mutableStateOf("unknown") }
     var showAppDataExportWarning by remember { mutableStateOf(false) }
+    var showNotificationPermissionRationale by remember { mutableStateOf(false) }
+    var pendingDeleteSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     val onPickedDocuments: (List<Uri>) -> Unit = { uris ->
         uris.forEach { uri ->
             runCatching {
@@ -647,7 +646,7 @@ private fun AetherAppContent(
                     pendingSessionExportId = session.id
                     sessionExportLauncher.launch("${session.title.ifBlank { "aether-session" }}.json")
                 },
-                onDeleteSession = viewModel::deleteSession,
+                onDeleteSession = { sessionId -> pendingDeleteSessionId = sessionId },
                 onSettingsSelected = {
                     scope.launch {
                         drawerState.close()
@@ -667,6 +666,9 @@ private fun AetherAppContent(
             AnimatedContent(
                 targetState = uiState.currentScreen,
                 transitionSpec = {
+                    if (reduceMotion) {
+                        return@AnimatedContent fadeIn(tween(80)) togetherWith fadeOut(tween(60))
+                    }
                     val isForward = targetState.depth() > initialState.depth()
                     val enterSlide = slideInHorizontally(
                         animationSpec = tween(ScreenTransitionDuration, easing = ScreenTransitionEasing),
@@ -991,6 +993,9 @@ private fun AetherAppContent(
                     onToggleScheduledTaskEnabled = viewModel::setScheduledTaskEnabled,
                     onRemoveScheduledTask = viewModel::removeScheduledTask,
                     onRequestTermuxPermission = { requestTermuxPermission("settings_termux_permission") },
+                    onRequestNotificationPermission = {
+                        showNotificationPermissionRationale = true
+                    },
                     onImportAppData = {
                         appDataImportLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
                     },
@@ -1046,6 +1051,59 @@ private fun AetherAppContent(
             }
         }
 
+        if (showNotificationPermissionRationale) {
+            AlertDialog(
+                onDismissRequest = { showNotificationPermissionRationale = false },
+                containerColor = AetherSurface,
+                titleContentColor = AetherOnSurface,
+                textContentColor = AetherOnSurfaceVariant,
+                title = { Text(stringResource(R.string.notification_permission_title)) },
+                text = { Text(stringResource(R.string.notification_permission_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showNotificationPermissionRationale = false
+                            onNotificationPermissionRequested()
+                        },
+                    ) {
+                        Text(stringResource(R.string.notification_permission_allow))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showNotificationPermissionRationale = false }) {
+                        Text(stringResource(R.string.common_later))
+                    }
+                },
+            )
+        }
+        pendingDeleteSessionId?.let { sessionId ->
+            AlertDialog(
+                onDismissRequest = { pendingDeleteSessionId = null },
+                containerColor = AetherSurface,
+                titleContentColor = AetherOnSurface,
+                textContentColor = AetherOnSurfaceVariant,
+                title = { Text(stringResource(R.string.chat_delete_session_title)) },
+                text = { Text(stringResource(R.string.chat_delete_session_message)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingDeleteSessionId = null
+                            viewModel.deleteSession(sessionId)
+                        },
+                    ) {
+                        Text(
+                            stringResource(R.string.common_delete),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteSessionId = null }) {
+                        Text(stringResource(R.string.common_cancel))
+                    }
+                },
+            )
+        }
         if (uiState.isStartupRouteResolved && !uiState.settings.privacyPolicyAccepted) {
             PrivacyPolicyConsentDialog(
                 onOpenPolicy = { openPrivacyPolicy(context) },
@@ -1124,7 +1182,7 @@ private fun PrivacyPolicyConsentDialog(
                     tag = PrivacyPolicyAnnotationTag,
                     annotation = AetherPrivacyPolicyUrl,
                 )
-                withStyle(SpanStyle(color = Color(0xFF3B82F6))) {
+                withStyle(SpanStyle(color = AetherPrimary)) {
                     append(policyText)
                 }
                 pop()

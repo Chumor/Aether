@@ -369,7 +369,7 @@ private fun SharedSkillCard(
                 Icon(
                     Icons.Rounded.Delete,
                     contentDescription = stringResource(Res.string.action_remove),
-                    tint = Color(0xFFD25757),
+                    tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),
                 )
             }

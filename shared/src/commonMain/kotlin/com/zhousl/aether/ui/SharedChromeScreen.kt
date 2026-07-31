@@ -28,6 +28,8 @@ import com.zhousl.aether.data.pi.SharedChromeManager
 import com.zhousl.aether.platform.PlatformWebView
 import com.zhousl.aether.shared.resources.Res
 import com.zhousl.aether.shared.resources.chrome_label
+import com.zhousl.aether.shared.resources.chrome_preparing
+import com.zhousl.aether.shared.resources.common_retry
 import com.zhousl.aether.ui.theme.AetherBackground
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
 import kotlinx.coroutines.launch
@@ -64,12 +66,12 @@ internal fun SharedChromeScreen(
             ) {
                 Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(14.dp))
-                Button(onClick = { retry += 1 }) { Text("Retry") }
+                Button(onClick = { retry += 1 }) { Text(stringResource(Res.string.common_retry)) }
             }
             else -> Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(12.dp))
-                Text("Preparing Alpine Chromium", color = AetherOnSurfaceVariant)
+                Text(stringResource(Res.string.chrome_preparing), color = AetherOnSurfaceVariant)
             }
         }
         SettingsTopBar(stringResource(Res.string.chrome_label), onBack)

@@ -131,6 +131,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.PlatformTextStyle
@@ -167,7 +169,11 @@ import com.zhousl.aether.ui.theme.AetherBackground
 import com.zhousl.aether.ui.theme.AetherBackgroundGradientTop
 import com.zhousl.aether.ui.theme.AetherOnSurface
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
+import com.zhousl.aether.ui.theme.AetherOnPrimaryContainer
+import com.zhousl.aether.ui.theme.AetherOnSecondaryContainer
 import com.zhousl.aether.ui.theme.AetherPrimary
+import com.zhousl.aether.ui.theme.AetherPrimaryContainer
+import com.zhousl.aether.ui.theme.AetherSecondaryContainer
 import com.zhousl.aether.ui.theme.AetherScrim
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
@@ -1451,6 +1457,10 @@ private fun ConversationEmptyState(
         codeLabel = stringResource(R.string.chat_code_chip),
         helpWriteLabel = stringResource(R.string.chat_help_me_write_chip),
         summarizeFileLabel = stringResource(R.string.chat_summarize_file_chip),
+        analyzeImagePrompt = stringResource(R.string.chat_analyze_image_prompt),
+        codePrompt = stringResource(R.string.chat_code_prompt),
+        helpWritePrompt = stringResource(R.string.chat_help_write_prompt),
+        summarizeFilePrompt = stringResource(R.string.chat_summarize_file_prompt),
         inputFocused = inputFocused,
         onStarterPromptSelected = onStarterPromptSelected,
     )
@@ -2601,8 +2611,8 @@ private fun ConversationComposerBar(
                                                 ComposerPlusMenuRow(
                                                     title = stringResource(R.string.branch_steer_current_run),
                                                     icon = Icons.Rounded.AutoAwesome,
-                                                    iconTint = Color(0xFF8D6C2F),
-                                                    iconContainerColor = Color(0xFFFFF3DE),
+                                                    iconTint = AetherOnSecondaryContainer,
+                                                    iconContainerColor = AetherSecondaryContainer,
                                                     onClick = {
                                                         followUpMenuExpanded = false
                                                         onSteerFollowUp()
@@ -2611,8 +2621,8 @@ private fun ConversationComposerBar(
                                                 ComposerPlusMenuRow(
                                                     title = stringResource(R.string.branch_queue_next_turn),
                                                     icon = Icons.Rounded.ArrowUpward,
-                                                    iconTint = Color(0xFF2F6DA3),
-                                                    iconContainerColor = Color(0xFFEAF2FF),
+                                                    iconTint = AetherOnPrimaryContainer,
+                                                    iconContainerColor = AetherPrimaryContainer,
                                                     onClick = {
                                                         followUpMenuExpanded = false
                                                         onQueueFollowUp()
@@ -2789,11 +2799,13 @@ private fun ConversationComposerBar(
 private fun ComposerPauseButton(
     onClick: () -> Unit,
 ) {
+    val stopDescription = stringResource(R.string.chat_stop_response)
     Box(
         modifier = Modifier
-            .size(38.dp)
+            .size(44.dp)
             .clip(CircleShape)
             .background(ChatGptPurple)
+            .semantics { contentDescription = stopDescription }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -2822,7 +2834,7 @@ private fun ComposerSubmitButton(
     }
     Box(
         modifier = Modifier
-            .size(38.dp)
+            .size(44.dp)
             .clip(CircleShape)
             .background(buttonColor)
             .clickable(
@@ -3638,7 +3650,7 @@ private fun ComposerActionChip(
         modifier = Modifier
             .widthIn(max = 220.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFFE8F1FF))
+            .background(AetherPrimaryContainer)
             .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -3646,14 +3658,14 @@ private fun ComposerActionChip(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color(0xFF4F8CFF),
+            tint = AetherPrimary,
             modifier = Modifier.size(16.dp),
         )
         Text(
             text = label,
             modifier = Modifier.weight(1f, fill = false),
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
-            color = Color(0xFF2E6FD5),
+            color = AetherOnPrimaryContainer,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -3666,7 +3678,7 @@ private fun ComposerActionChip(
             Icon(
                 imageVector = Icons.Rounded.Close,
                 contentDescription = stringResource(R.string.common_remove),
-                tint = Color(0xFF4F8CFF),
+                tint = AetherPrimary,
                 modifier = Modifier.size(14.dp),
             )
         }

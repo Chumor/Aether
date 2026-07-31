@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.zhousl.aether.platform.LocalReduceMotion
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -151,6 +152,7 @@ internal fun OnboardingResponsiveFrame(
     auxiliaryVisible: Boolean = auxiliaryContent != null,
     content: @Composable (wideLayout: Boolean) -> Unit,
 ) {
+    val reduceMotion = LocalReduceMotion.current
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(AetherBackground)) {
         val wideLayout = timelineSpec != null && shouldUseWideOnboardingLayout(
             availableWidthDp = maxWidth.value,
@@ -163,12 +165,12 @@ internal fun OnboardingResponsiveFrame(
 
         val sidebarWidth by animateDpAsState(
             targetValue = if (auxiliaryVisible) 0.dp else OnboardingTimelineWidth,
-            animationSpec = tween(620, easing = SharedTourEasing),
+            animationSpec = tween(if (reduceMotion) 0 else 620, easing = SharedTourEasing),
             label = "onboarding_timeline_width",
         )
         val auxiliaryWidth by animateDpAsState(
             targetValue = if (auxiliaryVisible) maxWidth * 0.49f else 0.dp,
-            animationSpec = tween(620, easing = SharedTourEasing),
+            animationSpec = tween(if (reduceMotion) 0 else 620, easing = SharedTourEasing),
             label = "onboarding_auxiliary_width",
         )
 
@@ -200,10 +202,11 @@ private fun OnboardingAuxiliaryVisibility(
     visible: Boolean,
     content: (@Composable () -> Unit)?,
 ) {
+    val reduceMotion = LocalReduceMotion.current
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(360, delayMillis = 120, easing = SharedTourEasing)),
-        exit = fadeOut(tween(180, easing = SharedTourEasing)),
+        enter = fadeIn(tween(if (reduceMotion) 0 else 360, delayMillis = if (reduceMotion) 0 else 120, easing = SharedTourEasing)),
+        exit = fadeOut(tween(if (reduceMotion) 0 else 180, easing = SharedTourEasing)),
     ) {
         content?.invoke()
     }
@@ -221,11 +224,12 @@ private fun SharedConversationPageContent(
     showCompactProgress: Boolean,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val reduceMotion = LocalReduceMotion.current
     val pageKey = remember(stepIndex, stepCount, message) { "$stepIndex/$stepCount:$message" }
     val contentVisible = rememberSharedStepContentVisible(pageKey, message)
     val topPadding by animateDpAsState(
         targetValue = if (contentVisible) 56.dp else 168.dp,
-        animationSpec = tween(SharedMessageTravelDuration, easing = SharedTourEasing),
+        animationSpec = tween(if (reduceMotion) 0 else SharedMessageTravelDuration, easing = SharedTourEasing),
         label = "tour_message_travel",
     )
 
@@ -233,7 +237,7 @@ private fun SharedConversationPageContent(
         AnimatedVisibility(
             visible = !isExiting,
             enter = fadeIn(animationSpec = tween(durationMillis = 0)),
-            exit = fadeOut(tween(280, easing = SharedTourEasing)),
+            exit = fadeOut(tween(if (reduceMotion) 0 else 280, easing = SharedTourEasing)),
             label = "step_page_visibility",
         ) {
             Column(modifier = Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
@@ -437,6 +441,7 @@ private fun SharedTourChromeBar(
 
 @Composable
 private fun OnboardingTimelineSidebar(spec: OnboardingTimelineSpec) {
+    val reduceMotion = LocalReduceMotion.current
     val steps = listOf(
         OnboardingTimelineStep.Welcome to stringResource(Res.string.onboarding_timeline_welcome),
         OnboardingTimelineStep.Setup to stringResource(Res.string.onboarding_timeline_setup),
@@ -463,7 +468,7 @@ private fun OnboardingTimelineSidebar(spec: OnboardingTimelineSpec) {
     val localActiveStepCenterY by animateDpAsState(
         targetValue = OnboardingTimelineRowHeight * spec.activeStep.ordinal +
             OnboardingTimelineRowHeight / 2,
-        animationSpec = tween(620, easing = SharedTourEasing),
+        animationSpec = tween(if (reduceMotion) 0 else 620, easing = SharedTourEasing),
         label = "onboarding_timeline_active_node_y",
     )
     val activeStepCenterY = LocalOnboardingTimelinePosition.current?.let { position ->
@@ -553,10 +558,11 @@ private fun OnboardingProviderSubsteps(
     selectedIndex: Int,
     onSelected: ((Int) -> Unit)?,
 ) {
+    val reduceMotion = LocalReduceMotion.current
     val selectedCenterY by animateDpAsState(
         targetValue = OnboardingProviderSubstepRowHeight * selectedIndex +
             OnboardingProviderSubstepRowHeight / 2,
-        animationSpec = tween(520, easing = SharedTourEasing),
+        animationSpec = tween(if (reduceMotion) 0 else 520, easing = SharedTourEasing),
         label = "onboarding_provider_active_substep_y",
     )
     Box(

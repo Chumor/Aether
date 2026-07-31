@@ -3,7 +3,7 @@
 build/
 **/build/
 **/.cxx/
-node_modules/
+**/node_modules/
 
 # Local Android/IDE state
 local.properties

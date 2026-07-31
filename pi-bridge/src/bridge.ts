@@ -11,27 +11,23 @@ import {
   fauxProvider,
   fauxToolCall,
   type AuthContext,
-  type AuthLoginCallbacks,
+  type AuthInteraction,
   type AssistantMessage,
   type AssistantMessageEvent,
   type Context,
   type Credential,
+  type CredentialInfo,
   type CredentialStore,
   type ImageContent,
   type Message,
   type Model,
   type OAuthAuth,
-  type OAuthCredential,
   type MutableModels,
   type ProviderStreams,
   type SimpleStreamOptions,
   type TextContent,
   type Usage,
 } from "@earendil-works/pi-ai";
-import {
-  getGitHubCopilotBaseUrl,
-  getOAuthProvider,
-} from "@earendil-works/pi-ai/oauth";
 import {
   builtinProviders,
   getBuiltinModels,
@@ -40,7 +36,6 @@ import {
 import {
   AgentHarness,
   InMemorySessionRepo,
-  NodeExecutionEnv,
   type AgentMessage,
   type AgentHarnessEvent,
   type AgentTool,
@@ -52,6 +47,7 @@ import {
   type ExtensionCommandContext,
   type ExtensionEvent,
   type RegisteredTool,
+  type ScopedModel,
   type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -74,9 +70,9 @@ import {
 } from "./aether-extensions.js";
 
 const BRIDGE_VERSION = "2.0.0-alpha.0";
-const PI_AI_VERSION = "0.80.6";
-const PI_AGENT_CORE_VERSION = "0.80.6";
-const PI_CODING_AGENT_VERSION = "0.80.6";
+const PI_AI_VERSION = "0.83.0";
+const PI_AGENT_CORE_VERSION = "0.83.0";
+const PI_CODING_AGENT_VERSION = "0.83.0";
 const AETHER_MANUAL_OAUTH_CALLBACK_HOST = "203.0.113.1";
 const OAUTH_FETCH_MAX_ATTEMPTS = 3;
 const DEFAULT_HARNESS_SESSION_LIMIT = 8;
@@ -190,7 +186,7 @@ let oauthTransportQueue: Promise<void> = Promise.resolve();
 
 const builtinProviderById = new Map(
   builtinProviders().map((provider) => {
-    const oauth = bundledOAuthAuth(provider.id);
+    const oauth = aetherOAuthAuth(provider.id, provider.auth.oauth);
     return [
       provider.id,
       oauth
@@ -224,84 +220,29 @@ const harnessSessionTtlMs = positiveIntegerEnvironmentValue(
   DEFAULT_HARNESS_SESSION_TTL_MS,
 );
 
-function bundledOAuthAuth(providerId: string): OAuthAuth | undefined {
-  const provider = getOAuthProvider(providerId);
-  if (!provider) return undefined;
+function aetherOAuthAuth(providerId: string, oauth: OAuthAuth | undefined): OAuthAuth | undefined {
+  if (!oauth) return undefined;
+  if (providerId !== "openai-codex") return oauth;
   return {
-    name: provider.name,
-    login: async (callbacks) => {
-      const credential = await withAetherOAuthTransport(providerId, callbacks, () =>
-        provider.login({
-          signal: callbacks.signal,
-          onAuth: (event) => {
-            callbacks.notify({
-              type: "auth_url",
-              url: event.url,
-              instructions:
-                providerId === "openai-codex"
-                  ? "Complete login in your browser. When it reaches the localhost redirect, copy the full URL back into Aether."
-                  : event.instructions,
-            });
+    ...oauth,
+    login: async (interaction) =>
+      withAetherOAuthTransport(providerId, interaction, () =>
+        oauth.login({
+          ...interaction,
+          notify: (event) => {
+            if (event.type === "auth_url") {
+              interaction.notify({
+                ...event,
+                instructions:
+                  "Complete login in your browser. When it reaches the localhost redirect, copy the full URL back into Aether.",
+              });
+              return;
+            }
+            interaction.notify(event);
           },
-          onDeviceCode: (event) => {
-            callbacks.notify({
-              type: "device_code",
-              userCode: event.userCode,
-              verificationUri: event.verificationUri,
-              intervalSeconds: event.intervalSeconds,
-              expiresInSeconds: event.expiresInSeconds,
-            });
-          },
-          onProgress: (message) => {
-            callbacks.notify({ type: "progress", message });
-          },
-          onPrompt: (prompt) =>
-            callbacks.prompt({
-              type: "text",
-              message: prompt.message,
-              placeholder: prompt.placeholder,
-            }),
-          onManualCodeInput: () =>
-            callbacks.prompt({
-              type: "manual_code",
-              message:
-                "Complete login in your browser, then paste the authorization code or full localhost redirect URL here:",
-              placeholder: "http://localhost:...",
-            }),
-          onSelect: (prompt) =>
-            callbacks.prompt({
-              type: "select",
-              message: prompt.message,
-              options: prompt.options,
-            }),
         }),
-      );
-      return {
-        ...credential,
-        type: "oauth",
-      };
-    },
-    refresh: async (credential) => ({
-      ...(await provider.refreshToken(credential)),
-      type: "oauth",
-    }),
-    toAuth: async (credential) => ({
-      apiKey: provider.getApiKey(credential),
-      ...(providerId === "github-copilot"
-        ? {
-            baseUrl: getGitHubCopilotBaseUrl(
-              credential.access,
-              githubEnterpriseDomain(credential),
-            ),
-          }
-        : {}),
-    }),
+      ),
   };
-}
-
-function githubEnterpriseDomain(credential: OAuthCredential): string | undefined {
-  const value = credential.enterpriseUrl;
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 class BridgeCredentialStore implements CredentialStore {
@@ -325,6 +266,12 @@ class BridgeCredentialStore implements CredentialStore {
     if (providerId !== this.providerId) return undefined;
     await this.state.queue;
     return this.state.credential;
+  }
+
+  async list(): Promise<readonly CredentialInfo[]> {
+    await this.state.queue;
+    const credential = this.state.credential;
+    return credential ? [{ providerId: this.providerId, type: credential.type }] : [];
   }
 
   async modify(
@@ -494,7 +441,7 @@ function fetchUrl(input: string | URL | Request): string {
 
 async function withAetherOAuthTransport<T>(
   providerId: string,
-  callbacks: AuthLoginCallbacks,
+  interaction: AuthInteraction,
   login: () => Promise<T>,
 ): Promise<T> {
   if (providerId !== "openai-codex") return login();
@@ -522,7 +469,7 @@ async function withAetherOAuthTransport<T>(
         if (init?.signal?.aborted) throw error;
         lastError = error;
         if (attempt >= OAUTH_FETCH_MAX_ATTEMPTS) break;
-        callbacks.notify({
+        interaction.notify({
           type: "progress",
           message: `OpenAI login network retry ${attempt + 1}/${OAUTH_FETCH_MAX_ATTEMPTS}.`,
         });
@@ -1459,6 +1406,7 @@ function bindExtensionCore(state: HarnessSessionState): void {
     },
     {
       getModel: () => state.harness.getModel(),
+      getScopedModels: (): readonly ScopedModel[] => [],
       isIdle: () => !state.currentRequestId,
       isProjectTrusted: () => true,
       getSignal: () => state.currentSignal,
@@ -1477,7 +1425,18 @@ function bindExtensionCore(state: HarnessSessionState): void {
       compact: (options) => {
         void state.harness
           .compact(options?.customInstructions)
-          .then((result) => options?.onComplete?.(result))
+          .then((result) => {
+            if (!result.firstKeptEntryId) {
+              throw new Error("Compaction finished without a first kept entry id.");
+            }
+            options?.onComplete?.({
+              summary: result.summary,
+              firstKeptEntryId: result.firstKeptEntryId,
+              tokensBefore: result.tokensBefore,
+              usage: result.usage,
+              details: result.details,
+            });
+          })
           .catch((error) =>
             options?.onError?.(error instanceof Error ? error : new Error(String(error))),
           );
@@ -2030,7 +1989,6 @@ async function createHarnessSession(
   ].reduce((toolMap, tool) => toolMap.set(tool.name, tool), new Map<string, AgentTool>());
   const harness = new AgentHarness({
     models,
-    env: new NodeExecutionEnv({ cwd: workspaceDirectory }),
     session,
     model,
     systemPrompt: () => state.systemPrompt,
@@ -2282,7 +2240,7 @@ async function loginProvider(id: string, payload: JsonObject): Promise<JsonObjec
   const oauthFlow = asString(payload.oauth_flow).trim();
   const controller = new AbortController();
   activeAborters.set(id, () => controller.abort());
-  const callbacks: AuthLoginCallbacks = {
+  const callbacks: AuthInteraction = {
     signal: controller.signal,
     prompt: (prompt) => {
       if (providerId === "openai-codex" && oauthFlow && prompt.type === "select") {
@@ -2309,6 +2267,12 @@ async function loginProvider(id: string, payload: JsonObject): Promise<JsonObjec
           break;
         case "progress":
           writeEvent(id, "auth_progress", { message: event.message });
+          break;
+        case "info":
+          writeEvent(id, "auth_progress", {
+            message: event.message,
+            links: event.links ?? [],
+          });
           break;
       }
     },

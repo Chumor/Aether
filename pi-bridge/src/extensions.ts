@@ -2,16 +2,20 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as piAgentCore from "@earendil-works/pi-agent-core";
+import {
+  InMemoryCredentialStore,
+  InMemoryModelsStore,
+} from "@earendil-works/pi-ai";
 import * as piAiCompat from "@earendil-works/pi-ai/compat";
 import * as piAiOauth from "@earendil-works/pi-ai/oauth";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import {
-  AuthStorage,
   createEventBus,
   createExtensionRuntime,
   DefaultPackageManager,
   ExtensionRunner,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   wrapRegisteredTools,
@@ -398,8 +402,13 @@ export async function loadAetherExtensions(
   }
 
   const sessionManager = SessionManager.inMemory(cwd);
-  const authStorage = AuthStorage.inMemory();
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    modelsStore: new InMemoryModelsStore(),
+    allowModelNetwork: false,
+  });
+  const modelRegistry = new ModelRegistry(modelRuntime);
   const runner = new ExtensionRunner(
     extensions,
     runtime,

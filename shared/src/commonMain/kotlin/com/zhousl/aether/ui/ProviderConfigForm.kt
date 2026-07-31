@@ -1065,8 +1065,9 @@ fun AddProviderWizard(
                 )
                 ProviderWizardChoiceRow(
                     icon = Icons.Rounded.VerifiedUser,
-                    title = stringResource(Res.string.provider_add_subscription),
-                    subtitle = stringResource(Res.string.provider_add_subscription_description),
+                    title = stringResource(Res.string.onboarding_provider_subscription),
+                    subtitle = stringResource(Res.string.onboarding_provider_subscription_description),
+                    bareIcon = true,
                     onClick = {
                         selectedAuthMethodName = ProviderAuthMethod.OAuth.name
                         providerSearch = ""
@@ -1076,8 +1077,9 @@ fun AddProviderWizard(
                 )
                 ProviderWizardChoiceRow(
                     icon = Icons.Rounded.Key,
-                    title = stringResource(Res.string.provider_add_api_key),
-                    subtitle = stringResource(Res.string.provider_add_api_key_description),
+                    title = stringResource(Res.string.onboarding_provider_api_key),
+                    subtitle = stringResource(Res.string.onboarding_provider_api_key_description),
+                    bareIcon = true,
                     onClick = {
                         selectedAuthMethodName = ProviderAuthMethod.ApiKey.name
                         providerSearch = ""
@@ -1087,8 +1089,9 @@ fun AddProviderWizard(
                 )
                 ProviderWizardChoiceRow(
                     icon = Icons.Rounded.Cloud,
-                    title = stringResource(Res.string.provider_add_environment),
-                    subtitle = stringResource(Res.string.provider_add_environment_description),
+                    title = stringResource(Res.string.onboarding_provider_environment),
+                    subtitle = stringResource(Res.string.onboarding_provider_environment_description),
+                    bareIcon = true,
                     onClick = {
                         selectedAuthMethodName = ProviderAuthMethod.Ambient.name
                         providerSearch = ""
@@ -1099,48 +1102,19 @@ fun AddProviderWizard(
             }
 
             AddProviderStage.Provider -> {
-                Text(
-                    text = providerAuthMethodDescription(selectedAuthMethod),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AetherOnSurfaceVariant,
+                SharedProviderPickerContent(
+                    providerSearch = providerSearch,
+                    onProviderSearchChange = { providerSearch = it },
+                    providerChoices = matchingProviders,
+                    authMethod = selectedAuthMethod,
+                    onProviderSelected = { provider ->
+                        onClearAuthState()
+                        state.applyProviderDefaults(provider)
+                        state.setAuthMethod(selectedAuthMethod)
+                        state.ensureAvailableProviderId(existingProviderIds)
+                        stageName = AddProviderStage.Credentials.name
+                    },
                 )
-                ProviderWizardSearchField(
-                    value = providerSearch,
-                    onValueChange = { providerSearch = it },
-                )
-                if (matchingProviders.isEmpty()) {
-                    Text(
-                        text = stringResource(Res.string.provider_add_no_matching_providers),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = AetherOnSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 12.dp),
-                    )
-                } else {
-                    matchingProviders
-                        .groupBy(PiProviderDefinition::category)
-                        .forEach { (category, providers) ->
-                            Text(
-                                text = category,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = AetherOnSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                            providers.forEach { provider ->
-                                ProviderWizardChoiceRow(
-                                    title = provider.displayName,
-                                    subtitle = provider.id,
-                                    provider = provider,
-                                    onClick = {
-                                        onClearAuthState()
-                                        state.applyProviderDefaults(provider)
-                                        state.setAuthMethod(selectedAuthMethod)
-                                        state.ensureAvailableProviderId(existingProviderIds)
-                                        stageName = AddProviderStage.Credentials.name
-                                    },
-                                )
-                            }
-                        }
-                }
                 ProviderWizardSecondaryButton(
                     label = stringResource(Res.string.common_back),
                     onClick = { stageName = AddProviderStage.Authentication.name },

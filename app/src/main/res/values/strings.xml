@@ -648,9 +648,9 @@
     <string name="onboarding_provider_subscription">Subscription</string>
     <string name="onboarding_provider_subscription_description">For existing paid AI plans.</string>
     <string name="onboarding_provider_api_key">API Key</string>
-    <string name="onboarding_provider_api_key_description">Pay-as-you-go billing from your provider.</string>
+    <string name="onboarding_provider_api_key_description">Pay-as-you-go billing.</string>
     <string name="onboarding_provider_environment">Environment Credentials</string>
-    <string name="onboarding_provider_environment_description">Pre-configured AWS, Google Cloud, or custom settings.</string>
+    <string name="onboarding_provider_environment_description">GCP, AWS, or custom settings</string>
     <string name="onboarding_provider_openai_codex_oauth_summary">Free &amp; paid plans</string>
     <string name="onboarding_provider_anthropic_oauth_summary">Paid only</string>
     <string name="onboarding_provider_github_copilot_oauth_summary">Limited free access</string>

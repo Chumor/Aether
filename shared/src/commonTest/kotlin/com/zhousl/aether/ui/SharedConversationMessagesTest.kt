@@ -2,6 +2,7 @@ package com.zhousl.aether.ui
 
 import com.zhousl.aether.data.pi.SharedHostToolResult
 import com.zhousl.aether.data.pi.SharedPiHostToolCall
+import com.zhousl.aether.data.pi.SharedPiUsage
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -356,6 +357,21 @@ class SharedConversationMessagesTest {
         )
 
         assertEquals(100, sharedCompactContextPercent(messages))
+    }
+
+    @Test
+    fun autoCompactionKeepsPiReserveBeforeContextIsFull() {
+        assertFalse(shouldAutoCompactSharedContext(SharedPiUsage(totalTokens = 111_616), "api", ""))
+        assertTrue(shouldAutoCompactSharedContext(SharedPiUsage(totalTokens = 111_617), "api", ""))
+        assertFalse(
+            shouldAutoCompactSharedContext(
+                SharedPiUsage(totalTokens = 127_999),
+                "api",
+                "",
+                contextWindow = 128_000,
+                reserveTokens = 0,
+            )
+        )
     }
 
     @Test

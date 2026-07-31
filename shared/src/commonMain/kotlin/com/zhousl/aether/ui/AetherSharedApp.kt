@@ -789,6 +789,9 @@ private const val SharedTabletLayoutMinWidthDp = 700f
 private const val SharedCompactCommand = "/compact"
 private const val SharedCompactingStatus = "compacting"
 private const val SharedCompactingMaxInputChars = 120_000
+// Pi Coding Agent defaults: compact before the model loses the 16K response reserve.
+private const val SharedContextWindowTokens = 128_000L
+private const val SharedAutoCompactionReserveTokens = 16_384L
 
 private const val SharedInitialStreamingStatusText = "Thinking"
 private const val SharedInitialStreamingStatusDetail = "Aether is working on this turn."
@@ -1528,7 +1531,11 @@ fun AetherSharedApp(
             }
         }
 
-        fun compactSession(target: SharedSessionUiState) {
+        fun compactSession(
+            target: SharedSessionUiState,
+            allowRunning: Boolean = false,
+            onCompleted: () -> Unit = {},
+        ) {
             if (target.editingMessageId.isNotBlank()) {
                 transientMessage = finishEditingBeforeCompactingMessage
                 return
@@ -1537,7 +1544,7 @@ fun AetherSharedApp(
                 transientMessage = noConversationToCompactMessage
                 return
             }
-            if (target.job?.isActive == true) {
+            if (!allowRunning && target.job?.isActive == true) {
                 transientMessage = pauseBeforeCompactingMessage
                 return
             }
@@ -1621,6 +1628,7 @@ fun AetherSharedApp(
                     target.job = null
                     endBackgroundExecution(target)
                     persistSession(target)
+                    onCompleted()
                 }
             }
             ensureBackgroundExecution(target)
@@ -1730,6 +1738,7 @@ fun AetherSharedApp(
             target.hasUnviewedCompletion = false
             target.job = appScope.launch {
                 val runningJob = currentCoroutineContext()[Job]
+                var shouldAutoCompact = false
                 try {
                     persistSession(target, moveToFront = true)
                 if (shouldGenerateTitle) generateSessionTitle(target, userMessage, config)
@@ -1997,6 +2006,13 @@ fun AetherSharedApp(
                                 },
                             )
                         }
+                        val completedAssistant = target.messages.lastOrNull { it.id == assistantId }
+                        shouldAutoCompact = result.errorMessage.isBlank() && completedAssistant != null &&
+                            shouldAutoCompactSharedContext(
+                                usage = completedAssistant.usage,
+                                tokenUsageSource = completedAssistant.tokenUsageSource,
+                                assistantText = completedAssistant.text,
+                            )
                         if (
                             result.errorMessage.isBlank() &&
                             shouldMarkOnboardingCompleted(
@@ -2078,6 +2094,18 @@ fun AetherSharedApp(
                 if (promotedTurns != target.queuedTurns) {
                     target.queuedTurns.clear()
                     target.queuedTurns.addAll(promotedTurns)
+                }
+                if (shouldAutoCompact) {
+                    compactSession(target, allowRunning = true) {
+                        val queuedIndex = target.queuedTurns.nextSharedQueuedTurnIndex()
+                        if (queuedIndex >= 0) {
+                            val queued = target.queuedTurns.removeAt(queuedIndex)
+                            startChatTurn(queued.text, queued.attachments, target = target)
+                        } else {
+                            appScope.launch { persistSession(target) }
+                        }
+                    }
+                    return@launch
                 }
                 val nextIndex = target.queuedTurns.nextSharedQueuedTurnIndex()
                 target.job = null
@@ -4419,6 +4447,22 @@ internal fun sharedCompactContextPercent(messages: List<SharedChatMessage>): Int
         .coerceIn(1, 100)
 }
 
+internal fun shouldAutoCompactSharedContext(
+    usage: SharedPiUsage?,
+    tokenUsageSource: String,
+    assistantText: String,
+    contextWindow: Long = SharedContextWindowTokens,
+    reserveTokens: Long = SharedAutoCompactionReserveTokens,
+): Boolean {
+    if (usage == null || !usage.totalTokensAvailable || contextWindow <= reserveTokens) return false
+    val trailingEstimate = if (tokenUsageSource == "estimated") {
+        approximateSharedReasoningTokenCount(assistantText).toLong()
+    } else {
+        0L
+    }
+    return usage.totalTokens + trailingEstimate > contextWindow - reserveTokens
+}
+
 @Composable
 private fun SharedChatScreen(
     sessions: List<SharedConversationSummary>,
@@ -4510,7 +4554,14 @@ private fun SharedChatScreen(
         .takeIf { it > 0L }
     val compactPercent = sharedCompactContextPercent(messages)
     val compactSuggestionText = compactPercent?.let { percent ->
-        stringResource(Res.string.chat_compact_thread_context_percent, percent)
+        stringResource(
+            if (useTabletLayout) {
+                Res.string.chat_compact_thread_context_percent
+            } else {
+                Res.string.chat_context_percent
+            },
+            percent,
+        )
     } ?: stringResource(Res.string.chat_compact_thread_context)
     val attachmentPreviewFailedMessage = stringResource(Res.string.attachment_preview_failed)
     val unableToOpenLinkMessage = stringResource(Res.string.app_unable_to_open_link)

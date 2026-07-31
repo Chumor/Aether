@@ -1,10 +1,27 @@
 package com.zhousl.aether.ui
 
+import com.zhousl.aether.data.LlmTokenUsage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConversationUiTest {
+    @Test
+    fun autoCompactionKeepsPiReserveBeforeContextIsFull() {
+        assertFalse(shouldAutoCompactContext(LlmTokenUsage(totalTokens = 111_616), "api", ""))
+        assertTrue(shouldAutoCompactContext(LlmTokenUsage(totalTokens = 111_617), "api", ""))
+        assertFalse(
+            shouldAutoCompactContext(
+                LlmTokenUsage(totalTokens = 127_999),
+                "api",
+                "",
+                contextWindow = 128_000,
+                reserveTokens = 0,
+            )
+        )
+    }
+
     @Test
     fun selectedModelDisplaySplitsFamilyAndVariant() {
         assertEquals(

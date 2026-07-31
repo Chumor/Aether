@@ -415,7 +415,7 @@ fun SharedProviderOnboardingStep(
 }
 
 @Composable
-private fun SharedProviderPickerContent(
+internal fun SharedProviderPickerContent(
     providerSearch: String,
     onProviderSearchChange: (String) -> Unit,
     providerChoices: List<PiProviderDefinition>,

@@ -684,6 +684,11 @@ class SessionExecutionManager(
             val estimatedTokenUsage = estimateRequestTokenUsage(request)
             val completion = result.fold(
                 onSuccess = { turnResult ->
+                    val estimatedOutputTokens = approximateReasoningTokenCount(turnResult.assistantText).toLong()
+                    val resolvedTokenUsage = turnResult.tokenUsage ?: estimatedTokenUsage.copy(
+                        outputTokens = estimatedOutputTokens,
+                        totalTokens = (estimatedTokenUsage.totalTokens ?: 0L) + estimatedOutputTokens,
+                    )
                     diagnosticLogger.event(
                         category = "session",
                         event = "turn_model_success",
@@ -702,7 +707,7 @@ class SessionExecutionManager(
                         ) { handle.nextPendingBlockId("agent-text") },
                         thoughtDurationMillis = thoughtDurationMillis,
                         outcome = SessionTurnOutcome.Success,
-                        tokenUsage = turnResult.tokenUsage ?: estimatedTokenUsage,
+                        tokenUsage = resolvedTokenUsage,
                         tokenUsageSource = if (turnResult.tokenUsage != null) "api" else "estimated",
                         turnStartedAtMillis = turnStartedAtMillis,
                         firstTokenAtMillis = firstAssistantTokenAtMillis,

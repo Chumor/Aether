@@ -29,6 +29,7 @@ import com.zhousl.aether.data.PiExtensionCatalogEntry
 import com.zhousl.aether.data.ProviderModelCatalogClient
 import com.zhousl.aether.data.thinkingCatalogKey
 import com.zhousl.aether.data.LlmProviderConfig
+import com.zhousl.aether.data.LlmTokenUsage
 import com.zhousl.aether.data.ModelCatalogClient
 import com.zhousl.aether.data.LocalRuntimeId
 import com.zhousl.aether.data.ProviderModelOption
@@ -125,9 +126,29 @@ private const val SessionTitleSystemPrompt =
     "Generate a concise chat title for this conversation. Return only the title, in the user's language when possible, with no quotes, no emoji, and at most 6 words."
 private const val CompactCommand = "/compact"
 private const val CompactingMaxInputChars = 120_000
+// Pi Coding Agent defaults: compact before the model loses the 16K response reserve.
+private const val ContextWindowTokens = 128_000L
+private const val AutoCompactionReserveTokens = 16_384L
 private const val MaxInlineImageAttachmentBytes = 5 * 1024 * 1024
 private const val SessionCompactingSystemPrompt =
     "You are Aether's conversation compactor. Summarize the provided conversation so a future assistant can continue seamlessly. Preserve user goals, constraints, decisions, important facts, open tasks, files/paths mentioned, tool results, errors, and next steps. Do not invent details. Return only the compacted context."
+
+internal fun shouldAutoCompactContext(
+    usage: LlmTokenUsage?,
+    tokenUsageSource: String,
+    assistantText: String,
+    contextWindow: Long = ContextWindowTokens,
+    reserveTokens: Long = AutoCompactionReserveTokens,
+): Boolean {
+    val totalTokens = usage?.withMissingTotalResolved()?.totalTokens ?: return false
+    if (contextWindow <= reserveTokens) return false
+    val trailingEstimate = if (tokenUsageSource == "estimated") {
+        (assistantText.length + 3L) / 4L
+    } else {
+        0L
+    }
+    return totalTokens + trailingEstimate > contextWindow - reserveTokens
+}
 
 class AetherViewModel(
     application: Application,
@@ -4193,6 +4214,17 @@ class AetherViewModel(
         captureTurnCompleted(event)
         val isSuccessfulAssistantReply = event.outcome == SessionTurnOutcome.Success
         if (
+            isSuccessfulAssistantReply &&
+            shouldAutoCompactContext(event.tokenUsage, event.tokenUsageSource, assistantText = "")
+        ) {
+            viewModelScope.launch {
+                while (sessionExecutionManager.isSessionRunning(event.sessionId)) {
+                    delay(25)
+                }
+                compactSession(event.sessionId, manual = false)
+            }
+        }
+        if (
             shouldMarkOnboardingCompleted(
                 settings = _uiState.value.settings,
                 isSuccessfulAssistantReply = isSuccessfulAssistantReply,
@@ -5209,40 +5241,57 @@ class AetherViewModel(
         content.trim().equals(CompactCommand, ignoreCase = true)
 
     private fun compactCurrentSession(snapshot: AetherUiState) {
-        if (snapshot.editingSessionId != null) {
+        compactSession(snapshot.currentSessionId, manual = true, snapshot = snapshot)
+    }
+
+    private fun compactSession(
+        sessionId: String,
+        manual: Boolean,
+        snapshot: AetherUiState = _uiState.value,
+    ) {
+        if ((manual && snapshot.editingSessionId != null) || snapshot.editingSessionId == sessionId) {
+            if (!manual) return
             emitTransientMessage(uiString(R.string.message_finish_editing_before_compacting))
             return
         }
-        val sessionId = snapshot.currentSessionId
         if (sessionId == DraftSessionId) {
+            if (!manual) return
             emitTransientMessage(uiString(R.string.message_no_conversation_to_compact))
             return
         }
         if (sessionExecutionManager.isSessionRunning(sessionId)) {
+            if (!manual) return
             emitTransientMessage(uiString(R.string.message_pause_before_compacting))
             return
         }
+        if (snapshot.compactingSessionId != null) return
         val session = snapshot.sessions.firstOrNull { it.id == sessionId }
         if (session == null || session.messages.size < 2) {
+            if (!manual) return
             emitTransientMessage(uiString(R.string.message_not_enough_conversation_to_compact))
             return
         }
         val compactInput = buildCompactConversationInput(session)
         if (compactInput.isBlank()) {
+            if (!manual) return
             emitTransientMessage(uiString(R.string.message_no_text_to_compact))
             return
         }
 
         _uiState.update { current ->
-            current.copy(
-                draftInput = "",
-                draftAttachments = emptyList(),
-                draftWorkspaceId = null,
-                editingSessionId = null,
-                editingMessageId = null,
-                showStarterPromptHint = false,
-                compactingSessionId = sessionId,
-            )
+            if (manual) {
+                current.copy(
+                    draftInput = "",
+                    draftAttachments = emptyList(),
+                    draftWorkspaceId = null,
+                    editingSessionId = null,
+                    editingMessageId = null,
+                    showStarterPromptHint = false,
+                    compactingSessionId = sessionId,
+                )
+            } else {
+                current.copy(compactingSessionId = sessionId)
+            }
         }
 
         viewModelScope.launch {

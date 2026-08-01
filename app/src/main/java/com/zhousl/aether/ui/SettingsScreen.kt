@@ -340,12 +340,14 @@ private val StatisticsNeutralChartColor = Color(0xFF747C89)
 private fun settingsLanguageDisplayName(language: AppLanguage): String = when (language) {
     AppLanguage.English -> stringResource(R.string.language_english)
     AppLanguage.SimplifiedChinese -> stringResource(R.string.language_simplified_chinese)
+    AppLanguage.Persian -> stringResource(R.string.language_persian)
 }
 
 @Composable
 private fun settingsLanguageSubtitle(language: AppLanguage): String = when (language) {
     AppLanguage.English -> stringResource(R.string.settings_language_english_interface)
     AppLanguage.SimplifiedChinese -> stringResource(R.string.settings_language_simplified_chinese_interface)
+    AppLanguage.Persian -> stringResource(R.string.settings_language_persian_interface)
 }
 
 @Composable
@@ -2187,11 +2189,7 @@ private fun GeneralSettingsPage(
                 AppLanguage.entries.forEach { option ->
                     SettingsChoiceRow(
                         title = settingsLanguageDisplayName(option),
-                        subtitle = if (option == AppLanguage.English) {
-                            stringResource(R.string.settings_language_english_interface)
-                        } else {
-                            stringResource(R.string.settings_language_simplified_chinese_interface)
-                        },
+                        subtitle = settingsLanguageSubtitle(option),
                         selected = option == selectedLanguage,
                         onClick = { onLanguageSelected(option) },
                     )

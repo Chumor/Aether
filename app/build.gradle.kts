@@ -45,6 +45,11 @@ val appVersionName = providers.gradleProperty("aether.versionName")
 val piBridgeProjectDir = rootProject.layout.projectDirectory.dir("pi-bridge")
 val piBridgeGeneratedAssetsDir = layout.buildDirectory.dir("generated/assets/piBridge")
 val piProviderIconsGeneratedResDir = layout.buildDirectory.dir("generated/res/piProviderIcons")
+// Make shared Compose resources available to Android resource APIs.
+val sharedComposeResourcesDir = rootProject.project(":shared").projectDir.resolve(
+    "src/commonMain/composeResources",
+)
+val sharedComposeResourcesGeneratedResDir = layout.buildDirectory.dir("generated/res/sharedComposeResources")
 val piProviderIconFiles = mapOf(
     "provider_amazon_bedrock.png" to "bedrock-color.png",
     "provider_ant_ling.png" to "antgroup-color.png",
@@ -221,6 +226,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
@@ -288,6 +294,22 @@ val buildPiBridge = tasks.register<Exec>("buildPiBridge") {
     outputs.file(piBridgeProjectDir.file("dist/bridge.mjs"))
 }
 
+val copySharedComposeResources = tasks.register<SyncGeneratedSourceDirectory>("copySharedComposeResources") {
+    outputDirectory.set(sharedComposeResourcesGeneratedResDir)
+    from(sharedComposeResourcesDir) {
+        include("values*/**")
+    }
+    // Escape apostrophes in shared i18n strings for Android's resource parser.
+    filter { line ->
+        if (line.trimStart().startsWith("<string ")) {
+            line.replace("'", "\\'").replace("&apos;", "\\'")
+        } else {
+            line
+        }
+    }
+    includeEmptyDirs = false
+}
+
 val copyPiProviderIcons = tasks.register<SyncGeneratedSourceDirectory>("copyPiProviderIcons") {
     dependsOn(installPiBridgeDependencies)
     val iconSourceDir = piBridgeProjectDir.dir(
@@ -320,6 +342,10 @@ androidComponents {
     onVariants(selector().all()) { variant ->
         variant.sources.assets?.addGeneratedSourceDirectory(
             copyPiBridgeAsset,
+            SyncGeneratedSourceDirectory::outputDirectory,
+        )
+        variant.sources.res?.addGeneratedSourceDirectory(
+            copySharedComposeResources,
             SyncGeneratedSourceDirectory::outputDirectory,
         )
         variant.sources.res?.addGeneratedSourceDirectory(

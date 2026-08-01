@@ -50,6 +50,10 @@ enum class AppLanguage(
     SimplifiedChinese(
         storageValue = "zh-CN",
         languageTag = "zh-CN",
+    ),
+    Persian(
+        storageValue = "fa",
+        languageTag = "fa",
     );
 
     companion object {
@@ -226,12 +230,14 @@ fun parseAppSettings(value: String, fallback: AppSettings = AppSettings()): AppS
         AppSettingsJson.decodeFromString<AppSettings>(value)
     }.getOrDefault(fallback)
 
-fun defaultAppLanguage(): AppLanguage = if (
-    platformLanguageTag().startsWith("zh", ignoreCase = true)
-) {
-    AppLanguage.SimplifiedChinese
-} else {
-    AppLanguage.English
+fun defaultAppLanguage(): AppLanguage {
+    return appLanguageForTag(platformLanguageTag())
+}
+
+fun appLanguageForTag(languageTag: String): AppLanguage = when {
+    languageTag.startsWith("zh", ignoreCase = true) -> AppLanguage.SimplifiedChinese
+    languageTag.startsWith("fa", ignoreCase = true) -> AppLanguage.Persian
+    else -> AppLanguage.English
 }
 
 

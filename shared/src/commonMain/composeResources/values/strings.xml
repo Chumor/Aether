@@ -156,8 +156,8 @@
     <string name="chat_context_compacted">Context compacted</string>
     <string name="chat_compacting_context">Compacting context</string>
     <string name="chat_compact_thread_context">Compact this thread&apos;s context</string>
-    <string name="chat_compact_thread_context_percent">Compact this thread&apos;s context (%1$d% full)</string>
-    <string name="chat_context_percent">%1$d% full context</string>
+    <string name="chat_compact_thread_context_percent">Compact this thread&apos;s context (%1$d%% full)</string>
+    <string name="chat_context_percent">%1$d%% full context</string>
     <string name="chat_compact">Compact</string>
     <string name="chat_additional_context">Additional context</string>
     <string name="chat_add_note">Add a note</string>

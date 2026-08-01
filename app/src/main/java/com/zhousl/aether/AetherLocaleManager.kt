@@ -3,6 +3,7 @@ package com.zhousl.aether
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import com.zhousl.aether.data.AppLanguage
+import com.zhousl.aether.data.appLanguageForTag
 import com.zhousl.aether.data.defaultAppLanguage
 
 object AetherLocaleManager {
@@ -18,7 +19,9 @@ object AetherLocaleManager {
     }
 
     fun currentApplicationLanguage(): AppLanguage? =
-        AppCompatDelegate.getApplicationLocales().get(0)?.let(::defaultAppLanguage)
+        AppCompatDelegate.getApplicationLocales().get(0)
+            ?.toLanguageTag()
+            ?.let(::appLanguageForTag)
 
     fun currentLanguage(): AppLanguage =
         currentApplicationLanguage() ?: defaultAppLanguage()

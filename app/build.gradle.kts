@@ -299,6 +299,14 @@ val copySharedComposeResources = tasks.register<SyncGeneratedSourceDirectory>("c
     from(sharedComposeResourcesDir) {
         include("values*/**")
     }
+    // Escape apostrophes in shared i18n strings for Android's resource parser.
+    filter { line ->
+        if (line.trimStart().startsWith("<string ")) {
+            line.replace("'", "\\'").replace("&apos;", "\\'")
+        } else {
+            line
+        }
+    }
     includeEmptyDirs = false
 }
 

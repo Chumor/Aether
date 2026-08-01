@@ -156,8 +156,8 @@
     <string name="chat_context_compacted">上下文已压缩</string>
     <string name="chat_compacting_context">正在压缩上下文</string>
     <string name="chat_compact_thread_context">压缩此对话上下文</string>
-    <string name="chat_compact_thread_context_percent">压缩此对话上下文（已满 %1$d%）</string>
-    <string name="chat_context_percent">上下文已满 %1$d%</string>
+    <string name="chat_compact_thread_context_percent">压缩此对话上下文（已满 %1$d%%）</string>
+    <string name="chat_context_percent">上下文已满 %1$d%%</string>
     <string name="chat_compact">压缩</string>
     <string name="chat_additional_context">补充上下文</string>
     <string name="chat_add_note">添加备注</string>

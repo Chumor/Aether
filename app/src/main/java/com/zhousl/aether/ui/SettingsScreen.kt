@@ -2189,13 +2189,7 @@ private fun GeneralSettingsPage(
                 AppLanguage.entries.forEach { option ->
                     SettingsChoiceRow(
                         title = settingsLanguageDisplayName(option),
-                        subtitle = if (option == AppLanguage.English) {
-                            stringResource(R.string.settings_language_english_interface)
-                        } else if (option == AppLanguage.SimplifiedChinese) {
-                            stringResource(R.string.settings_language_simplified_chinese_interface)
-                        } else {
-                            stringResource(R.string.settings_language_persian_interface)
-                        },
+                        subtitle = settingsLanguageSubtitle(option),
                         selected = option == selectedLanguage,
                         onClick = { onLanguageSelected(option) },
                     )

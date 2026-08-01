@@ -608,7 +608,7 @@
     <string name="termux_settings">تنظیمات Termux</string>
     <string name="termux_setup_command_copied">دستور تنظیم Termux کپی شد</string>
     <string name="termux_runs_shell_commands_on_device">اتر از Termux برای اجرای دستورات پوسته روی دستگاه استفاده می کند.</string>
-    <string name="termux_allow_run_commands_permission">به Aether اجازه دهید از &quot;اجرای دستورات در محیط Termux&raquo; مجوز اندروید</string>
+    <string name="termux_allow_run_commands_permission">به Aether اجازه دهید از &quot;اجرای دستورات در محیط Termux&quot; مجوز اندروید</string>
     <string name="termux_not_running_background">به نظر می رسد Termux در پس زمینه اجرا نمی شود</string>
     <string name="termux_keep_running_and_refresh">Termux را باز کنید و آن را در پس‌زمینه اجرا کنید، سپس به Aether برگردید و Refresh کنید.</string>
     <string name="termux_paste_setup_command_and_refresh">Termux را باز کنید، دستور Aether setup را بچسبانید، سپس برگردید و Refresh کنید.</string>
@@ -633,7 +633,7 @@
     <string name="onboarding_root_body_failed">راه اندازی ریشه کامل نشد. می توانید دوباره امتحان کنید یا به صورت دستی ادامه دهید.</string>
     <string name="onboarding_termux_status_ready">ابزارهای محلی آماده هستند.</string>
     <string name="onboarding_termux_status_not_installed">ابتدا Termux را نصب کنید، سپس به اینجا بازگردید.</string>
-    <string name="onboarding_termux_status_permission_missing">اعطای &laquo;اجرای دستورات در محیط Termux&raquo; مجوز در تنظیمات اندروید</string>
+    <string name="onboarding_termux_status_permission_missing">اعطای &#171;اجرای دستورات در محیط Termux&#187; مجوز در تنظیمات اندروید</string>
     <string name="onboarding_termux_status_external_apps_disabled_configured">Termux را یک بار باز کنید، سپس برگردید و Refresh کنید.</string>
     <string name="onboarding_termux_status_external_apps_disabled">دستور setup را کپی کنید، آن را در Termux Paste کنید، سپس برگردید و Refresh کنید.</string>
     <string name="onboarding_termux_status_dispatch_failed_configured">Termux را یک بار باز کنید، سپس اینجا را بازخوانی کنید.</string>

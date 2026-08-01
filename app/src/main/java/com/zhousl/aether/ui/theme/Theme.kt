@@ -7,13 +7,14 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.sp
 import com.zhousl.aether.R
 import com.zhousl.aether.data.AppLanguage
@@ -188,6 +189,9 @@ fun AetherTheme(
     } else {
         LayoutDirection.Ltr
     }
+    val typography = remember(currentFontFamily) {
+        getAetherTypography(currentFontFamily)
+    }
     CompositionLocalProvider(
         LocalLayoutDirection provides layoutDirection,
         LocalReduceMotion provides accessibility.reduceMotion,
@@ -199,7 +203,7 @@ fun AetherTheme(
                 accessibility.increasedContrast -> LightHighContrastAetherColors
                 else -> LightAetherColors
             },
-            typography = getAetherTypography(currentFontFamily),
+            typography = typography,
             content = content
         )
     }

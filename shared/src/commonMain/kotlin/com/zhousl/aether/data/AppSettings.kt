@@ -231,12 +231,13 @@ fun parseAppSettings(value: String, fallback: AppSettings = AppSettings()): AppS
     }.getOrDefault(fallback)
 
 fun defaultAppLanguage(): AppLanguage {
-    val languageTag = platformLanguageTag()
-    return when {
-        languageTag.startsWith("zh", ignoreCase = true) -> AppLanguage.SimplifiedChinese
-        languageTag.startsWith("fa", ignoreCase = true) -> AppLanguage.Persian
-        else -> AppLanguage.English
-    }
+    return appLanguageForTag(platformLanguageTag())
+}
+
+fun appLanguageForTag(languageTag: String): AppLanguage = when {
+    languageTag.startsWith("zh", ignoreCase = true) -> AppLanguage.SimplifiedChinese
+    languageTag.startsWith("fa", ignoreCase = true) -> AppLanguage.Persian
+    else -> AppLanguage.English
 }
 
 

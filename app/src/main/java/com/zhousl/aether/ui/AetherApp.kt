@@ -224,6 +224,8 @@ fun AetherApp(
 ) {
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
     val context = LocalContext.current
+    val applicationLanguage = AetherLocaleManager.currentApplicationLanguage()
+    val effectiveLanguage = applicationLanguage ?: uiState.settings.language
     val appRuntime = remember(context) {
         (context.applicationContext as AetherApplication).runtime
     }
@@ -262,8 +264,12 @@ fun AetherApp(
         )
     }
 
-    LaunchedEffect(uiState.settings.language) {
-        AetherLocaleManager.applyIfChanged(context, uiState.settings.language)
+    LaunchedEffect(uiState.settings.language, applicationLanguage) {
+        if (applicationLanguage == null) {
+            AetherLocaleManager.applyIfChanged(uiState.settings.language)
+        } else if (applicationLanguage != uiState.settings.language) {
+            viewModel.updateAppLanguage(applicationLanguage)
+        }
     }
 
     LaunchedEffect(extensionManager, extensionContext.toString()) {
@@ -296,15 +302,13 @@ fun AetherApp(
         }
     }
 
-    val localizedContext = remember(context, uiState.settings.language) {
-        AetherLocaleManager.localizedContext(context, uiState.settings.language)
-    }
-
     CompositionLocalProvider(
-        LocalContext provides localizedContext,
         LocalAetherExtensionUiController provides extensionController,
     ) {
-        AetherTheme(themeMode = uiState.settings.themeMode) {
+        AetherTheme(
+            themeMode = uiState.settings.themeMode,
+            language = effectiveLanguage,
+        ) {
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
@@ -317,6 +321,7 @@ fun AetherApp(
                         AetherAppContent(
                             viewModel = viewModel,
                             uiState = uiState,
+                            language = effectiveLanguage,
                             nativeModState = nativeModState,
                             onNotificationPermissionRequested = onNotificationPermissionRequested,
                         )
@@ -338,6 +343,7 @@ fun AetherApp(
 private fun AetherAppContent(
     viewModel: AetherViewModel,
     uiState: AetherUiState,
+    language: AppLanguage,
     nativeModState: AetherNativeModState,
     onNotificationPermissionRequested: () -> Unit,
 ) {
@@ -907,7 +913,7 @@ private fun AetherAppContent(
                     agentModeAuthorizationState = uiState.agentModeAuthorizationState,
                     rootSetupState = uiState.rootSetupState,
                     rootSetupProgressReturnPage = uiState.rootSetupProgressReturnPage,
-                    language = uiState.settings.language,
+                    language = language,
                     themeMode = uiState.settings.themeMode,
                     defaultChatModelKey = uiState.settings.defaultChatModelKey,
                     defaultTitleModelKey = uiState.settings.defaultTitleModelKey,
@@ -942,7 +948,7 @@ private fun AetherAppContent(
                     onSave = viewModel::saveSettings,
                     onUpdateLanguage = { language ->
                         viewModel.updateAppLanguage(language)
-                        AetherLocaleManager.applyIfChanged(context, language)
+                        AetherLocaleManager.apply(language)
                     },
                     onUpdateThemeMode = viewModel::updateAppThemeMode,
                     onUpsertProviderConfig = viewModel::upsertProviderConfig,

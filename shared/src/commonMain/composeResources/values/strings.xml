@@ -702,6 +702,9 @@
     <string name="onboarding_provider_model_message">Pick the model you want, and then we can go straight into chat.</string>
     <string name="onboarding_change_later_settings">You can change this later in Settings.</string>
     <string name="onboarding_best_models_first">Aether places the best matches first when available.</string>
+    <string name="notification_permission_title">Allow completion notifications?</string>
+    <string name="notification_permission_message">Aether can alert you when a background task finishes.</string>
+    <string name="notification_permission_allow">Allow notifications</string>
     <string name="onboarding_termux_setup_command_copied">Termux setup command copied</string>
     <string name="onboarding_termux_message">Great. Now let’s give Aether access to your device so tools can run locally.</string>
     <string name="onboarding_app_settings">App settings</string>
@@ -1013,7 +1016,7 @@
     <string name="settings_native_mod_restart_required">Restart Aether to apply this Native Mod setting.</string>
     <string name="settings_native_mod_enable_next_start">Enable Native Mods on next start</string>
     <string name="settings_native_mod_disable_next_start">Start in Native Mod Safe Mode next time</string>
-    <!-- iOS shell labels retained until the corresponding full Android screen is shared. -->
+    <!-- iOS shell labels; the corresponding Android screen is not yet shared. -->
     <string name="onboarding_title">Aether</string>
     <string name="onboarding_subtitle">Soar with local AI.</string>
     <string name="alpine_title">Alpine</string>

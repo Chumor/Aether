@@ -700,6 +700,9 @@
     <string name="onboarding_provider_model_message">选好模型后，我们就可以直接进入聊天。</string>
     <string name="onboarding_change_later_settings">你以后可以在设置中更改。</string>
     <string name="onboarding_best_models_first">找到合适的模型时，Aether 会优先显示它们。</string>
+    <string name="notification_permission_title">允许任务完成通知？</string>
+    <string name="notification_permission_message">后台任务完成时，Aether 可以发送提醒。</string>
+    <string name="notification_permission_allow">允许通知</string>
     <string name="onboarding_termux_setup_command_copied">已复制 Termux 配置命令</string>
     <string name="onboarding_termux_message">很好。现在让 Aether 获得设备访问权限，以便工具可以在本地运行。</string>
     <string name="onboarding_app_settings">应用设置</string>
@@ -1011,7 +1014,7 @@
     <string name="settings_native_mod_restart_required">请重启 Aether 以应用 Native Mod 设置。</string>
     <string name="settings_native_mod_enable_next_start">下次启动启用 Native Mod</string>
     <string name="settings_native_mod_disable_next_start">下次以 Native Mod 安全模式启动</string>
-    <!-- iOS shell labels retained until the corresponding full Android screen is shared. -->
+    <!-- iOS shell labels; the corresponding Android screen is not yet shared. -->
     <string name="onboarding_title">Aether</string>
     <string name="onboarding_subtitle">本地 AI，随你启程。</string>
     <string name="alpine_title">Alpine</string>

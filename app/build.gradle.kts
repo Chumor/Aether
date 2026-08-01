@@ -148,16 +148,18 @@ android {
         debug {
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
             manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_round"
+            manifestPlaceholders["appLabel"] = "@string/app_name"
         }
 
         create("nightly") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".nightly"
             matchingFallbacks += listOf("debug")
-            resValue("string", "app_name", "Aether Nightly")
+            resValue("string", "nightly_app_name", "Aether Nightly")
             buildConfigField("String", "UPDATE_CHANNEL", "\"nightly\"")
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_nightly"
             manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_nightly_round"
+            manifestPlaceholders["appLabel"] = "@string/nightly_app_name"
             signingConfig = if (nightlyKeystoreFile.isNotBlank()) {
                 signingConfigs.getByName("nightly")
             } else {
@@ -170,6 +172,7 @@ android {
             isShrinkResources = true
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
             manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_round"
+            manifestPlaceholders["appLabel"] = "@string/app_name"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

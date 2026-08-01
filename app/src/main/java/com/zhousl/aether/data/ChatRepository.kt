@@ -13,7 +13,6 @@ import com.zhousl.aether.data.chatdb.ChatMessageEntity
 import com.zhousl.aether.data.chatdb.ChatMessageSummaryEntity
 import com.zhousl.aether.data.chatdb.ChatSessionEntity
 import com.zhousl.aether.data.chatdb.ChatSessionMessageStatsEntity
-import com.zhousl.aether.data.chatdb.ChatSessionSnapshot
 import com.zhousl.aether.data.chatdb.ChatStateMetaEntity
 import com.zhousl.aether.data.chatdb.ChatWorkspaceFileRefEntity
 
@@ -47,7 +46,12 @@ import org.json.JSONObject
 
 private const val DraftSessionId = "draft"
 private const val MessageJsonChunkSize = 64 * 1024
+internal const val MessageJsonBatchByteLimit = 64 * 1024
+private const val MaxMessagesPerJsonBatch = 8
 private const val WorkspaceFileRefQueryChunkSize = 500
+
+internal fun shouldStartNewMessageJsonBatch(currentBytes: Long, nextBytes: Long): Boolean =
+    currentBytes > 0L && nextBytes > MessageJsonBatchByteLimit - currentBytes
 
 
 private val Context.chatDataStore by preferencesDataStore(name = "aether_chats")
@@ -147,8 +151,8 @@ class ChatRepository(
         writeIntent: PersistedChatWriteIntent = PersistedChatWriteIntent.SyncSnapshot,
     ) {
         migrateLegacyChatStateIfNeeded()
-        replaceChatState(
-            sessions = sessions.mapIndexed { index, session -> session.toSnapshot(index) },
+        replaceChatStateBatched(
+            sessions = sessions,
             currentSessionId = currentSessionId,
             migrationComplete = true,
             writeIntent = writeIntent,
@@ -327,24 +331,62 @@ class ChatRepository(
     ) {
         chatHistoryDao.deleteWorkspaceFileRefsFromPosition(sessionId, fromPosition)
         chatHistoryDao.deleteMessagesFromPosition(sessionId, fromPosition)
-        if (messages.isNotEmpty()) {
-            val messageEntities = messages.mapIndexed { index, message ->
-                ChatMessageEntityMapper.toEntity(
-                    sessionId = sessionId,
-                    position = fromPosition + index,
-                    message = message,
-                )
-            }
-            chatHistoryDao.upsertMessages(messageEntities)
-            replaceWorkspaceFileRefsForMessagesInTransaction(
-                sessionId = sessionId,
-                messages = messages,
-            )
+        messages.forEach { message ->
+            chatHistoryDao.deleteWorkspaceFileRefsForMessage(sessionId, message.id)
         }
+        chatHistoryDao.upsertMessagesChunked(
+            sessionId = sessionId,
+            messages = messages,
+            startPosition = fromPosition,
+        )
     }
 
-    private suspend fun replaceChatState(
-        sessions: List<ChatSessionSnapshot>,
+    private suspend fun ChatHistoryDao.upsertMessagesChunked(
+        sessionId: String,
+        messages: List<ChatMessage>,
+        startPosition: Int = 0,
+    ) {
+        if (messages.isEmpty()) return
+
+        val messageEntities = ArrayList<ChatMessageEntity>()
+        val workspaceFileRefs = ArrayList<ChatWorkspaceFileRefEntity>()
+        var estimatedJsonBytes = 0L
+
+        suspend fun flushBatch() {
+            if (messageEntities.isEmpty()) return
+            upsertMessages(messageEntities)
+            if (workspaceFileRefs.isNotEmpty()) {
+                upsertWorkspaceFileRefs(workspaceFileRefs)
+            }
+            messageEntities.clear()
+            workspaceFileRefs.clear()
+            estimatedJsonBytes = 0L
+        }
+
+        messages.forEachIndexed { index, message ->
+            val messageJson = message.toJson().toString()
+            val nextJsonBytes = messageJson.length.toLong() * 2L
+            if (
+                messageEntities.isNotEmpty() &&
+                (messageEntities.size >= MaxMessagesPerJsonBatch ||
+                    shouldStartNewMessageJsonBatch(estimatedJsonBytes, nextJsonBytes))
+            ) {
+                flushBatch()
+            }
+            messageEntities += ChatMessageEntityMapper.toEntity(
+                sessionId = sessionId,
+                position = startPosition + index,
+                message = message,
+                messageJson = messageJson,
+            )
+            workspaceFileRefs.addAll(message.toWorkspaceFileRefs(sessionId))
+            estimatedJsonBytes += nextJsonBytes
+        }
+        flushBatch()
+    }
+
+    private suspend fun replaceChatStateBatched(
+        sessions: List<ChatSession>,
         currentSessionId: String,
         migrationComplete: Boolean,
         writeIntent: PersistedChatWriteIntent = PersistedChatWriteIntent.SyncSnapshot,
@@ -352,8 +394,8 @@ class ChatRepository(
         clearRestoredMessageCache()
         database.withTransaction {
             val safeCurrentSessionId = currentSessionId
-                .takeIf { id -> id == DraftSessionId || sessions.any { it.session.id == id } }
-                ?: sessions.firstOrNull()?.session?.id
+                .takeIf { id -> id == DraftSessionId || sessions.any { it.id == id } }
+                ?: sessions.firstOrNull()?.id
                 ?: DraftSessionId
             if (sessions.isEmpty()) {
                 if (writeIntent == PersistedChatWriteIntent.SyncSnapshot && chatHistoryDao.getSessions().isNotEmpty()) {
@@ -372,7 +414,7 @@ class ChatRepository(
                 return@withTransaction
             }
 
-            val sessionEntities = sessions.map { it.session }
+            val sessionEntities = sessions.mapIndexed { index, session -> session.toSessionEntity(index.toLong()) }
             val sessionIds = sessionEntities.map { it.id }
             chatHistoryDao.upsertSessions(sessionEntities)
             chatHistoryDao.deleteWorkspaceFileRefsExceptSessions(sessionIds)
@@ -389,21 +431,20 @@ class ChatRepository(
                 )
             )
 
-            sessions.forEach { snapshot ->
-                val existingMessageCount = existingMessageCounts[snapshot.session.id] ?: 0
+            sessions.forEach { session ->
+                val existingMessageCount = existingMessageCounts[session.id] ?: 0
+                val syncedMessages = syncActiveBranches(session.messages)
                 val isMetadataOnlySnapshot = writeIntent != PersistedChatWriteIntent.ReplaceFromImport &&
-                    snapshot.session.id != safeCurrentSessionId &&
-                    snapshot.messages.isEmpty() &&
+                    session.id != safeCurrentSessionId &&
+                    syncedMessages.isEmpty() &&
                     existingMessageCount > 0
                 if (!isMetadataOnlySnapshot) {
-                    chatHistoryDao.deleteWorkspaceFileRefsForSession(snapshot.session.id)
-                    chatHistoryDao.deleteMessagesForSession(snapshot.session.id)
-                    if (snapshot.messages.isNotEmpty()) {
-                        chatHistoryDao.upsertMessages(snapshot.messages)
-                        if (snapshot.workspaceFileRefs.isNotEmpty()) {
-                            chatHistoryDao.upsertWorkspaceFileRefs(snapshot.workspaceFileRefs)
-                        }
-                    }
+                    chatHistoryDao.deleteWorkspaceFileRefsForSession(session.id)
+                    chatHistoryDao.deleteMessagesForSession(session.id)
+                    chatHistoryDao.upsertMessagesChunked(
+                        sessionId = session.id,
+                        messages = syncedMessages,
+                    )
                 }
             }
         }
@@ -479,8 +520,8 @@ class ChatRepository(
         val legacySessions = legacyParseResult.sessions
         if (legacyParseResult.recoveredFromCorruption) {
             // TODO(Room v2): remove with legacy DataStore chat import.
-            replaceChatState(
-                sessions = legacySessions.mapIndexed { index, session -> session.toSnapshot(index) },
+            replaceChatStateBatched(
+                sessions = legacySessions,
                 currentSessionId = resolveLegacyCurrentSessionIdForMigration(
                     legacyCurrentSessionId = legacyCurrentSessionId,
                     legacySessions = legacySessions,
@@ -491,8 +532,8 @@ class ChatRepository(
             return@withLock
         }
         if (legacySessions.isNotEmpty()) {
-            replaceChatState(
-                sessions = legacySessions.mapIndexed { index, session -> session.toSnapshot(index) },
+            replaceChatStateBatched(
+                sessions = legacySessions,
                 currentSessionId = resolveLegacyCurrentSessionIdForMigration(
                     legacyCurrentSessionId = legacyCurrentSessionId,
                     legacySessions = legacySessions,
@@ -753,16 +794,17 @@ private fun ChatSession.toSessionEntity(sortOrder: Long): ChatSessionEntity = Ch
 )
 
 private fun List<ChatMessage>.toWorkspaceFileRefs(sessionId: String): List<ChatWorkspaceFileRefEntity> =
-    flatMap { message ->
-        message.collectWorkspaceFilePathsForIndex()
-            .map { path ->
-                ChatWorkspaceFileRefEntity(
-                    sessionId = sessionId,
-                    messageId = message.id,
-                    path = path,
-                )
-            }
-    }.distinctBy { ref -> Triple(ref.sessionId, ref.messageId, ref.path) }
+    flatMap { message -> message.toWorkspaceFileRefs(sessionId) }
+        .distinctBy { ref -> Triple(ref.sessionId, ref.messageId, ref.path) }
+
+private fun ChatMessage.toWorkspaceFileRefs(sessionId: String): List<ChatWorkspaceFileRefEntity> =
+    collectWorkspaceFilePathsForIndex().map { path ->
+        ChatWorkspaceFileRefEntity(
+            sessionId = sessionId,
+            messageId = id,
+            path = path,
+        )
+    }
 
 private fun ChatMessage.collectWorkspaceFilePathsForIndex(): List<String> =
     (attachments
@@ -774,20 +816,7 @@ private fun ChatMessage.collectWorkspaceFilePathsForIndex(): List<String> =
             .flatMap { branch -> branch.flatMap { it.collectWorkspaceFilePathsForIndex() } })
         .distinct()
 
-private fun ChatSession.toSnapshot(index: Int): ChatSessionSnapshot {
-    val syncedMessages = syncActiveBranches(messages)
-    return ChatSessionSnapshot(
-        session = toSessionEntity(index.toLong()),
-        messages = syncedMessages.mapIndexed { messageIndex, message ->
-            ChatMessageEntityMapper.toEntity(
-                sessionId = id,
-                position = messageIndex,
-                message = message,
-            )
-        },
-        workspaceFileRefs = syncedMessages.toWorkspaceFileRefs(id),
-    )
-}
+
 
 private fun ChatSessionEntity.toChatSession(
     messages: List<LoadedChatMessage>,

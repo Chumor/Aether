@@ -68,8 +68,8 @@ class AlpineRuntimeInstrumentedTest {
         try {
             val ping = bridge.ping()
             assertEquals("2.0.0-alpha.0", ping.getString("bridge_version"))
-            assertEquals("0.80.3", ping.getString("pi_ai_version"))
-            assertEquals("0.80.3", ping.getString("pi_agent_core_version"))
+            assertEquals("0.83.0", ping.getString("pi_ai_version"))
+            assertEquals("0.83.0", ping.getString("pi_agent_core_version"))
             val nodeVersion = ping.getString("node_version").removePrefix("v")
             val major = nodeVersion.substringBefore('.').toInt()
             val minor = nodeVersion.substringAfter('.').substringBefore('.').toInt()

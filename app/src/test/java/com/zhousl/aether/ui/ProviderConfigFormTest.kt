@@ -17,7 +17,10 @@ class ProviderConfigFormTest {
     fun catalogIncludesEveryPiBuiltInProviderAndCustomEndpoint() {
         assertEquals(35, PiProviderCatalog.builtInProviders.size)
         assertEquals(36, PiProviderCatalog.providers.size)
-        assertEquals("openai-compatible", PiProviderCatalog.providers.last().id)
+
+        val customProviders = PiProviderCatalog.providers.filterNot { it.isBuiltIn }
+        assertEquals(1, customProviders.size)
+        assertEquals("openai-compatible", customProviders.single().id)
     }
 
     @Test

@@ -810,7 +810,10 @@ fun AetherSharedApp(
 ) {
     var sharedAppSettings by remember { mutableStateOf(AppSettings()) }
     applyPlatformAppLanguage(sharedAppSettings.language)
-    SharedAetherTheme(themeMode = sharedAppSettings.themeMode) {
+    SharedAetherTheme(
+        themeMode = sharedAppSettings.themeMode,
+        language = sharedAppSettings.language,
+    ) {
         val reduceMotion = LocalReduceMotion.current
         val finishEditingBeforeCompactingMessage = stringResource(Res.string.message_finish_editing_before_compacting)
         val noConversationToCompactMessage = stringResource(Res.string.message_no_conversation_to_compact)
@@ -7353,6 +7356,8 @@ private fun SharedSettingsScreen(
                     com.zhousl.aether.data.AppLanguage.English -> Res.string.language_english
                     com.zhousl.aether.data.AppLanguage.SimplifiedChinese ->
                         Res.string.language_simplified_chinese
+                    com.zhousl.aether.data.AppLanguage.Persian ->
+                        Res.string.language_persian
                 },
             ),
             stringResource(

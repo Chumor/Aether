@@ -12,9 +12,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.intl.Locale
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.LocalLayoutDirection
 import androidx.compose.ui.unit.sp
 import com.zhousl.aether.R
+import com.zhousl.aether.data.AppLanguage
 import com.zhousl.aether.data.AppThemeMode
 import com.zhousl.aether.platform.LocalReduceMotion
 import com.zhousl.aether.platform.rememberPlatformAccessibilityPreferences
@@ -164,6 +166,7 @@ private fun getAetherTypography(fontFamily: FontFamily) = Typography(
 @Composable
 fun AetherTheme(
     themeMode: AppThemeMode = AppThemeMode.System,
+    language: AppLanguage = AppLanguage.English,
     content: @Composable () -> Unit
 ) {
     val darkTheme = when (themeMode) {
@@ -175,8 +178,20 @@ fun AetherTheme(
     SideEffect {
         updateAetherPalette(darkTheme, accessibility.increasedContrast)
     }
-    val currentFontFamily = if (Locale.current.language == "fa") VazirmatnFontFamily else FontFamily.SansSerif
-    CompositionLocalProvider(LocalReduceMotion provides accessibility.reduceMotion) {
+    val currentFontFamily = if (language == AppLanguage.Persian) {
+        VazirmatnFontFamily
+    } else {
+        FontFamily.SansSerif
+    }
+    val layoutDirection = if (language == AppLanguage.Persian) {
+        LayoutDirection.Rtl
+    } else {
+        LayoutDirection.Ltr
+    }
+    CompositionLocalProvider(
+        LocalLayoutDirection provides layoutDirection,
+        LocalReduceMotion provides accessibility.reduceMotion,
+    ) {
         MaterialTheme(
             colorScheme = when {
                 darkTheme && accessibility.increasedContrast -> DarkHighContrastAetherColors

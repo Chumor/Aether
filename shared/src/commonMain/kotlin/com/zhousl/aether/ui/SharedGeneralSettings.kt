@@ -70,6 +70,8 @@ internal fun SharedGeneralSettingsDetail(
                                 AppLanguage.English -> stringResource(Res.string.settings_language_english_interface)
                                 AppLanguage.SimplifiedChinese ->
                                     stringResource(Res.string.settings_language_simplified_chinese_interface)
+                                AppLanguage.Persian ->
+                                    stringResource(Res.string.settings_language_persian_interface)
                             },
                             selected = option == settings.language,
                             onClick = {
@@ -114,6 +116,7 @@ internal fun SharedGeneralSettingsDetail(
 private fun sharedLanguageDisplayName(language: AppLanguage): String = when (language) {
     AppLanguage.English -> stringResource(Res.string.language_english)
     AppLanguage.SimplifiedChinese -> stringResource(Res.string.language_simplified_chinese)
+    AppLanguage.Persian -> stringResource(Res.string.language_persian)
 }
 
 @Composable

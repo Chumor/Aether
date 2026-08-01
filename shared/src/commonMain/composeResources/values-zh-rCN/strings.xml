@@ -203,8 +203,10 @@
     <string name="settings_general_summary">%1$s / %2$s</string>
     <string name="settings_language">语言</string>
     <string name="settings_language_description">选择应用界面语言。</string>
+    <string name="language_persian" translatable="false">فارسی</string>
     <string name="settings_language_english_interface">英文界面</string>
     <string name="settings_language_simplified_chinese_interface">简体中文界面</string>
+    <string name="settings_language_persian_interface">波斯语界面</string>
     <string name="settings_theme">主题</string>
     <string name="settings_theme_description">选择应用界面外观。</string>
     <string name="theme_system">跟随系统</string>

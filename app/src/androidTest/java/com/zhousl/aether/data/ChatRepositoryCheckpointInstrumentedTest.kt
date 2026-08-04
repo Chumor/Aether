@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.room.Room
+import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.zhousl.aether.data.chatdb.ChatHistoryDatabase
@@ -42,6 +43,7 @@ class ChatRepositoryCheckpointInstrumentedTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         runBlocking { clearLegacyChatState(context) }
         database = Room.inMemoryDatabaseBuilder(context, ChatHistoryDatabase::class.java)
+            .setDriver(BundledSQLiteDriver())
             .allowMainThreadQueries()
             .build()
         repository = ChatRepository(context, database)

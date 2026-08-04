@@ -5,7 +5,8 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import androidx.room.withTransaction
+import androidx.room.immediateTransaction
+import androidx.room.useWriterConnection
 import com.zhousl.aether.data.chatdb.ChatHistoryDao
 import com.zhousl.aether.data.chatdb.ChatHistoryDatabase
 import com.zhousl.aether.data.chatdb.AndroidChatHistoryDatabaseFactory
@@ -111,6 +112,15 @@ private data class AssistantResponseCheckpointUpsert(
     val fromPosition: Int,
     val messages: List<ChatMessage>,
 )
+
+// BundledSQLiteDriver databases use Room's connection-based transaction API.
+private suspend fun <R> ChatHistoryDatabase.withTransaction(
+    block: suspend () -> R,
+): R = useWriterConnection { connection ->
+    connection.immediateTransaction {
+        block()
+    }
+}
 
 class ChatRepository(
     private val context: Context,

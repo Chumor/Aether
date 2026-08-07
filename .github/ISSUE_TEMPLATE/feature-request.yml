@@ -41,12 +41,12 @@ body:
       required: true
 
   - type: textarea
-      id: why-not-extensions
-      attributes:
-        label: Why this cannot be done with an extension? / 为什么不能使用扩展实现？
-        description: For features that are not needed by everyone, we recommend implementing them via extensions. / 对于
-      validations:
-        required: true
+    id: why-not-extensions
+    attributes:
+      label: Why this cannot be done with an extension? / 为什么不能使用扩展实现？
+      description: For features that are not needed by everyone, we recommend implementing them via extensions. / 对于并非所有人都需要的功能，我们建议通过扩展来实现。
+    validations:
+      required: true
 
   - type: textarea
     id: additional-context

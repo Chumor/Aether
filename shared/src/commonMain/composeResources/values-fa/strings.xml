@@ -835,8 +835,6 @@
     <string name="settings_default_runtime_help">استفاده از تنظیمات &gt; پیش فرض های زمان اجرا</string>
     <string name="settings_runtime_termux_stdio_subtitle">این سرور stdio را از طریق Termux اجرا کنید.</string>
     <string name="settings_runtime_alpine_stdio_subtitle">این سرور stdio را در داخل Alpine اجرا کنید.</string>
-    <string name="settings_live_command_output">خروجی فرمان زنده</string>
-    <string name="settings_live_command_output_description">در حالی که دستورات Termux هنوز فعال هستند، عکس‌های فوری bash stdout و stderr را در کارت ابزار نمایش دهید.</string>
     <string name="settings_alpine_description">محیط لینوکس داخلی Aether یک برنامه خصوصی و مستقل از Termux است. از آن برای اسکریپت های پوسته، ابزارهای توسعه و سرورهای stdio MCP استفاده کنید.</string>
     <string name="settings_open_terminal">ترمینال را باز کنید</string>
     <string name="settings_open_chrome">کروم را باز کنید</string>

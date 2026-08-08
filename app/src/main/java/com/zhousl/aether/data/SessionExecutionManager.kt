@@ -50,6 +50,8 @@ private const val ReasoningSummaryDetailMaxChars = 520
 private const val ReasoningSummarySystemPrompt =
     "You write concise user-visible progress summaries for assistant reasoning. Use a consistent first-person planning style, and never quote long private reasoning verbatim."
 
+private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
 internal fun completedReconnectStatus(status: String): String =
     if (status.startsWith("Reconnecting", ignoreCase = true)) "Reconnected" else status
 
@@ -161,6 +163,7 @@ class SessionExecutionManager(
     private val piKernelBridge: PiKernelBridge,
     private val piAgentRunner: PiAgentRunner,
 ) {
+    private val skillRuntimeMirror = SkillRuntimeMirror(runtimeRouter)
     private val currentSettings = MutableStateFlow(AppSettings())
     private val currentProviderConfigs = MutableStateFlow<List<LlmProviderConfig>>(emptyList())
     private val currentExtensionsState = MutableStateFlow(AgentExtensionsState())
@@ -504,11 +507,6 @@ class SessionExecutionManager(
                 "base_url" to DiagnosticRedactor.sanitizedBaseUrl(request.settings.baseUrl),
             ),
         )
-        val mcpClientManager = McpClientManager(
-            runtimeRouter = runtimeRouter,
-            settings = request.settings,
-            diagnosticLogger = diagnosticLogger,
-        )
         val selfManagementTool = AetherSelfManagementTool(
             settingsRepository = settingsRepository,
             extensionsRepository = extensionsRepository,
@@ -516,7 +514,6 @@ class SessionExecutionManager(
             bashTool = bashTool,
             rootSetupController = rootSetupController,
             agentModeController = agentModeController,
-            mcpClientManager = mcpClientManager,
             scheduledTaskManager = scheduledTaskManager,
             piKernelBridge = piKernelBridge,
             sessionId = handle.sessionId,
@@ -540,63 +537,35 @@ class SessionExecutionManager(
             val resolvedAvailableSkills = currentExtensionsState.value.installedSkills
                 .filter { it.isEnabled }
                 .sortedBy { it.name.lowercase() }
+            val mirroredSkillPaths = skillRuntimeMirror.sync(resolvedAvailableSkills)
             val explicitlySelectedSkills = resolveSelectedActiveSkills(
                 selectedSkillIds = request.selectedSkillIds,
             )
-            val implicitlySelectedSkills = skillManager.findImplicitlyRelevantSkills(
-                skills = resolvedAvailableSkills,
-                messages = request.requestMessages,
-                excludedSkillIds = explicitlySelectedSkills.map { it.skillId }.toSet(),
-            )
-            var resolvedSkillSelection = resolveTurnSkillSelection(
+            val resolvedSkillSelection = resolveTurnSkillSelection(
                 explicitActiveSkills = explicitlySelectedSkills,
-                implicitActiveSkills = implicitlySelectedSkills.mapNotNull { skill ->
-                    skillManager.buildActiveSkillContext(skill).getOrNull()
-                },
+                implicitActiveSkills = emptyList(),
             )
-            var resolvedActiveSkills = resolvedSkillSelection.activeSkills
-            var resolvedSelectedSkillIds = resolvedSkillSelection.selectedSkillIds
-            val resolvedMcpServers = resolveSelectedMcpServers(request.activeMcpServerIds)
-            val resolvedMcpServerIds = resolvedMcpServers.map { it.id }
+            val resolvedActiveSkills = resolvedSkillSelection.activeSkills
             updateSessionSelections(
                 sessionId = handle.sessionId,
-                selectedSkillIds = resolvedSelectedSkillIds,
-                activeSkills = resolvedActiveSkills,
-                activeMcpServerIds = resolvedMcpServerIds,
+                selectedSkillIds = emptyList(),
+                activeSkills = emptyList(),
+                activeMcpServerIds = emptyList(),
             )
 
             val workspaceDirectory = workspaceFileBridge.workspaceDirectory(
                 sessionId = handle.sessionId,
                 mode = request.settings.agentWorkspaceMode,
             )
+            val agentSessionMetadata = chatRepository.getAgentSessionMetadata(handle.sessionId)
+                ?.takeIf { metadata -> validateAgentSessionFile(metadata.piSessionId, metadata.jsonlPath) }
+            val activeRuntimeId = LocalRuntimeId.fromStorage(agentSessionMetadata?.runtime)
+                ?: runtimeRouter.runtimeFor(request.settings, null)?.id
+                ?: request.settings.defaultRuntimeId
+                ?: LocalRuntimeId.Alpine
             val runtimeWorkspaceDirectory = runtimeRouter.runtimeWorkspaceDirectory(
                 settings = request.settings,
                 termuxWorkspaceDirectory = workspaceDirectory,
-            )
-            diagnosticLogger.event(
-                category = "mcp",
-                event = "sync_start",
-                sessionId = handle.sessionId,
-                turnId = turnId,
-                details = mapOf(
-                    "server_count" to resolvedMcpServers.size,
-                    "workspace_directory" to runtimeWorkspaceDirectory,
-                ),
-            )
-            mcpClientManager.syncServers(
-                servers = resolvedMcpServers,
-                workspaceDirectory = runtimeWorkspaceDirectory,
-                termuxWorkspaceDirectory = workspaceDirectory,
-            )
-            diagnosticLogger.event(
-                category = "mcp",
-                event = "sync_end",
-                sessionId = handle.sessionId,
-                turnId = turnId,
-                details = mapOf(
-                    "server_count" to resolvedMcpServers.size,
-                    "tool_binding_count" to mcpClientManager.toolBindings().size,
-                ),
             )
             val reasoningTraceToolRoutingEnabled = request.settings.supportsVisibleReasoningTrace()
             var providerRequestCheckpoint: ProviderRequestCheckpoint? = null
@@ -618,17 +587,16 @@ class SessionExecutionManager(
                 ),
                 workspaceDirectory = runtimeWorkspaceDirectory,
                 termuxWorkspaceDirectory = workspaceDirectory,
-                availableSkills = resolvedAvailableSkills,
+                skillPaths = mirroredSkillPaths,
                 activeSkills = resolvedActiveSkills,
-                mcpToolBindings = mcpClientManager.toolBindings(),
-                mcpClientManager = mcpClientManager,
                 selfManagementTool = selfManagementTool,
                 agentModeEnabled = request.agentModeEnabled,
                 chromeEnabled = request.chromeEnabled,
-                providerConfigs = request.providerConfigs,
                 sessionId = handle.sessionId,
+                sessionFile = agentSessionMetadata?.jsonlPath.orEmpty(),
+                runtimeId = activeRuntimeId,
                 onToolEvent = emitToolEvent,
-                onToolProgress = if (request.settings.termuxLiveOutputEnabled) emitToolEvent else null,
+                onToolProgress = emitToolEvent,
                 onAssistantReasoningDelta = { delta ->
                     if (handle.pauseRequested) return@runTurn
                     if (delta.isEmpty()) return@runTurn
@@ -710,21 +678,6 @@ class SessionExecutionManager(
                         )
                     }
                 },
-                onSkillActivated = { activeSkill ->
-                    if (handle.pauseRequested) return@runTurn
-                    resolvedSelectedSkillIds = (resolvedSelectedSkillIds + activeSkill.skillId).distinct()
-                    resolvedSkillSelection = resolvedSkillSelection.copy(
-                        selectedSkillIds = resolvedSelectedSkillIds,
-                        activeSkills = upsertActiveSkillContext(resolvedActiveSkills, activeSkill),
-                    )
-                    resolvedActiveSkills = resolvedSkillSelection.activeSkills
-                    updateSessionSelections(
-                        sessionId = handle.sessionId,
-                        selectedSkillIds = resolvedSelectedSkillIds,
-                        activeSkills = resolvedActiveSkills,
-                        activeMcpServerIds = resolvedMcpServerIds,
-                    )
-                },
                 pollInjectedUserMessages = {
                     if (handle.pauseRequested) return@runTurn emptyList()
                     val drained = drainSteerInputs(handle)
@@ -782,6 +735,11 @@ class SessionExecutionManager(
                         userMessageCount = request.requestMessages.count { it.author == MessageAuthor.User },
                         providerPayloadJson = turnResult.providerPayloadJson,
                         handle = handle,
+                    ).copy(
+                        piSessionId = turnResult.piSessionId,
+                        piSessionFile = turnResult.piSessionFile,
+                        piRuntime = turnResult.runtime,
+                        piEntryIds = turnResult.piEntryIds,
                     )
                 },
                 onFailure = { throwable ->
@@ -818,6 +776,19 @@ class SessionExecutionManager(
                 },
             )
             chatStateStore.flush()
+            if (completion.piSessionId.isNotBlank() && completion.piSessionFile.isNotBlank()) {
+                chatRepository.upsertAgentSessionMetadata(
+                    chatSessionId = handle.sessionId,
+                    piSessionId = completion.piSessionId,
+                    jsonlPath = completion.piSessionFile,
+                    runtime = completion.piRuntime,
+                )
+                chatRepository.upsertAgentMessageRefs(
+                    chatSessionId = handle.sessionId,
+                    aetherMessageIds = completion.appendedMessageIds,
+                    piEntryIds = completion.piEntryIds,
+                )
+            }
             _turnEvents.tryEmit(completion.toTurnEvent(handle.sessionId))
             diagnosticLogger.event(
                 category = "session",
@@ -866,9 +837,6 @@ class SessionExecutionManager(
             }
             completion
         } finally {
-            mcpClientManager.snapshots().forEach { snapshot ->
-                runCatching { mcpClientManager.disconnect(snapshot.config.id) }
-            }
             if (executionHandles[handle.sessionId] === handle) {
                 updateExecutionState(handle.sessionId) { current ->
                     current.copy(
@@ -881,6 +849,28 @@ class SessionExecutionManager(
                 }
             }
         }
+    }
+
+    private suspend fun validateAgentSessionFile(
+        expectedSessionId: String,
+        sessionFile: String,
+    ): Boolean {
+        if (expectedSessionId.isBlank() || sessionFile.isBlank()) return false
+        val alpine = runtimeRouter.runtimeById(LocalRuntimeId.Alpine)
+        val result = runCatching {
+            JSONObject(
+                alpine.executeCommand(
+                    command = "head -n 1 -- ${shellQuote(sessionFile)}",
+                    workingDirectory = alpine.homeDirectory,
+                    awaitTimeoutMillis = 15_000L,
+                )
+            )
+        }.getOrNull() ?: return false
+        if (!result.optBoolean("ok")) return false
+        val header = runCatching {
+            JSONObject(result.optString("stdout").lineSequence().firstOrNull().orEmpty())
+        }.getOrNull() ?: return false
+        return header.optString("type") == "session" && header.optString("id") == expectedSessionId
     }
 
     private fun buildQueuedTurnRequest(
@@ -955,16 +945,6 @@ class SessionExecutionManager(
         return activeSkills.toMutableList().apply {
             set(existingIndex, activeSkill)
         }
-    }
-
-    private fun resolveSelectedMcpServers(
-        selectedServerIds: List<String>,
-    ): List<McpServerConfig> {
-        if (selectedServerIds.isEmpty()) return emptyList()
-        val serversById = currentExtensionsState.value.mcpServers
-            .filter { it.isEnabled }
-            .associateBy { it.id }
-        return selectedServerIds.distinct().mapNotNull(serversById::get)
     }
 
     private fun appendAgentMessage(
@@ -1046,6 +1026,7 @@ class SessionExecutionManager(
             tokenUsageSource = tokenUsageSource,
             inputMessageCount = inputMessageCount,
             userMessageCount = userMessageCount,
+            appendedMessageIds = appendedMessages.map(ChatMessage::id),
         )
     }
 
@@ -1636,18 +1617,52 @@ class SessionExecutionManager(
     private fun buildRequestMessages(
         messages: List<ChatMessage>,
         settings: AppSettings,
-    ): List<LlmMessage> =
-        messages.afterLatestCompactedContext()
-            .filter { it.displayKind != MessageDisplayKind.CompactStatus }
-            .map { message -> buildRequestMessage(message, settings) }
+    ): List<LlmMessage> = messages
+        .filter { it.displayKind != MessageDisplayKind.CompactStatus }
+        .flatMap { message -> buildRequestMessagesForChatMessage(message, settings) }
 
-    private fun List<ChatMessage>.afterLatestCompactedContext(): List<ChatMessage> {
-        val compactContextIndex = indexOfLast { it.displayKind == MessageDisplayKind.HiddenContext }
-        return if (compactContextIndex >= 0) {
-            drop(compactContextIndex)
-        } else {
-            this
+    private fun buildRequestMessagesForChatMessage(
+        message: ChatMessage,
+        settings: AppSettings,
+    ): List<LlmMessage> {
+        if (message.author != MessageAuthor.Agent || message.toolInvocations.isEmpty()) {
+            return listOf(buildRequestMessage(message, settings))
         }
+        val assistant = buildRequestMessage(message, settings)
+        val existingPayload = assistant.providerPayload
+        val providerPayload = existingPayload ?: JSONObject().apply {
+            put("piAssistantMessage", JSONObject().apply {
+                put("role", "assistant")
+                put("api", "aether")
+                put("provider", settings.piProviderId.ifBlank { "aether" })
+                put("model", settings.modelId.ifBlank { "unknown" })
+                put("content", JSONArray().apply {
+                    if (message.text.isNotBlank()) {
+                        put(JSONObject().put("type", "text").put("text", message.text))
+                    }
+                    message.toolInvocations.forEach { invocation ->
+                        put(JSONObject().apply {
+                            put("type", "toolCall")
+                            put("id", invocation.id)
+                            put("name", invocation.toolName)
+                            put("arguments", parseJsonObject(invocation.argumentsJson) ?: JSONObject())
+                        })
+                    }
+                })
+                put("stopReason", "toolUse")
+                put("timestamp", message.createdAtMillis ?: System.currentTimeMillis())
+            })
+        }
+        val assistantWithPayload = assistant.copy(providerPayload = providerPayload)
+        val results = message.toolInvocations.map { invocation ->
+            LlmMessage(
+                role = "toolResult",
+                contentParts = listOf(LlmTextPart(invocation.outputJson)),
+                toolCallId = invocation.id,
+                toolName = invocation.toolName,
+            )
+        }
+        return listOf(assistantWithPayload) + results
     }
 
     private fun buildRequestMessage(
@@ -1721,9 +1736,9 @@ class SessionExecutionManager(
         val canInlineImage = canInlineWorkspaceImageAttachment(attachment, settings)
         val accessHint = if (isWorkspaceImageAttachment(attachment)) {
             if (canInlineImage) {
-                "This image was copied into the workspace and is also inserted into this model request when local bytes are available. Use analyze_image on this path for a focused second pass if needed."
+                "This image was copied into the workspace and is also inserted into this model request when local bytes are available. Use the native read tool on this path when you need to inspect it."
             } else {
-                "This image was copied into the workspace. Call analyze_image on this exact path before answering questions about the image; this model endpoint does not reliably read images in tool-enabled agent requests."
+                "This image was copied into the workspace. Call the native read tool on this exact path before answering questions about the image."
             }
         } else {
             "Inspect this file through read, grep, find, ls, or bash inside the workspace instead of assuming its contents."
@@ -1780,33 +1795,13 @@ class SessionExecutionManager(
     private fun formatReasoningToolStatus(invocation: ChatToolInvocation): String {
         val arguments = parseJsonObject(invocation.argumentsJson)
         return when (invocation.toolName.lowercase()) {
-            "fetch_web_url" -> formatReasoningToolAction(
-                isRunning = invocation.isRunning,
-                runningVerb = "Fetching",
-                completedVerb = "Fetched",
-                subject = arguments?.optString("url").orEmpty(),
-                fallback = "web page",
-            )
-
-            "tavily_search" -> formatReasoningToolAction(
-                isRunning = invocation.isRunning,
-                runningVerb = "Searching",
-                completedVerb = "Searched",
-                subject = arguments?.optString("query").orEmpty(),
-                fallback = "the web",
-            )
-
             "bash" -> if (invocation.isRunning) "Executing bash command" else "Executed bash command"
-            "fetch_bash_output" -> if (invocation.isRunning) "Fetching bash output" else "Fetched bash output"
-            "kill_bash" -> if (invocation.isRunning) "Stopping bash command" else "Stopped bash command"
-            "sleep" -> if (invocation.isRunning) "Waiting" else "Waited"
             "read" -> if (invocation.isRunning) "Reading file" else "Read file"
             "edit" -> if (invocation.isRunning) "Editing file" else "Edited file"
             "write" -> if (invocation.isRunning) "Writing file" else "Wrote file"
             "grep" -> if (invocation.isRunning) "Searching files" else "Searched files"
             "find" -> if (invocation.isRunning) "Finding files" else "Found files"
             "ls" -> if (invocation.isRunning) "Listing files" else "Listed files"
-            "analyze_image" -> if (invocation.isRunning) "Analyzing image" else "Analyzed image"
             "aether_config_get" -> formatReasoningToolAction(
                 isRunning = invocation.isRunning,
                 runningVerb = "Reading",
@@ -2746,6 +2741,11 @@ class SessionExecutionManager(
         val tokenUsageSource: String = "unavailable",
         val inputMessageCount: Int = 0,
         val userMessageCount: Int = 0,
+        val appendedMessageIds: List<String> = emptyList(),
+        val piSessionId: String = "",
+        val piSessionFile: String = "",
+        val piRuntime: String = "",
+        val piEntryIds: List<String> = emptyList(),
     ) {
         fun toTurnEvent(sessionId: String): SessionTurnEvent = SessionTurnEvent(
             sessionId = sessionId,

@@ -89,6 +89,22 @@ class SharedPiChatClientTest {
     }
 
     @Test
+    fun collectsPiSessionEntryIdsFromTurnEvents() = runTest {
+        val process = ChatProtocolProcess()
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val result = SharedPiChatClient(bridge).runTurn(
+            config = testProvider(),
+            messages = listOf(SharedPiChatMessage("user", "hello")),
+            sessionId = "session-entry-ids",
+        )
+        assertEquals(listOf("entry-user", "entry-assistant"), result.piEntryIds)
+        bridge.close()
+    }
+
+    @Test
     fun oneShotCompletionUsesAndroidCompleteOnceProtocol() = runTest {
         val process = ChatProtocolProcess()
         val bridge = SharedPiBridgeClient(
@@ -441,6 +457,24 @@ private class ChatProtocolProcess(
                 put("error_message", "Stream ended without finish_reason")
             })
             sendEvent("assistant_text_delta", buildJsonObject { put("delta", "RECOVERED") })
+        }
+        if (type == "run_turn") {
+            output.send((buildJsonObject {
+                put("type", "event")
+                put("id", id)
+                put("event", "session_entry_appended")
+                put("payload", buildJsonObject {
+                    put("entry", buildJsonObject { put("id", "entry-user") })
+                })
+            }.toString() + "\n").encodeToByteArray())
+            output.send((buildJsonObject {
+                put("type", "event")
+                put("id", id)
+                put("event", "session_entry_appended")
+                put("payload", buildJsonObject {
+                    put("entry", buildJsonObject { put("id", "entry-assistant") })
+                })
+            }.toString() + "\n").encodeToByteArray())
         }
         assistantErrorEvent?.takeIf { type == "run_turn" }?.let { error ->
             output.send((buildJsonObject {

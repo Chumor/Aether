@@ -4,6 +4,7 @@ import com.zhousl.aether.data.SharedActiveSkillContext
 import com.zhousl.aether.data.platformCurrentTimeMillis
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -165,9 +166,9 @@ data class PersistedChatSession(
     val preview: String,
     val messages: List<PersistedChatMessage>,
     val hasCustomTitle: Boolean = false,
-    val selectedSkillIds: List<String> = emptyList(),
-    val activeSkills: List<SharedActiveSkillContext> = emptyList(),
-    val activeMcpServerIds: List<String> = emptyList(),
+    @Transient val selectedSkillIds: List<String> = emptyList(),
+    @Transient val activeSkills: List<SharedActiveSkillContext> = emptyList(),
+    @Transient val activeMcpServerIds: List<String> = emptyList(),
     val chromeEnabled: Boolean = false,
     val selectedModelKey: String = "",
 )
@@ -225,9 +226,6 @@ internal fun PersistedChatMessage.sharedSummaryText(): String {
 private fun List<PersistedChatTool>.sharedToolSummaryText(): String = if (size == 1) {
     when (first().name.lowercase()) {
         "bash" -> "Ran bash command"
-        "fetch_bash_output" -> "Fetched bash output"
-        "kill_bash" -> "Stopped bash command"
-        "sleep" -> "Waited"
         else -> "Used ${first().name}"
     }
 } else {
@@ -291,9 +289,10 @@ class SharedChatHistoryStore(
             preview = session.preview,
             messages = messages,
             hasCustomTitle = session.hasCustomTitle,
-            selectedSkillIds = parseStringArray(session.selectedSkillIdsJson),
-            activeSkills = decodeSharedActiveSkillContexts(session.activeSkillsJson),
-            activeMcpServerIds = parseStringArray(session.activeMcpServerIdsJson),
+            // Skill and MCP activation is owned by Pi SessionManager; never restore legacy Room state.
+            selectedSkillIds = emptyList(),
+            activeSkills = emptyList(),
+            activeMcpServerIds = emptyList(),
             chromeEnabled = session.chromeEnabled,
             selectedModelKey = session.selectedModelKey,
         )
@@ -306,6 +305,49 @@ class SharedChatHistoryStore(
 
     suspend fun updateSelectedModelKey(sessionId: String, selectedModelKey: String) = writeMutex.withLock {
         dao.updateSelectedModelKey(sessionId, selectedModelKey)
+    }
+
+    suspend fun getAgentMessageEntryIds(sessionId: String, messageId: String): List<String> =
+        dao.getAgentMessageRefs(sessionId, messageId).map(ChatAgentMessageRefEntity::piEntryId)
+
+    suspend fun upsertAgentSessionMetadata(
+        chatSessionId: String,
+        piSessionId: String,
+        jsonlPath: String,
+        runtime: String,
+    ) = writeMutex.withLock {
+        if (chatSessionId.isBlank() || piSessionId.isBlank() || jsonlPath.isBlank()) return@withLock
+        dao.upsertAgentSession(
+            ChatAgentSessionEntity(
+                chatSessionId = chatSessionId,
+                piSessionId = piSessionId,
+                jsonlPath = jsonlPath,
+                runtime = runtime,
+                updatedAtMillis = platformCurrentTimeMillis(),
+            )
+        )
+    }
+
+    suspend fun upsertAgentMessageRefs(
+        chatSessionId: String,
+        aetherMessageIds: List<String>,
+        piEntryIds: List<String>,
+    ) = writeMutex.withLock {
+        val messageIds = aetherMessageIds.map(String::trim).filter(String::isNotEmpty).distinct()
+        val entryIds = piEntryIds.map(String::trim).filter(String::isNotEmpty).distinct()
+        if (chatSessionId.isBlank() || messageIds.isEmpty() || entryIds.isEmpty()) return@withLock
+        dao.upsertAgentMessageRefs(
+            messageIds.flatMap { messageId ->
+                entryIds.mapIndexed { ordinal, entryId ->
+                    ChatAgentMessageRefEntity(
+                        chatSessionId = chatSessionId,
+                        aetherMessageId = messageId,
+                        piEntryId = entryId,
+                        ordinal = ordinal,
+                    )
+                }
+            }
+        )
     }
 
     suspend fun delete(sessionId: String) {
@@ -359,13 +401,6 @@ class SharedChatHistoryStore(
                 title = session.title,
                 preview = session.preview,
                 hasCustomTitle = session.hasCustomTitle,
-                selectedSkillIdsJson = buildJsonArray {
-                    session.selectedSkillIds.distinct().forEach { add(JsonPrimitive(it)) }
-                }.toString(),
-                activeSkillsJson = encodeSharedActiveSkillContexts(session.activeSkills),
-                activeMcpServerIdsJson = buildJsonArray {
-                    session.activeMcpServerIds.distinct().forEach { add(JsonPrimitive(it)) }
-                }.toString(),
                 agentModeEnabled = false,
                 chromeEnabled = session.chromeEnabled,
                 selectedModelKey = session.selectedModelKey,
@@ -423,13 +458,6 @@ class SharedChatHistoryStore(
                     ?: metadata.first,
                 preview = metadata.second,
                 hasCustomTitle = hasCustomTitle,
-                selectedSkillIdsJson = buildJsonArray {
-                    selectedSkillIds.distinct().forEach { add(JsonPrimitive(it)) }
-                }.toString(),
-                activeSkillsJson = encodeSharedActiveSkillContexts(activeSkills),
-                activeMcpServerIdsJson = buildJsonArray {
-                    activeMcpServerIds.distinct().forEach { add(JsonPrimitive(it)) }
-                }.toString(),
                 agentModeEnabled = false,
                 chromeEnabled = chromeEnabled,
                 selectedModelKey = selectedModelKey,

@@ -109,6 +109,12 @@ object ProviderModelCatalogClient {
                             val models = provider.optJSONObject("models") ?: return@forEach
                             val model = publicCatalogModelKeys(option.piProviderId, option.modelId)
                                 .firstNotNullOfOrNull { key -> models.optJSONObject(key) }
+                                ?: models.keys().asSequence().mapNotNull { key ->
+                                    models.optJSONObject(key)?.takeIf { candidate ->
+                                        publicCatalogModelKeys(option.piProviderId, candidate.optString("id"))
+                                            .any { it.equals(option.modelId.substringAfterLast('/').trim(), ignoreCase = true) }
+                                    }
+                                }.firstOrNull()
                             val levels = model?.takeIf { it.optBoolean("reasoning") }?.let { definition ->
                                 buildList {
                                     val reasoningOptions = definition.optJSONArray("reasoning_options")

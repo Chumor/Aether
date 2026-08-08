@@ -1,11 +1,11 @@
 package com.zhousl.aether.ui
 
 import android.content.Context
+import com.zhousl.aether.AetherApplication
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.SystemClock
 import android.widget.Toast
-import com.zhousl.aether.platform.LocalReduceMotion
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
@@ -1990,15 +1990,6 @@ fun ShimmerStatusText(
     travelDurationMillis: Int = 1800,
     pauseDurationMillis: Int = 1000,
 ) {
-    if (LocalReduceMotion.current) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = AetherOnSurfaceVariant,
-            modifier = modifier,
-        )
-        return
-    }
     val travelDistance = (280f + text.length * 18f).coerceIn(280f, 760f)
     val sweepHalfWidth = 180f
     val totalDurationMillis = travelDurationMillis + pauseDurationMillis
@@ -2429,7 +2420,7 @@ private fun TimelineGlyph(
 }
 
 private fun reasoningToolIcon(toolName: String): ImageVector = when (toolName.lowercase()) {
-    "bash", "fetch_bash_output", "kill_bash" -> Icons.Rounded.Terminal
+    "bash" -> Icons.Rounded.Terminal
     "fetch_web_url", "tavily_search" -> Icons.Rounded.Language
     else -> Icons.Rounded.Build
 }
@@ -3232,7 +3223,7 @@ private fun IconOnlyAction(
 ) {
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(28.dp)
             .clip(CircleShape)
             .background(
                 if (enabled) AetherSurface.copy(alpha = 0.72f) else AetherSurface.copy(alpha = 0.35f)
@@ -3258,7 +3249,7 @@ private fun AssistantMessageAction(
 ) {
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(24.dp)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -3910,38 +3901,21 @@ private fun formatToolInvocationTitleLabel(
     arguments: JSONObject? = parseJsonObject(toolInvocation.argumentsJson),
 ): String {
     val isRunning = isRunningOverride
+    (context.applicationContext as? AetherApplication)?.runtime?.modKernel?.toolTitles
+        ?.titleFor(toolInvocation.toolName, isRunning)?.let { return it }
     return when (toolInvocation.toolName.lowercase()) {
         "bash" -> context.getString(if (isRunning) R.string.tool_title_bash_running else R.string.tool_title_bash_done)
-        "fetch_bash_output" -> context.getString(if (isRunning) R.string.tool_title_fetch_bash_output_running else R.string.tool_title_fetch_bash_output_done)
-        "kill_bash" -> context.getString(if (isRunning) R.string.tool_title_kill_bash_running else R.string.tool_title_kill_bash_done)
-        "sleep" -> context.getString(if (isRunning) R.string.tool_title_sleep_running else R.string.tool_title_sleep_done)
         "read" -> context.getString(if (isRunning) R.string.tool_title_read_running else R.string.tool_title_read_done)
         "edit" -> context.getString(if (isRunning) R.string.tool_title_edit_running else R.string.tool_title_edit_done)
         "write" -> context.getString(if (isRunning) R.string.tool_title_write_running else R.string.tool_title_write_done)
         "grep" -> context.getString(if (isRunning) R.string.tool_title_grep_running else R.string.tool_title_grep_done)
         "find" -> context.getString(if (isRunning) R.string.tool_title_find_running else R.string.tool_title_find_done)
         "ls" -> context.getString(if (isRunning) R.string.tool_title_ls_running else R.string.tool_title_ls_done)
-        "analyze_image" -> context.getString(if (isRunning) R.string.tool_title_analyze_image_running else R.string.tool_title_analyze_image_done)
         "agent_display" -> formatAgentDisplayTitle(context = context, isRunning = isRunning, arguments = arguments)
         "chrome" -> formatChromeTitle(context = context, isRunning = isRunning, arguments = arguments)
-        "tavily_search" -> formatArgumentDrivenTitle(
-            isRunning = isRunning,
-            progressiveVerb = context.getString(R.string.tool_title_searching),
-            completedVerb = context.getString(R.string.tool_title_searched),
-            subject = arguments?.optString("query").orEmpty(),
-            fallback = context.getString(R.string.tool_title_tavily_search_fallback),
-        )
-        "fetch_web_url" -> formatArgumentDrivenTitle(
-            isRunning = isRunning,
-            progressiveVerb = context.getString(R.string.tool_title_fetching),
-            completedVerb = context.getString(R.string.tool_title_fetched),
-            subject = arguments?.optString("url").orEmpty(),
-            fallback = context.getString(R.string.tool_title_web_page_fallback),
-        )
         "aether_config_get",
         "aether_config_set",
         "aether_skill_manage",
-        "aether_mcp_manage",
         "aether_termux_manage",
         "aether_agent_mode_manage",
         "aether_developer_manage" -> formatAetherToolTitle(
@@ -3965,9 +3939,6 @@ private fun summarizeToolInvocationCommandLabel(
     if (arguments == null) return toolName
     return when (toolName.lowercase()) {
         "bash" -> arguments.optString("command").trim()
-        "fetch_bash_output" -> "fetch ${arguments.optString("run_id").ifBlank { arguments.optString("runId") }.trim()}"
-        "kill_bash" -> "kill ${arguments.optString("run_id").ifBlank { arguments.optString("runId") }.trim()}"
-        "sleep" -> "sleep ${arguments.optString("duration_ms").ifBlank { arguments.optString("durationMs") }.trim()}ms"
         "read" -> buildString {
             append("read ")
             append(arguments.optString("path").trim())
@@ -4101,9 +4072,6 @@ private fun summarizeToolInvocationCommand(
     if (arguments == null) return toolName
     return when (toolName.lowercase()) {
         "bash" -> arguments.optString("command").trim()
-        "fetch_bash_output" -> "fetch ${arguments.optString("run_id").ifBlank { arguments.optString("runId") }.trim()}"
-        "kill_bash" -> "kill ${arguments.optString("run_id").ifBlank { arguments.optString("runId") }.trim()}"
-        "sleep" -> "sleep ${arguments.optString("duration_ms").ifBlank { arguments.optString("durationMs") }.trim()}ms"
         "read" -> buildString {
             append("read ")
             append(arguments.optString("path").trim())

@@ -2384,6 +2384,16 @@ class AetherViewModel(
         }
 
         viewModelScope.launch {
+            val publicThinkingLevels = ProviderModelCatalogClient.fetchPublicThinkingLevels(listOf(option))
+            if (publicThinkingLevels.isNotEmpty()) {
+                _uiState.update { state ->
+                    state.copy(thinkingLevelsByProviderModel = state.thinkingLevelsByProviderModel + publicThinkingLevels)
+                }
+                if (publicThinkingLevels[cacheKey].orEmpty().isNotEmpty()) {
+                    onResolved(true)
+                    return@launch
+                }
+            }
             val result = ProviderModelCatalogClient.fetchPiThinkingLevels(
                 config = config,
                 piKernelBridge = runtime.piKernelBridge,
@@ -2435,6 +2445,12 @@ class AetherViewModel(
         if (!definition.isBuiltIn) return
 
         viewModelScope.launch {
+            val publicThinkingLevels = ProviderModelCatalogClient.fetchPublicThinkingLevels(listOf(option))
+            if (publicThinkingLevels.isNotEmpty()) {
+                _uiState.update { state ->
+                    state.copy(thinkingLevelsByProviderModel = state.thinkingLevelsByProviderModel + publicThinkingLevels)
+                }
+            }
             val result = ProviderModelCatalogClient.fetchPiThinkingLevels(
                 config = config,
                 piKernelBridge = runtime.piKernelBridge,

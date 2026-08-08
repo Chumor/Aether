@@ -433,8 +433,8 @@
     <string name="settings_notify_background_tasks_finish_subtitle">هنگامی که یک اجرا در حالی که Aether روی صفحه نیست پایان می‌یابد، هشدار تکمیل را نشان می‌دهد.</string>
     <string name="settings_reconnect">دوباره وصل شوید</string>
     <string name="settings_reconnect_after_seconds">بعد از %1$ds دوباره وصل شوید</string>
-    <string name="settings_reconnect_after_idle_seconds">پس از چند ثانیه بیکار دوباره وصل شوید</string>
-    <string name="settings_reconnect_after_idle_description">اگر درخواستی برای این چند ثانیه اصلاً فعالیت پاسخی نداشته باشد، اتر آن تلاش را لغو می‌کند و با backoff دوباره وصل می‌شود. برد: 30-3600 ثانیه.</string>
+    <string name="settings_reconnect_after_idle_seconds">مهلت زمانی ارائه‌دهنده (ثانیه)</string>
+    <string name="settings_reconnect_after_idle_description">ارائه‌دهندگان این مهلت را به شکل‌های متفاوتی تفسیر می‌کنند. Aether خطاهای صریح و قابل تلاش مجدد را دوباره امتحان می‌کند، اما پس از شروع فعالیت پاسخ، درخواست را به دلیل مهلت زمانی مبهم دوباره ارسال نمی‌کند. محدوده: 30 تا 3600 ثانیه.</string>
     <string name="settings_skills_count_configured">%1$d پیکربندی شد</string>
     <string name="settings_scheduled_tasks">وظایف برنامه ریزی شده</string>
     <string name="settings_scheduled_tasks_count_configured">%1$d پیکربندی شد</string>

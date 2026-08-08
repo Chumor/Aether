@@ -1118,6 +1118,8 @@ internal fun parseMessage(message: JSONObject, messageIndex: Int): ChatMessage =
     responseGroupId = message.optString("responseGroupId").ifBlank { null },
     assistantActionsHidden = message.optBoolean("assistantActionsHidden"),
     isIncomplete = message.optBoolean("isIncomplete"),
+    statusText = message.optString("statusText"),
+    statusDetail = message.optString("statusDetail"),
     providerPayloadJson = message.optString("providerPayloadJson"),
     displayKind = parseMessageDisplayKind(message.optString("displayKind")),
     usageStatistics = parseUsageStatistics(message.optJSONObject("usageStatistics")),
@@ -1143,6 +1145,8 @@ internal fun ChatMessage.toJson(): JSONObject = JSONObject().apply {
     if (isIncomplete) {
         put("isIncomplete", true)
     }
+    statusText.takeIf { it.isNotBlank() }?.let { put("statusText", it) }
+    statusDetail.takeIf { it.isNotBlank() }?.let { put("statusDetail", it) }
     providerPayloadJson.takeIf { it.isNotBlank() }?.let {
         put("providerPayloadJson", it)
     }

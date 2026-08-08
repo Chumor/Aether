@@ -54,6 +54,7 @@ import com.zhousl.aether.data.ScheduledTaskSchedule
 import com.zhousl.aether.data.TermuxEnvironmentVariable
 import com.zhousl.aether.data.normalizeTermuxEnvironmentVariables
 import com.zhousl.aether.data.SessionFollowUpMode
+import com.zhousl.aether.data.SessionExecutionState
 import com.zhousl.aether.data.SessionTurnEvent
 import com.zhousl.aether.data.SessionTurnOutcome
 import com.zhousl.aether.data.SessionTurnRequest
@@ -1511,7 +1512,9 @@ class AetherViewModel(
             .filterNotNull()
             .firstOrNull(sessionExecutionManager::isSessionRunning)
             ?: return
-        sessionExecutionManager.pauseSession(sessionId)
+        val finalizedSession = sessionExecutionManager.pauseSession(sessionId) ?: return
+        val executionStates = sessionExecutionManager.executionStates.value
+        _uiState.update { current -> current.withFinalizedPausedSession(finalizedSession, executionStates) }
     }
 
     fun openSettings() {
@@ -3377,8 +3380,16 @@ class AetherViewModel(
         operation: String,
         payload: JSONObject,
     ): AetherModOperationDecision {
+        val hasNativeInterceptors = modKernel.operations.hasInterceptors(operation)
+        val eventName = "operation:$operation"
+        val hasScriptInterceptors =
+            eventName in aetherAppExtensionManager.state.value.snapshot.eventNames
+        if (!hasNativeInterceptors && !hasScriptInterceptors) {
+            return AetherModOperationDecision(payload = payload)
+        }
+
         val context = buildAetherExtensionHostState(_uiState.value)
-        val nativeDecision = if (modKernel.operations.hasInterceptors(operation)) {
+        val nativeDecision = if (hasNativeInterceptors) {
             modKernel.operations.intercept(
                 operation = operation,
                 payload = payload,
@@ -3389,8 +3400,7 @@ class AetherViewModel(
         }
         if (nativeDecision.cancelled) return nativeDecision
 
-        val eventName = "operation:$operation"
-        if (eventName !in aetherAppExtensionManager.state.value.snapshot.eventNames) {
+        if (!hasScriptInterceptors) {
             return nativeDecision
         }
         val scriptDecision = aetherAppExtensionManager.dispatchEvent(
@@ -4040,15 +4050,17 @@ class AetherViewModel(
                     showStarterPromptHint = false,
                 )
             }
-            aetherAppExtensionManager.emitEvent(
-                event = "message_sent",
-                data = JSONObject()
-                    .put("session_id", targetSessionId)
-                    .put("message_id", userMessage.id)
-                    .put("text", userMessage.text)
-                    .put("mode", runningFollowUpMode.name.lowercase()),
-                context = buildAetherExtensionHostState(_uiState.value),
-            )
+            if ("message_sent" in aetherAppExtensionManager.state.value.snapshot.eventNames) {
+                aetherAppExtensionManager.emitEvent(
+                    event = "message_sent",
+                    data = JSONObject()
+                        .put("session_id", targetSessionId)
+                        .put("message_id", userMessage.id)
+                        .put("text", userMessage.text)
+                        .put("mode", runningFollowUpMode.name.lowercase()),
+                    context = buildAetherExtensionHostState(_uiState.value),
+                )
+            }
             return
         }
 
@@ -4197,15 +4209,17 @@ class AetherViewModel(
             )
         }
         sessionExecutionManager.startTurn(turnRequest)
-        aetherAppExtensionManager.emitEvent(
-            event = "message_sent",
-            data = JSONObject()
-                .put("session_id", targetSessionId)
-                .put("message_id", userMessage.id)
-                .put("text", userMessage.text)
-                .put("mode", "new_turn"),
-            context = buildAetherExtensionHostState(_uiState.value),
-        )
+        if ("message_sent" in aetherAppExtensionManager.state.value.snapshot.eventNames) {
+            aetherAppExtensionManager.emitEvent(
+                event = "message_sent",
+                data = JSONObject()
+                    .put("session_id", targetSessionId)
+                    .put("message_id", userMessage.id)
+                    .put("text", userMessage.text)
+                    .put("mode", "new_turn"),
+                context = buildAetherExtensionHostState(_uiState.value),
+            )
+        }
     }
 
     private fun handleTurnEvent(
@@ -4250,13 +4264,15 @@ class AetherViewModel(
             }
             current.copy(unviewedCompletedSessionIds = unviewedCompletedSessionIds)
         }
-        aetherAppExtensionManager.emitEvent(
-            event = "turn_complete",
-            data = JSONObject()
-                .put("session_id", event.sessionId)
-                .put("outcome", event.outcome.name.lowercase()),
-            context = buildAetherExtensionHostState(_uiState.value),
-        )
+        if ("turn_complete" in aetherAppExtensionManager.state.value.snapshot.eventNames) {
+            aetherAppExtensionManager.emitEvent(
+                event = "turn_complete",
+                data = JSONObject()
+                    .put("session_id", event.sessionId)
+                    .put("outcome", event.outcome.name.lowercase()),
+                context = buildAetherExtensionHostState(_uiState.value),
+            )
+        }
     }
 
     private suspend fun buildPendingDraftAttachment(
@@ -6381,6 +6397,29 @@ class AetherViewModel(
         val currentSessionId: String,
         val installedSkills: List<InstalledSkill>,
         val mcpServers: List<McpServerConfig>,
+    )
+}
+
+internal fun AetherUiState.withFinalizedPausedSession(
+    finalizedSession: ChatSession,
+    executionStates: Map<String, SessionExecutionState>,
+): AetherUiState {
+    val currentExecution = executionStates[currentSessionId]
+    val updatedSessions = if (sessions.any { it.id == finalizedSession.id }) {
+        sessions.map { if (it.id == finalizedSession.id) finalizedSession else it }
+    } else {
+        listOf(finalizedSession) + sessions
+    }
+    return copy(
+        sessions = updatedSessions,
+        sessionExecutionStates = executionStates,
+        isSending = currentExecution?.isRunning == true,
+        pendingResponseSessionId = currentExecution?.sessionId,
+        pendingToolInvocations = currentExecution?.pendingToolInvocations.orEmpty(),
+        pendingResponseBlocks = currentExecution?.pendingResponseBlocks.orEmpty(),
+        pendingAssistantText = currentExecution?.pendingAssistantText.orEmpty(),
+        pendingStatusText = currentExecution?.pendingStatusText.orEmpty(),
+        pendingStatusDetail = currentExecution?.pendingStatusDetail.orEmpty(),
     )
 }
 

@@ -4,13 +4,14 @@ import { stdin as input, stdout as output, stderr } from "node:process";
 import {
   getSupportedThinkingLevels,
   clampThinkingLevel,
+  createAssistantMessageEventStream,
   createModels,
   createProvider,
   defaultProviderAuthContext,
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-  retryAssistantCall,
+  isRetryableAssistantError,
   type AuthContext,
   type AuthInteraction,
   type AssistantMessage,
@@ -22,6 +23,7 @@ import {
   type ImageContent,
   type Message,
   type Model,
+  type Models,
   type OAuthAuth,
   type MutableModels,
   type ProviderStreams,
@@ -34,17 +36,14 @@ import {
   getBuiltinModels,
   getBuiltinProviders,
 } from "@earendil-works/pi-ai/providers/all";
+import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import {
   AgentHarness,
   InMemorySessionRepo,
-  runAgentLoopContinue,
-  type AgentContext,
   type AgentHarnessEvent,
-  type AgentLoopConfig,
   type AgentMessage,
   type AgentTool,
   type AgentToolResult,
-  type StreamFn,
 } from "@earendil-works/pi-agent-core/node";
 import {
   createSyntheticSourceInfo,
@@ -74,6 +73,8 @@ import {
   loadAetherAppExtensions,
 } from "./aether-extensions.js";
 
+registerBunOAuthFlows();
+
 const BRIDGE_VERSION = "2.0.0-alpha.0";
 const PI_AI_VERSION = "0.83.0";
 const PI_AGENT_CORE_VERSION = "0.83.0";
@@ -83,7 +84,7 @@ const OAUTH_FETCH_MAX_ATTEMPTS = 3;
 const DEFAULT_HARNESS_SESSION_LIMIT = 8;
 const DEFAULT_HARNESS_SESSION_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_AGENT_RETRY_MAX_RETRIES = 5;
-const DEFAULT_AGENT_RETRY_BASE_DELAY_MS = 2_000;
+const LLM_RECONNECT_DELAY_SCHEDULE_MS = [5_000, 10_000, 12_000, 15_000, 20_000] as const;
 const CUSTOM_BASE_URL_BUILTIN_PROVIDER_IDS = new Set(["openai", "anthropic"]);
 
 type JsonObject = Record<string, unknown>;
@@ -160,7 +161,6 @@ interface HarnessSessionState {
   systemPrompt: string;
   currentRequestId: string;
   toolArgsById: Map<string, unknown>;
-  agentRetryMaxRetries: number;
   lastAccessedAt: number;
 }
 
@@ -237,6 +237,12 @@ function aetherOAuthAuth(providerId: string, oauth: OAuthAuth | undefined): OAut
       withAetherOAuthTransport(providerId, interaction, () =>
         oauth.login({
           ...interaction,
+          prompt: (prompt) =>
+            interaction.prompt(
+              prompt.type === "manual_code"
+                ? { ...prompt, placeholder: "http://localhost:..." }
+                : prompt,
+            ),
           notify: (event) => {
             if (event.type === "auth_url") {
               interaction.notify({
@@ -430,16 +436,69 @@ configureAetherExtensionTransport({
 });
 
 function errorMessageWithCause(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
   const messages: string[] = [];
-  let current: unknown = error;
-  while (current instanceof Error) {
-    const message = current.message.trim();
-    if (message && !messages.includes(message)) messages.push(message);
-    current = current.cause;
+  const seen = new Set<object>();
+  const pending: unknown[] = [error];
+  while (pending.length > 0 && seen.size < 32) {
+    const current = pending.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    const record = current as {
+      message?: unknown;
+      code?: unknown;
+      errno?: unknown;
+      syscall?: unknown;
+      address?: unknown;
+      hostname?: unknown;
+      port?: unknown;
+      cause?: unknown;
+      reason?: unknown;
+      errors?: unknown;
+    };
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    const code = typeof record.code === "string" || typeof record.code === "number"
+      ? String(record.code).trim()
+      : "";
+    const errno = typeof record.errno === "string" || typeof record.errno === "number"
+      ? String(record.errno).trim()
+      : "";
+    const syscall = typeof record.syscall === "string" ? record.syscall.trim() : "";
+    const host = [record.hostname ?? record.address, record.port]
+      .filter((value) => typeof value === "string" || typeof value === "number")
+      .map(String)
+      .filter(Boolean)
+      .join(":");
+    const context = [code, errno !== code ? errno : "", syscall, host]
+      .filter((value) => value && !message.includes(value))
+      .join(", ");
+    const detail = context
+      ? `${message || "Network request failed"} (${context})`
+      : message;
+    if (detail && !messages.includes(detail)) messages.push(detail);
+    pending.push(record.cause, record.reason);
+    if (Array.isArray(record.errors)) pending.push(...record.errors);
   }
-  return messages.join(": ") || error.name;
+  if (messages.length > 0) return messages.join(": ");
+  return error instanceof Error ? error.name : String(error);
 }
+
+function fetchWithDetailedErrors(
+  fetchImplementation: typeof fetch,
+  onError?: (detail: string) => void,
+): typeof fetch {
+  return async (input, init) => {
+    try {
+      return await fetchImplementation(input, init);
+    } catch (error) {
+      const detail = errorMessageWithCause(error);
+      onError?.(detail);
+      if (error instanceof Error && detail === error.message) throw error;
+      throw new Error(detail, { cause: error });
+    }
+  };
+}
+
+globalThis.fetch = fetchWithDetailedErrors(globalThis.fetch.bind(globalThis));
 
 function fetchUrl(input: string | URL | Request): string {
   if (typeof input === "string") return input;
@@ -1043,10 +1102,204 @@ function harnessStreamOptions(payload: JsonObject, config: ModelConfig) {
   return {
     headers: normalizeHeaders(payload.headers),
     timeoutMs: asNumber(payload.timeout_ms, config.timeout_ms ?? 360000),
-    // Retry failed harness turns after rewinding their session state.
-    maxRetries: 0,
+    maxRetries: Math.max(
+      0,
+      asNumber(payload.max_retries, config.max_retries ?? DEFAULT_AGENT_RETRY_MAX_RETRIES),
+    ),
     maxRetryDelayMs: asNumber(payload.max_retry_delay_ms, config.max_retry_delay_ms ?? 60000),
   };
+}
+
+function failedAssistantMessage(
+  model: Model<string>,
+  error: unknown,
+  aborted = false,
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: emptyUsage(),
+    stopReason: aborted ? "aborted" : "error",
+    errorMessage: aborted ? undefined : errorMessageWithCause(error),
+    timestamp: Date.now(),
+  };
+}
+
+function retryDelayMs(retryIndex: number, maxRetryDelayMs: number | undefined): number {
+  const scheduled =
+    LLM_RECONNECT_DELAY_SCHEDULE_MS[
+      Math.min(retryIndex, LLM_RECONNECT_DELAY_SCHEDULE_MS.length - 1)
+    ];
+  return maxRetryDelayMs !== undefined && maxRetryDelayMs > 0
+    ? Math.min(scheduled, maxRetryDelayMs)
+    : scheduled;
+}
+
+function isAmbiguousPostActivityTimeout(message: string | undefined): boolean {
+  return /(?:idle|request|response|stream|socket|websocket)?\s*tim(?:e|ed)[ -]?out/i.test(
+    message ?? "",
+  );
+}
+
+function waitForRetryDelay(delayMs: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Pi request was aborted."));
+      return;
+    }
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      reject(new Error("Pi request was aborted."));
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+function reconnectingHarnessModels(models: MutableModels, state: HarnessSessionState): Models {
+  return new Proxy(models, {
+    get(target, property, receiver) {
+      if (property !== "streamSimple") {
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return (
+        model: Model<string>,
+        context: Context,
+        options: SimpleStreamOptions = {},
+      ) => {
+        const output = createAssistantMessageEventStream();
+        void (async () => {
+          const maxRetries = Math.max(0, Math.floor(options.maxRetries ?? 0));
+          let retryCount = 0;
+          let emittedStart = false;
+          const requestId = state.currentRequestId;
+          if (requestId) writeEvent(requestId, "assistant_request_start", {});
+
+          while (true) {
+            let result: AssistantMessage;
+            let attemptSawProviderActivity = false;
+            let transportErrorDetail = "";
+            try {
+              const attempt = models.streamSimple(model, context, {
+                ...options,
+                fetch: fetchWithDetailedErrors(
+                  options.fetch ?? globalThis.fetch,
+                  (detail) => {
+                    transportErrorDetail = detail;
+                  },
+                ),
+                maxRetries: 0,
+              });
+              let terminal: AssistantMessage | undefined;
+              for await (const event of attempt) {
+                if (event.type !== "error") attemptSawProviderActivity = true;
+                if (event.type === "done") {
+                  terminal = event.message;
+                } else if (event.type === "error") {
+                  terminal = event.error;
+                } else if (event.type === "start") {
+                  if (!emittedStart) {
+                    emittedStart = true;
+                    output.push(event);
+                  }
+                } else {
+                  output.push(event);
+                }
+              }
+              result = terminal ?? (await attempt.result());
+            } catch (error) {
+              result = failedAssistantMessage(model, error, options.signal?.aborted);
+            }
+            if (result.stopReason === "pending") {
+              result = failedAssistantMessage(
+                model,
+                new Error("Provider stream ended without a terminal response."),
+              );
+            }
+            if (
+              transportErrorDetail &&
+              !result.errorMessage?.includes(transportErrorDetail)
+            ) {
+              result = {
+                ...result,
+                errorMessage: [result.errorMessage, transportErrorDetail]
+                  .filter(Boolean)
+                  .join(": "),
+              };
+            }
+
+            if (
+              !options.signal?.aborted &&
+              retryCount < maxRetries &&
+              isRetryableAssistantError(result) &&
+              !(
+                attemptSawProviderActivity &&
+                isAmbiguousPostActivityTimeout(result.errorMessage)
+              )
+            ) {
+              const delayMs = retryDelayMs(retryCount, options.maxRetryDelayMs);
+              retryCount += 1;
+              if (requestId) {
+                writeEvent(requestId, "assistant_stream_reset", {});
+                writeEvent(requestId, "assistant_retry", {
+                  attempt: retryCount,
+                  max_attempts: maxRetries,
+                  delay_ms: delayMs,
+                  error_message: result.errorMessage,
+                });
+              }
+              try {
+                await waitForRetryDelay(delayMs, options.signal);
+              } catch (error) {
+                result = failedAssistantMessage(model, error, true);
+                output.push({ type: "error", reason: "aborted", error: result });
+                return;
+              }
+              continue;
+            }
+
+            switch (result.stopReason) {
+              case "error":
+              case "aborted":
+                output.push({ type: "error", reason: result.stopReason, error: result });
+                break;
+              case "stop":
+              case "length":
+              case "toolUse":
+                output.push({ type: "done", reason: result.stopReason, message: result });
+                break;
+              case "pending":
+                output.push({
+                  type: "error",
+                  reason: "error",
+                  error: failedAssistantMessage(
+                    model,
+                    new Error("Provider stream ended without a terminal response."),
+                  ),
+                });
+                break;
+            }
+            return;
+          }
+        })().catch((error) => {
+          output.push({
+            type: "error",
+            reason: "error",
+            error: failedAssistantMessage(model, error),
+          });
+        });
+        return output;
+      };
+    },
+  }) as Models;
 }
 
 function normalizeHostToolDefinitions(rawTools: unknown): HostToolDefinition[] {
@@ -1987,7 +2240,6 @@ async function createHarnessSession(
     systemPrompt: asString(payload.system_prompt),
     currentRequestId: "",
     toolArgsById: new Map<string, unknown>(),
-    agentRetryMaxRetries: config.max_retries ?? DEFAULT_AGENT_RETRY_MAX_RETRIES,
     lastAccessedAt: Date.now(),
   };
   state.hostTools = normalizeHostToolDefinitions(payload.host_tools).map((tool) =>
@@ -1998,7 +2250,7 @@ async function createHarnessSession(
     ...extensionTools(extensionRuntime),
   ].reduce((toolMap, tool) => toolMap.set(tool.name, tool), new Map<string, AgentTool>());
   const harness = new AgentHarness({
-    models,
+    models: reconnectingHarnessModels(models, state),
     session,
     model,
     systemPrompt: () => state.systemPrompt,
@@ -2050,7 +2302,6 @@ async function prepareHarnessSession(
   const reusable = existing;
   reusable.lastAccessedAt = Date.now();
   reusable.systemPrompt = asString(payload.system_prompt);
-  reusable.agentRetryMaxRetries = config.max_retries ?? DEFAULT_AGENT_RETRY_MAX_RETRIES;
   reusable.configuredExtensionPaths = Array.isArray(payload.extension_paths)
     ? payload.extension_paths.filter((value): value is string => typeof value === "string")
     : [];
@@ -2063,127 +2314,6 @@ async function prepareHarnessSession(
   return { state: reusable, reused: true };
 }
 
-// TODO(pi-agent-core): use public continue API when available; pin private helpers for 0.83.0.
-const HARNESS_RETRY_METHODS = [
-  "createTurnState",
-  "createContext",
-  "createLoopConfig",
-  "createStreamFn",
-  "handleAgentEvent",
-] as const;
-
-type HarnessRetryMethodName = (typeof HARNESS_RETRY_METHODS)[number];
-
-type HarnessRetryInternals = {
-  createTurnState: () => Promise<{ messages: AgentMessage[]; [key: string]: unknown }>;
-  createContext: (turnState: unknown) => AgentContext;
-  createLoopConfig: (
-    getTurnState: () => unknown,
-    setTurnState: (turnState: unknown) => void,
-  ) => AgentLoopConfig;
-  createStreamFn: (getTurnState: () => unknown) => StreamFn;
-  handleAgentEvent: (event: AgentHarnessEvent, signal?: AbortSignal) => Promise<void>;
-};
-
-function assertAgentCoreRetrySurface(): void {
-  if (typeof runAgentLoopContinue !== "function") {
-    throw new Error(
-      `Pi agent retry requires runAgentLoopContinue from @earendil-works/pi-agent-core@${PI_AGENT_CORE_VERSION}.`,
-    );
-  }
-  const proto = AgentHarness.prototype as unknown as Record<string, unknown>;
-  for (const methodName of HARNESS_RETRY_METHODS) {
-    if (typeof proto[methodName] !== "function") {
-      throw new Error(
-        `Pi agent retry requires AgentHarness.${methodName}(); ` +
-          `it is not available on @earendil-works/pi-agent-core@${PI_AGENT_CORE_VERSION}.`,
-      );
-    }
-  }
-}
-
-function harnessRetryMethod<K extends HarnessRetryMethodName>(
-  harness: AgentHarness,
-  methodName: K,
-): HarnessRetryInternals[K] {
-  const proto = AgentHarness.prototype as unknown as Record<string, unknown>;
-  const method = proto[methodName];
-  if (typeof method !== "function") {
-    throw new Error(
-      `Pi agent retry requires AgentHarness.${methodName}(); ` +
-        `it is not available on @earendil-works/pi-agent-core@${PI_AGENT_CORE_VERSION}.`,
-    );
-  }
-  return (method as (...args: unknown[]) => unknown).bind(harness) as HarnessRetryInternals[K];
-}
-
-function harnessRetryInternals(harness: AgentHarness): HarnessRetryInternals {
-  assertAgentCoreRetrySurface();
-  return {
-    createTurnState: harnessRetryMethod(harness, "createTurnState"),
-    createContext: harnessRetryMethod(harness, "createContext"),
-    createLoopConfig: harnessRetryMethod(harness, "createLoopConfig"),
-    createStreamFn: harnessRetryMethod(harness, "createStreamFn"),
-    handleAgentEvent: harnessRetryMethod(harness, "handleAgentEvent"),
-  };
-}
-
-async function continueHarnessTurn(
-  state: HarnessSessionState,
-  signal: AbortSignal,
-): Promise<AssistantMessage> {
-  const harness = harnessRetryInternals(state.harness);
-  const branch = await state.session.getBranch();
-  const failedEntry = [...branch]
-    .reverse()
-    .find(
-      (entry) =>
-        entry.type === "message" &&
-        entry.message.role === "assistant" &&
-        entry.message.stopReason === "error",
-    );
-  if (!failedEntry || failedEntry.type !== "message") {
-    throw new Error("Pi retry requires a failed assistant message in the active session branch.");
-  }
-
-  await state.session.moveTo(failedEntry.parentId);
-  const extensionBranch = state.extensionRuntime.sessionManager.getBranch();
-  const extensionFailure = [...extensionBranch]
-    .reverse()
-    .find(
-      (entry) =>
-        entry.type === "message" &&
-        entry.message.role === "assistant" &&
-        entry.message.stopReason === "error",
-    );
-  if (extensionFailure?.type === "message") {
-    if (extensionFailure.parentId) {
-      state.extensionRuntime.sessionManager.branch(extensionFailure.parentId);
-    } else {
-      state.extensionRuntime.sessionManager.resetLeaf();
-    }
-  }
-
-  const turnState = await harness.createTurnState();
-  let activeTurnState: unknown = turnState;
-  const getTurnState = () => activeTurnState;
-  const setTurnState = (nextTurnState: unknown) => {
-    activeTurnState = nextTurnState;
-  };
-  const messages = await runAgentLoopContinue(
-    harness.createContext(turnState),
-    harness.createLoopConfig(getTurnState, setTurnState),
-    (event) => harness.handleAgentEvent(event, signal),
-    signal,
-    harness.createStreamFn(getTurnState),
-  );
-  const message = [...messages]
-    .reverse()
-    .find((entry): entry is AssistantMessage => entry.role === "assistant");
-  if (!message) throw new Error("Pi retry completed without an assistant message.");
-  return message;
-}
-
 async function runHarnessPrompt(
   id: string,
   state: HarnessSessionState,
@@ -2192,33 +2322,11 @@ async function runHarnessPrompt(
 ): Promise<AssistantMessage> {
   state.lastAccessedAt = Date.now();
   state.currentRequestId = id;
-  const retryAbortController = new AbortController();
-  activeAborters.set(id, () => {
-    retryAbortController.abort();
-    return state.harness.abort();
-  });
+  activeAborters.set(id, () => state.harness.abort());
   try {
-    let firstAttempt = true;
-    return await retryAssistantCall(
-      async () => {
-        if (firstAttempt) {
-          firstAttempt = false;
-          const firstMessage = await state.harness.prompt(
-            text,
-            images.length > 0 ? { images } : undefined,
-          );
-          await state.harness.waitForIdle();
-          return firstMessage;
-        }
-        return continueHarnessTurn(state, retryAbortController.signal);
-      },
-      {
-        enabled: state.agentRetryMaxRetries > 0,
-        maxRetries: state.agentRetryMaxRetries,
-        baseDelayMs: DEFAULT_AGENT_RETRY_BASE_DELAY_MS,
-      },
-      retryAbortController.signal,
-    );
+    const message = await state.harness.prompt(text, images.length > 0 ? { images } : undefined);
+    await state.harness.waitForIdle();
+    return message;
   } finally {
     activeAborters.delete(id);
     if (state.currentRequestId === id) state.currentRequestId = "";

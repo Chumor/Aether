@@ -452,8 +452,8 @@
     <string name="settings_notify_background_tasks_finish_subtitle">当运行在 Aether 不在屏幕上时结束，会显示完成提醒。</string>
     <string name="settings_reconnect">重连</string>
     <string name="settings_reconnect_after_seconds">%1$d 秒后重连</string>
-    <string name="settings_reconnect_after_idle_seconds">空闲多少秒后重连</string>
-    <string name="settings_reconnect_after_idle_description">如果请求在这么多秒内完全没有响应活动，Aether 会取消本次尝试并带退避重连。范围：30-3600 秒。</string>
+    <string name="settings_reconnect_after_idle_seconds">Provider 超时秒数</string>
+    <string name="settings_reconnect_after_idle_description">不同 Provider 对此超时的解释并不一致。Aether 会重试明确可重试的失败，但 Provider 已开始响应后，不会因含义不明确的超时而重发请求。范围：30-3600 秒。</string>
     <string name="settings_skills_count_configured">已配置 %1$d 个</string>
     <string name="settings_scheduled_tasks">定时任务</string>
     <string name="settings_scheduled_tasks_count_configured">已配置 %1$d 个</string>

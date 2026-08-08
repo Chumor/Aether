@@ -45,6 +45,8 @@ data class PersistedChatMessage(
     val text: String,
     val fromUser: Boolean,
     val isError: Boolean = false,
+    val status: String = "",
+    val statusDetail: String = "",
     val reasoningText: String = "",
     val tools: List<PersistedChatTool> = emptyList(),
     val responseBlocks: List<PersistedAssistantResponseBlock> = emptyList(),
@@ -496,6 +498,8 @@ private fun JsonObject.toPersistedChatMessage(
     text = string("text"),
     fromUser = get("fromUser")?.jsonPrimitive?.booleanOrNull ?: false,
     isError = get("isError")?.jsonPrimitive?.booleanOrNull ?: false,
+    status = string("status"),
+    statusDetail = string("statusDetail"),
     reasoningText = string("reasoningText"),
     responseGroupId = string("responseGroupId").ifBlank { fallbackResponseGroupId },
     isActiveBranch = get("isActiveBranch")?.jsonPrimitive?.booleanOrNull ?: true,
@@ -571,6 +575,8 @@ private fun PersistedChatMessage.toJsonObject(): JsonObject = buildJsonObject {
     put("text", text)
     put("fromUser", fromUser)
     put("isError", isError)
+    if (status.isNotBlank()) put("status", status)
+    if (statusDetail.isNotBlank()) put("statusDetail", statusDetail)
     put("reasoningText", reasoningText)
     put("responseGroupId", responseGroupId)
     put("isActiveBranch", isActiveBranch)

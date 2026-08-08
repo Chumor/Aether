@@ -39,6 +39,7 @@ class SharedPiChatClientTest {
         assertEquals("30000", testProvider().toSharedPiModelConfig(1)["timeout_ms"].toString())
         assertEquals("90000", testProvider().toSharedPiModelConfig(90_000)["timeout_ms"].toString())
         assertEquals("3600000", testProvider().toSharedPiModelConfig(Int.MAX_VALUE)["timeout_ms"].toString())
+        assertEquals("5", testProvider().toSharedPiModelConfig()["max_retries"].toString())
     }
 
     @Test
@@ -273,6 +274,37 @@ class SharedPiChatClientTest {
     }
 
     @Test
+    fun dispatchesProviderReconnectLifecycleWithoutEndingTheTurn() = runTest {
+        val process = ChatProtocolProcess(reconnectEvents = true)
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        var requestStarts = 0
+        var responseResets = 0
+        val textDeltas = mutableListOf<String>()
+        val statuses = mutableListOf<SharedPiStreamingStatus?>()
+
+        SharedPiChatClient(bridge).runTurn(
+            config = testProvider(),
+            messages = listOf(SharedPiChatMessage("user", "hello")),
+            sessionId = "reconnect-session",
+            onAssistantTextDelta = textDeltas::add,
+            onAssistantRequestStarted = { requestStarts += 1 },
+            onAssistantResponseReset = { responseResets += 1 },
+            onStreamingStatus = statuses::add,
+        )
+
+        assertEquals(1, requestStarts)
+        assertEquals(1, responseResets)
+        assertEquals(listOf("STALE", "RECOVERED"), textDeltas)
+        assertEquals("Reconnecting... 1/5", statuses[1]?.text)
+        assertEquals("Stream ended without finish_reason\nRetrying in 5s", statuses[1]?.detail)
+        assertNull(statuses.last())
+        bridge.close()
+    }
+
+    @Test
     fun turnCanContinuePastTheBridgeDefaultTenMinuteDeadline() = runTest {
         val process = DeferredChatProtocolProcess()
         val bridge = SharedPiBridgeClient(
@@ -345,6 +377,7 @@ private class ChatProtocolProcess(
     private val assistantErrorEvent: String? = null,
     private val oauthCredential: JsonObject? = null,
     private val steerAccepted: Boolean = true,
+    private val reconnectEvents: Boolean = false,
 ) : RuntimeProcess {
     private val output = Channel<ByteArray>(Channel.UNLIMITED)
     val requests = mutableListOf<JsonObject>()
@@ -388,6 +421,26 @@ private class ChatProtocolProcess(
                     put("kind", "summary")
                 })
             }.toString() + "\n").encodeToByteArray())
+        }
+        if (reconnectEvents && type == "run_turn") {
+            suspend fun sendEvent(event: String, payload: JsonObject = JsonObject(emptyMap())) {
+                output.send((buildJsonObject {
+                    put("type", "event")
+                    put("id", id)
+                    put("event", event)
+                    put("payload", payload)
+                }.toString() + "\n").encodeToByteArray())
+            }
+            sendEvent("assistant_request_start")
+            sendEvent("assistant_text_delta", buildJsonObject { put("delta", "STALE") })
+            sendEvent("assistant_stream_reset")
+            sendEvent("assistant_retry", buildJsonObject {
+                put("attempt", 1)
+                put("max_attempts", 5)
+                put("delay_ms", 5_000)
+                put("error_message", "Stream ended without finish_reason")
+            })
+            sendEvent("assistant_text_delta", buildJsonObject { put("delta", "RECOVERED") })
         }
         assistantErrorEvent?.takeIf { type == "run_turn" }?.let { error ->
             output.send((buildJsonObject {

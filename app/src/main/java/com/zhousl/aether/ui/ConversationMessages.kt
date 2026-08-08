@@ -909,6 +909,13 @@ private fun AssistantMessageBlock(
                 onLinkClick = onOpenLink,
             )
         }
+        if (message.statusText.isNotBlank()) {
+            ReconnectingStatusCard(
+                text = message.statusText,
+                detail = message.statusDetail,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
         if (showActions) {
             AssistantMessageActions(
                 usageStatistics = message.usageStatistics,
@@ -983,6 +990,7 @@ fun ConversationAssistantGroupBubble(
     val thoughtDurationMillis = messages.lastOrNull()?.thoughtDurationMillis
     val hasReasoningTrace = messages.any { it.reasoningTrace != null }
     val showActions = messages.none { it.assistantActionsHidden }
+    val statusMessage = messages.lastOrNull { it.statusText.isNotBlank() }
     val context = LocalContext.current
     val agentModeReplayTimeline = remember(context, messages) {
         buildAgentModeReplayTimeline(context, messages)
@@ -1016,6 +1024,13 @@ fun ConversationAssistantGroupBubble(
                         onLinkClick = onOpenLink,
                     )
                 }
+            statusMessage?.let { status ->
+                ReconnectingStatusCard(
+                    text = status.statusText,
+                    detail = status.statusDetail,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
             if (showActions) {
                 AssistantMessageActions(
                     usageStatistics = groupUsageStatistics,
@@ -1125,6 +1140,13 @@ fun ConversationAssistantGroupBubble(
                 allowRootImageRead = allowRootImageRead,
                 onOpenAttachment = onOpenAttachment,
                 onOpenLink = onOpenLink,
+            )
+        }
+        statusMessage?.let { status ->
+            ReconnectingStatusCard(
+                text = status.statusText,
+                detail = status.statusDetail,
+                modifier = Modifier.padding(top = 6.dp),
             )
         }
         if (showActions) {
@@ -2585,6 +2607,7 @@ private fun faviconUrlForDomain(domain: String): String =
 fun ReconnectingStatusCard(
     text: String,
     detail: String,
+    isRunning: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var expanded by rememberSaveable(text, detail) { mutableStateOf(false) }
@@ -2603,7 +2626,15 @@ fun ReconnectingStatusCard(
             .noRippleClickable(enabled = detail.isNotBlank()) { expanded = !expanded },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ShimmerStatusText(text = text)
+        if (isRunning) {
+            ShimmerStatusText(text = text)
+        } else {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = AetherOnSurfaceVariant,
+            )
+        }
 
         AnimatedVisibility(
             visible = expanded && detail.isNotBlank(),

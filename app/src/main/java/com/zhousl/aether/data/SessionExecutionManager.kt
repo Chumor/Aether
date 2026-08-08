@@ -50,6 +50,9 @@ private const val ReasoningSummaryDetailMaxChars = 520
 private const val ReasoningSummarySystemPrompt =
     "You write concise user-visible progress summaries for assistant reasoning. Use a consistent first-person planning style, and never quote long private reasoning verbatim."
 
+internal fun completedReconnectStatus(status: String): String =
+    if (status.startsWith("Reconnecting", ignoreCase = true)) "Reconnected" else status
+
 enum class SessionFollowUpMode {
     Queue,
     Steer,
@@ -125,6 +128,17 @@ private data class AssistantResponseIdentity(
 ) {
     fun messageIdFor(blockId: String): String = "$messageIdPrefix-$blockId"
 }
+
+private data class ProviderRequestCheckpoint(
+    val pendingToolInvocations: List<ChatToolInvocation>,
+    val pendingResponseBlocks: List<AssistantResponseBlock>,
+    val pendingAssistantText: String,
+    val activeReasoningBlockId: String?,
+    val activeDirectReasoningSummaryChunkId: String?,
+    val reasoningFirstSummarySubmitted: Boolean,
+    val reasoningLastSubmittedCharIndex: Int,
+    val reasoningLastTimedSummaryAtMillis: Long,
+)
 
 class SessionExecutionManager(
     private val application: Application,
@@ -273,9 +287,9 @@ class SessionExecutionManager(
         return true
     }
 
-    fun pauseSession(sessionId: String) {
-        val handle = executionHandles[sessionId] ?: return
-        if (handle.pauseRequested) return
+    fun pauseSession(sessionId: String): ChatSession? {
+        val handle = executionHandles[sessionId] ?: return null
+        if (handle.pauseRequested) return null
         handle.pauseRequested = true
         val snapshot = _executionStates.value[sessionId]
         val runningRunIds = snapshot?.pendingToolInvocations?.let(::extractActiveManagedRunIds).orEmpty()
@@ -313,6 +327,7 @@ class SessionExecutionManager(
                 }
             }
         }
+        return chatStateStore.state.value.sessions.firstOrNull { it.id == sessionId }
     }
 
     suspend fun startScheduledTask(task: ScheduledTask): Boolean {
@@ -584,6 +599,7 @@ class SessionExecutionManager(
                 ),
             )
             val reasoningTraceToolRoutingEnabled = request.settings.supportsVisibleReasoningTrace()
+            var providerRequestCheckpoint: ProviderRequestCheckpoint? = null
             val emitToolEvent: suspend (AgentToolEvent) -> Unit = { event ->
                 if (!handle.pauseRequested) {
                     handleToolEvent(
@@ -661,6 +677,27 @@ class SessionExecutionManager(
                             current
                         } else {
                             current.copy(pendingAssistantText = "")
+                        }
+                    }
+                },
+                onAssistantRequestStarted = {
+                    if (!handle.pauseRequested) {
+                        val current = _executionStates.value[handle.sessionId]
+                            ?: SessionExecutionState(sessionId = handle.sessionId)
+                        providerRequestCheckpoint = handle.providerRequestCheckpoint(current)
+                    }
+                },
+                onAssistantResponseReset = {
+                    if (!handle.pauseRequested) {
+                        providerRequestCheckpoint?.let { checkpoint ->
+                            handle.restoreProviderRequestCheckpoint(checkpoint)
+                            updateExecutionState(handle.sessionId) { current ->
+                                current.copy(
+                                    pendingToolInvocations = checkpoint.pendingToolInvocations,
+                                    pendingResponseBlocks = checkpoint.pendingResponseBlocks,
+                                    pendingAssistantText = checkpoint.pendingAssistantText,
+                                )
+                            }
                         }
                     }
                 },
@@ -943,6 +980,8 @@ class SessionExecutionManager(
         inputMessageCount: Int = 0,
         userMessageCount: Int = 0,
         providerPayloadJson: String = "",
+        statusText: String = "",
+        statusDetail: String = "",
         handle: SessionExecutionHandle? = null,
         baseMessages: List<ChatMessage> = handle?.retainedMessagesSnapshot().orEmpty(),
     ): CompletionSummary {
@@ -968,6 +1007,8 @@ class SessionExecutionManager(
                 turnCompletedAtMillis = turnCompletedAtMillis,
             ),
             providerPayloadJson = providerPayloadJson,
+            statusText = statusText,
+            statusDetail = statusDetail,
         )
 
         deactivateAssistantCheckpoint(handle, responseIdentity)
@@ -1130,6 +1171,8 @@ class SessionExecutionManager(
         messageCreatedAtMillis: Long? = null,
         usageStatistics: ChatUsageStatistics? = null,
         providerPayloadJson: String = "",
+        statusText: String = "",
+        statusDetail: String = "",
     ): List<ChatMessage> {
         val messageTimestamp = if (isIncomplete) {
             responseIdentity?.createdAtMillis ?: messageCreatedAtMillis ?: System.currentTimeMillis()
@@ -1188,7 +1231,23 @@ class SessionExecutionManager(
             }
         }.let { messages ->
             if (messages.isEmpty()) {
-                emptyList()
+                if (statusText.isBlank()) {
+                    emptyList()
+                } else {
+                    listOf(
+                        ChatMessage(
+                            id = responseIdentity?.messageIdFor("status") ?: "agent-$messageTimestamp",
+                            author = MessageAuthor.Agent,
+                            text = "",
+                            createdAtMillis = messageTimestamp,
+                            responseGroupId = responseGroupId,
+                            assistantActionsHidden = assistantActionsHidden,
+                            isIncomplete = isIncomplete,
+                            statusText = statusText,
+                            statusDetail = statusDetail,
+                        )
+                    )
+                }
             } else {
                 messages.toMutableList().apply {
                     if (none { it.reasoningTrace != null }) {
@@ -1199,6 +1258,8 @@ class SessionExecutionManager(
                                 thoughtDurationMillis = thoughtDurationMillis,
                                 usageStatistics = usageStatistics,
                                 providerPayloadJson = providerPayloadJson,
+                                statusText = statusText,
+                                statusDetail = statusDetail,
                             ),
                         )
                     } else {
@@ -1208,6 +1269,8 @@ class SessionExecutionManager(
                             get(lastIndex).copy(
                                 usageStatistics = usageStatistics,
                                 providerPayloadJson = providerPayloadJson,
+                                statusText = statusText,
+                                statusDetail = statusDetail,
                             ),
                         )
                     }
@@ -1276,7 +1339,7 @@ class SessionExecutionManager(
                 }
             }
         }
-        return if (blocks.isEmpty()) {
+        return if (blocks.isEmpty() && snapshot.pendingStatusText.isBlank()) {
             CompletionSummary(
                 sessionTitle = resolveSessionTitle(handle.sessionId),
                 summary = "",
@@ -1292,6 +1355,8 @@ class SessionExecutionManager(
                 blocks = blocks,
                 thoughtDurationMillis = thoughtDurationMillis,
                 outcome = SessionTurnOutcome.Neutral,
+                statusText = completedReconnectStatus(snapshot.pendingStatusText),
+                statusDetail = snapshot.pendingStatusDetail,
                 handle = handle,
             )
         }
@@ -2760,6 +2825,30 @@ class SessionExecutionManager(
             reasoningFirstSummarySubmitted = false
             reasoningLastSubmittedCharIndex = 0
             reasoningLastTimedSummaryAtMillis = 0L
+        }
+
+        fun providerRequestCheckpoint(state: SessionExecutionState): ProviderRequestCheckpoint =
+            synchronized(lock) {
+                ProviderRequestCheckpoint(
+                    pendingToolInvocations = state.pendingToolInvocations,
+                    pendingResponseBlocks = state.pendingResponseBlocks,
+                    pendingAssistantText = state.pendingAssistantText,
+                    activeReasoningBlockId = activeReasoningBlockId,
+                    activeDirectReasoningSummaryChunkId = activeDirectReasoningSummaryChunkId,
+                    reasoningFirstSummarySubmitted = reasoningFirstSummarySubmitted,
+                    reasoningLastSubmittedCharIndex = reasoningLastSubmittedCharIndex,
+                    reasoningLastTimedSummaryAtMillis = reasoningLastTimedSummaryAtMillis,
+                )
+            }
+
+        fun restoreProviderRequestCheckpoint(checkpoint: ProviderRequestCheckpoint) {
+            synchronized(lock) {
+                activeReasoningBlockId = checkpoint.activeReasoningBlockId
+                activeDirectReasoningSummaryChunkId = checkpoint.activeDirectReasoningSummaryChunkId
+                reasoningFirstSummarySubmitted = checkpoint.reasoningFirstSummarySubmitted
+                reasoningLastSubmittedCharIndex = checkpoint.reasoningLastSubmittedCharIndex
+                reasoningLastTimedSummaryAtMillis = checkpoint.reasoningLastTimedSummaryAtMillis
+            }
         }
 
         fun retainedMessagesSnapshot(): List<ChatMessage> = synchronized(lock) {

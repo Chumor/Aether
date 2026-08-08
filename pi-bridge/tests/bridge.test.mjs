@@ -1164,6 +1164,131 @@ test("aborts an active harness by session id", async () => {
   void run.catch(() => {});
 });
 
+test("reconnects a failed provider stream without restarting the harness turn", async (t) => {
+  let requestCount = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      requestCount += 1;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      const content = requestCount === 1 ? "STALE" : "RECOVERED";
+      response.write(
+        `data: ${JSON.stringify({
+          id: `chatcmpl-retry-${requestCount}`,
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "retry-model",
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", content },
+              finish_reason: null,
+            },
+          ],
+        })}\n\n`,
+      );
+      if (requestCount === 1) {
+        response.end();
+        return;
+      }
+      response.write(
+        `data: ${JSON.stringify({
+          id: `chatcmpl-retry-${requestCount}`,
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "retry-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        })}\n\n`,
+      );
+      response.end("data: [DONE]\n\n");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  const client = new BridgeClient();
+  const result = await client.request(
+    "provider-reconnect",
+    "run_turn",
+    turnPayload(
+      "session-provider-reconnect",
+      [userMessage("retry this request")],
+      {
+        provider_type: "openai_compatible",
+        provider_config_id: "provider-reconnect",
+        pi_provider_id: "aether-retry-test",
+        pi_api: "openai-completions",
+        model_id: "retry-model",
+        base_url: `http://127.0.0.1:${address.port}/v1`,
+        api_key: "secret-key",
+        reasoning: false,
+        max_retries: 2,
+        max_retry_delay_ms: 1,
+      },
+    ),
+  );
+
+  assert.equal(requestCount, 2);
+  assert.equal(result.assistant_text, "RECOVERED", JSON.stringify(result));
+  assert.equal(
+    client.events.filter(
+      (frame) => frame.id === "provider-reconnect" && frame.event === "assistant_request_start",
+    ).length,
+    1,
+  );
+  assert.deepEqual(
+    client.events
+      .filter(
+        (frame) =>
+          frame.id === "provider-reconnect" &&
+          ["assistant_text_delta", "assistant_stream_reset", "assistant_retry"].includes(
+            frame.event,
+          ),
+      )
+      .map((frame) => frame.event),
+    ["assistant_text_delta", "assistant_stream_reset", "assistant_retry", "assistant_text_delta"],
+  );
+});
+
+test("includes the nested network cause in reconnect details", async () => {
+  const unavailable = createServer();
+  await new Promise((resolve) => unavailable.listen(0, "127.0.0.1", resolve));
+  const address = unavailable.address();
+  assert.ok(address && typeof address === "object");
+  await new Promise((resolve) => unavailable.close(resolve));
+
+  const client = new BridgeClient();
+  const run = client.request(
+    "provider-network-detail",
+    "run_turn",
+    turnPayload(
+      "session-provider-network-detail",
+      [userMessage("show the network failure")],
+      {
+        provider_type: "openai_compatible",
+        provider_config_id: "provider-network-detail",
+        pi_provider_id: "aether-network-detail-test",
+        pi_api: "openai-completions",
+        model_id: "network-detail-model",
+        base_url: `http://127.0.0.1:${address.port}/v1`,
+        api_key: "secret-key",
+        reasoning: false,
+        max_retries: 1,
+        max_retry_delay_ms: 1,
+      },
+    ),
+  );
+  const retry = await client.waitForEvent(
+    (frame) => frame.id === "provider-network-detail" && frame.event === "assistant_retry",
+  );
+  await run;
+
+  assert.notEqual(retry.payload.error_message, "fetch failed");
+  assert.match(retry.payload.error_message, /ECONNREFUSED/i);
+});
+
 test("maps a custom OpenAI-compatible provider through Pi", async (t) => {
   let receivedRequest;
   const server = createServer((request, response) => {
@@ -1315,8 +1440,8 @@ test("lists every built-in Pi provider and its model catalog", async () => {
   const catalog = await client.request("providers", "list_providers");
   const providers = catalog.providers;
 
-  assert.equal(providers.length, 35);
-  assert.equal(new Set(providers.map((provider) => provider.id)).size, 35);
+  assert.equal(providers.length, 37);
+  assert.equal(new Set(providers.map((provider) => provider.id)).size, 37);
   assert.ok(providers.every((provider) => provider.models.length > 0));
   assert.ok(providers.every((provider) => provider.models.every((model) => model.id)));
 
@@ -1324,7 +1449,14 @@ test("lists every built-in Pi provider and its model catalog", async () => {
     .filter((provider) => provider.auth.oauth)
     .map((provider) => provider.id)
     .sort();
-  assert.deepEqual(oauthProviders, ["anthropic", "github-copilot", "openai-codex"]);
+  assert.deepEqual(oauthProviders, [
+    "anthropic",
+    "github-copilot",
+    "kimi-coding",
+    "openai-codex",
+    "openrouter",
+    "xai",
+  ]);
 });
 
 test("validates Pi OAuth protocol requests without legacy provider fallbacks", async () => {
@@ -1476,14 +1608,26 @@ test("uses Pi provider-specific API key login prompts", async () => {
     CLOUDFLARE_GATEWAY_ID: "gateway-id",
   });
 
-  await assert.rejects(
-    client.request("api-key-bedrock", "login_provider", {
-      provider_id: "amazon-bedrock",
-      provider_config_id: `test-${"amazon-bedrock"}`,
-      auth_method: "api_key",
-    }),
-    /ambient credentials/,
+  const bedrockLogin = client.request("api-key-bedrock", "login_provider", {
+    provider_id: "amazon-bedrock",
+    provider_config_id: `test-${"amazon-bedrock"}`,
+    auth_method: "api_key",
+  });
+  const bedrockPrompt = await client.waitForEvent(
+    (frame) =>
+      frame.id === "api-key-bedrock" &&
+      frame.event === "auth_prompt" &&
+      frame.payload.prompt_type === "select",
   );
+  assert.deepEqual(
+    bedrockPrompt.payload.options.map((option) => option.id),
+    ["bearer-token", "aws-profile", "credential-chain"],
+  );
+  await client.request("api-key-bedrock-cancel", "auth_prompt_result", {
+    prompt_id: bedrockPrompt.payload.prompt_id,
+    cancelled: true,
+  });
+  await assert.rejects(bedrockLogin, /cancel/i);
 });
 
 test("rejects non-OpenAI custom Pi APIs", async () => {

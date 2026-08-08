@@ -58,6 +58,8 @@ class PiAgentRunner(
         onAssistantReasoningDelta: suspend (String) -> Unit = {},
         onAssistantReasoningSummaryDelta: suspend (String) -> Unit = {},
         onAssistantTextReset: suspend () -> Unit = {},
+        onAssistantRequestStarted: suspend () -> Unit = {},
+        onAssistantResponseReset: suspend () -> Unit = {},
         onStreamingStatus: suspend (StreamingStatus?) -> Unit = {},
         onSkillActivated: suspend (ActiveSkillContext) -> Unit = {},
         pollInjectedUserMessages: suspend () -> List<LlmMessage> = { emptyList() },
@@ -189,6 +191,13 @@ class PiAgentRunner(
                                     onAssistantReasoningSummaryDelta(delta)
                                 }
                             }
+
+                            "assistant_request_start" -> onAssistantRequestStarted()
+
+                            "assistant_stream_reset" -> onAssistantResponseReset()
+
+                            "assistant_retry" ->
+                                onStreamingStatus(reconnectStreamingStatus(eventPayload))
 
                             "tool_call_start" -> {
                                 onAssistantTextReset()
@@ -414,6 +423,26 @@ class PiAgentRunner(
             ),
         )
     }
+}
+
+internal fun reconnectStreamingStatus(payload: JSONObject): StreamingStatus {
+    val delayMillis = payload.optInt("delay_ms").coerceAtLeast(0)
+    return StreamingStatus(
+        text =
+            "Reconnecting... ${payload.optInt("attempt")}/${payload.optInt("max_attempts")}",
+        detail = buildString {
+            append(payload.optString("error_message"))
+            if (delayMillis > 0) {
+                if (isNotEmpty()) append('\n')
+                append("Retrying in ")
+                if (delayMillis % 1_000 == 0) {
+                    append(delayMillis / 1_000).append('s')
+                } else {
+                    append(delayMillis).append("ms")
+                }
+            }
+        },
+    )
 }
 
 private fun JSONObject.toToolEvent(isRunning: Boolean): AgentToolEvent =

@@ -707,6 +707,7 @@ fun ConversationScreen(
                                         ReconnectingStatusCard(
                                             text = pendingStatusText,
                                             detail = pendingStatusDetail,
+                                            isRunning = true,
                                             modifier = Modifier.padding(top = 6.dp),
                                         )
                                     }

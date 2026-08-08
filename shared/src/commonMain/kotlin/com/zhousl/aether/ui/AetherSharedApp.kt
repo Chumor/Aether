@@ -1726,6 +1726,7 @@ fun AetherSharedApp(
             val turnStartedAt = platformCurrentTimeMillis()
             var responseStartedAt = 0L
             val reasoningTracker = SharedReasoningTurnTracker()
+            var providerRequestCheckpoint: SharedChatMessage? = null
             target.messages += SharedChatMessage(
                 id = assistantId,
                 text = "",
@@ -1875,6 +1876,20 @@ fun AetherSharedApp(
                                 )
                             }
                         },
+                        onAssistantRequestStarted = {
+                            providerRequestCheckpoint = target.messages.lastOrNull { it.id == assistantId }
+                        },
+                        onAssistantResponseReset = {
+                            providerRequestCheckpoint?.let { checkpoint ->
+                                target.messages.updateMessage(assistantId) {
+                                    checkpoint.copy(
+                                        isStreaming = true,
+                                        status = SharedInitialStreamingStatusText,
+                                        statusDetail = SharedInitialStreamingStatusDetail,
+                                    )
+                                }
+                            }
+                        },
                         onHostToolStarted = { call ->
                             backgroundLeases[target.id]?.update("Running ${call.name}")
                             reasoningTracker.finishDirectSummaryChunk()
@@ -1905,6 +1920,7 @@ fun AetherSharedApp(
                             }
                         },
                         onStreamingStatus = { status ->
+                            if (!shouldApplySharedTurnEvent(target.job, runningJob)) return@runTurn
                             status?.text?.takeIf(String::isNotBlank)
                                 ?.let { backgroundLeases[target.id]?.update(it) }
                             target.messages.updateMessage(assistantId) { current ->
@@ -2275,14 +2291,16 @@ fun AetherSharedApp(
                     "app.pauseGeneration" -> withContext(Dispatchers.Main) {
                         val target = args["session_id"]?.jsonPrimitive?.contentOrNull
                             ?.let(sessionStates::get) ?: currentSession
-                        target.job?.cancel()
+                        val runningJob = target.job
                         target.job = null
+                        runningJob?.cancel()
                         target.streamingStatus = ""
                         target.queuedTurns.clear()
                         val completedAt = platformCurrentTimeMillis()
                         target.messages.lastOrNull { !it.fromUser && it.isStreaming }?.let { pending ->
                             val finalized = pending.finalizeSharedInterruptedAssistantWork(
                                 status = chatStoppedStatus,
+                                preserveStatus = true,
                                 completedAtMillis = completedAt,
                             )
                             if (finalized.hasSharedVisibleAssistantWork()) {
@@ -2933,13 +2951,15 @@ fun AetherSharedApp(
                         }
                     },
                     onStop = {
-                        currentSession.job?.cancel()
+                        val runningJob = currentSession.job
                         currentSession.job = null
+                        runningJob?.cancel()
                         currentSession.streamingStatus = ""
                         currentSession.queuedTurns.clear()
                         messages.lastOrNull { !it.fromUser && it.isStreaming }?.let { pending ->
                             val finalized = pending.finalizeSharedInterruptedAssistantWork(
                                 status = chatStoppedStatus,
+                                preserveStatus = true,
                                 completedAtMillis = platformCurrentTimeMillis(),
                             )
                             if (finalized.hasSharedVisibleAssistantWork()) {
@@ -6845,10 +6865,13 @@ internal fun SharedChatMessage.finalizeSharedInterruptedAssistantWork(
     status: String,
     fallbackText: String = "",
     isErrorWhenBlank: Boolean = false,
+    preserveStatus: Boolean = false,
     completedAtMillis: Long = platformCurrentTimeMillis(),
 ): SharedChatMessage {
     val hadNoText = text.isBlank()
     val completedAtUptimeMillis = platformUptimeMillis()
+    val hasVisibleWorkBeforeStatus = text.isNotBlank() || fallbackText.isNotBlank() ||
+        responseBlocks.isNotEmpty() || tools.isNotEmpty()
     fun SharedChatToolInvocation.finalizeInterrupted(): SharedChatToolInvocation =
         if (isSharedInterruptedToolInvocation()) {
             val interruptedOutput = sharedInterruptedToolOutput(outputJson)
@@ -6867,8 +6890,12 @@ internal fun SharedChatMessage.finalizeSharedInterruptedAssistantWork(
         text = text.ifBlank { fallbackText },
         isError = isError || (isErrorWhenBlank && hadNoText),
         isStreaming = false,
-        status = status,
-        statusDetail = "",
+        status = when {
+            preserveStatus -> completedSharedReconnectStatus(this.status)
+            hasVisibleWorkBeforeStatus -> status
+            else -> ""
+        },
+        statusDetail = if (preserveStatus && this.status.isNotBlank()) this.statusDetail else "",
         completedAtMillis = completedAtMillis,
         thoughtDurationMillis = if (
             thoughtDurationMillis <= 0L &&
@@ -6897,6 +6924,9 @@ internal fun SharedChatMessage.finalizeSharedInterruptedAssistantWork(
     )
 }
 
+internal fun completedSharedReconnectStatus(status: String): String =
+    if (status.startsWith("Reconnecting", ignoreCase = true)) "Reconnected" else status
+
 private fun SharedChatToolInvocation.isSharedInterruptedToolInvocation(): Boolean {
     if (isRunning) return true
     if (!name.equals("bash", ignoreCase = true)) return false
@@ -6906,13 +6936,16 @@ private fun SharedChatToolInvocation.isSharedInterruptedToolInvocation(): Boolea
 }
 
 internal fun SharedChatMessage.hasSharedVisibleAssistantWork(): Boolean =
-    text.isNotBlank() || responseBlocks.any { block ->
+    text.isNotBlank() || status.isNotBlank() || responseBlocks.any { block ->
         when (block) {
             is SharedAssistantResponseBlock.Text -> block.text.isNotBlank()
             is SharedAssistantResponseBlock.Reasoning -> true
             is SharedAssistantResponseBlock.ToolGroup -> block.tools.isNotEmpty()
         }
-    } || tools.isNotEmpty()
+        } || tools.isNotEmpty()
+
+internal fun shouldApplySharedTurnEvent(activeJob: Job?, runningJob: Job?): Boolean =
+    activeJob != null && activeJob === runningJob
 
 internal fun sharedInterruptedToolOutput(rawOutput: String): String {
     val existing = runCatching { Json.parseToJsonElement(rawOutput) as? JsonObject }.getOrNull()
@@ -6952,6 +6985,8 @@ private fun SharedChatMessage.toPersistedMessage(): PersistedChatMessage =
         text = text,
         fromUser = fromUser,
         isError = isError,
+        status = status,
+        statusDetail = statusDetail,
         reasoningText = reasoningText,
         tools = tools.map { tool ->
             PersistedChatTool(
@@ -7168,6 +7203,8 @@ internal fun PersistedChatMessage.toSharedChatMessage(): SharedChatMessage {
     text = text,
     fromUser = fromUser,
     isError = isError,
+    status = status,
+    statusDetail = statusDetail,
     reasoningText = reasoningText,
     tools = tools.map(PersistedChatTool::toSharedChatToolInvocation),
     responseBlocks = restoredBlocks,

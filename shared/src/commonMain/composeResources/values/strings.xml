@@ -454,8 +454,8 @@
     <string name="settings_notify_background_tasks_finish_subtitle">Shows a completion alert when a run ends while Aether is not on screen.</string>
     <string name="settings_reconnect">Reconnect</string>
     <string name="settings_reconnect_after_seconds">Reconnect after %1$ds</string>
-    <string name="settings_reconnect_after_idle_seconds">Reconnect after idle seconds</string>
-    <string name="settings_reconnect_after_idle_description">If a request produces no response activity at all for this many seconds, Aether cancels that attempt and reconnects with backoff. Range: 30-3600 seconds.</string>
+    <string name="settings_reconnect_after_idle_seconds">Provider timeout seconds</string>
+    <string name="settings_reconnect_after_idle_description">Providers interpret this timeout differently. Aether retries explicit retryable failures, but does not resend an ambiguous timeout after response activity has begun. Range: 30-3600 seconds.</string>
     <string name="settings_skills_count_configured">%1$d configured</string>
     <string name="settings_scheduled_tasks">Scheduled tasks</string>
     <string name="settings_scheduled_tasks_count_configured">%1$d configured</string>

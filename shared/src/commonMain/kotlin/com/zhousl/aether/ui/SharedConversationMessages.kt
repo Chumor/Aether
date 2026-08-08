@@ -793,16 +793,15 @@ internal fun SharedConversationMessage(
                         )
                     }
                 }
-                if (message.isStreaming) {
-                    if (message.status.isNotBlank()) {
-                        SharedGenerationStatusCard(
-                            text = message.status,
-                            detail = message.statusDetail,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                    } else if (message.responseBlocks.isEmpty()) {
-                        SharedThinkingIndicator()
-                    }
+                if (message.status.isNotBlank()) {
+                    SharedGenerationStatusCard(
+                        text = message.status,
+                        detail = message.statusDetail,
+                        isRunning = message.isStreaming,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                } else if (message.isStreaming && message.responseBlocks.isEmpty()) {
+                    SharedThinkingIndicator()
                 }
                 if (
                     !message.isStreaming &&
@@ -2527,6 +2526,7 @@ private fun SharedThinkingIndicator() {
 private fun SharedGenerationStatusCard(
     text: String,
     detail: String,
+    isRunning: Boolean,
     modifier: Modifier = Modifier,
 ) {
     var expanded by rememberSaveable(text, detail) { mutableStateOf(false) }
@@ -2545,7 +2545,15 @@ private fun SharedGenerationStatusCard(
             ) { expanded = !expanded },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        SharedReasoningShimmerText(text)
+        if (isRunning) {
+            SharedReasoningShimmerText(text)
+        } else {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = AetherOnSurfaceVariant,
+            )
+        }
         AnimatedVisibility(
             visible = expanded && detail.isNotBlank(),
             enter = expandVertically(

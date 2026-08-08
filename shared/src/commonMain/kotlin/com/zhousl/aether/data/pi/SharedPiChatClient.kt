@@ -131,6 +131,8 @@ class SharedPiChatClient(
         onAssistantTextDelta: suspend (String) -> Unit = {},
         onAssistantReasoningDelta: suspend (String) -> Unit = {},
         onAssistantReasoningSummaryDelta: suspend (String) -> Unit = {},
+        onAssistantRequestStarted: suspend () -> Unit = {},
+        onAssistantResponseReset: suspend () -> Unit = {},
         onHostToolStarted: suspend (SharedPiHostToolCall) -> Unit = {},
         onHostToolFinished: suspend (SharedPiHostToolCall, SharedHostToolResult) -> Unit = { _, _ -> },
         onStreamingStatus: suspend (SharedPiStreamingStatus?) -> Unit = {},
@@ -168,6 +170,26 @@ class SharedPiChatClient(
                         onAssistantReasoningSummaryDelta(delta)
                     }
                 }
+                "assistant_request_start" -> onAssistantRequestStarted()
+                "assistant_stream_reset" -> onAssistantResponseReset()
+                "assistant_retry" -> onStreamingStatus(
+                    SharedPiStreamingStatus(
+                        text = "Reconnecting... ${eventPayload.int("attempt")}/${eventPayload.int("max_attempts")}",
+                        detail = buildString {
+                            append(eventPayload.string("error_message"))
+                            val delayMillis = eventPayload.int("delay_ms")
+                            if (delayMillis > 0) {
+                                if (isNotEmpty()) append('\n')
+                                append("Retrying in ")
+                                if (delayMillis % 1_000 == 0) {
+                                    append(delayMillis / 1_000).append('s')
+                                } else {
+                                    append(delayMillis).append("ms")
+                                }
+                            }
+                        },
+                    )
+                )
                 "assistant_error" -> onStreamingStatus(
                     SharedPiStreamingStatus(
                         text = "Agent engine error",
@@ -434,6 +456,9 @@ private fun JsonObject.string(name: String): String =
 
 private fun JsonObject.long(name: String): Long =
     get(name)?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0
+
+private fun JsonObject.int(name: String): Int =
+    get(name)?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
 
 internal fun JsonObject.sharedHostToolSessionId(): String =
     get(SharedHostToolSessionIdArgument)?.jsonPrimitive?.contentOrNull.orEmpty()

@@ -42,12 +42,15 @@ import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -103,6 +106,7 @@ const val SharedExtensionSlotChatEmpty = "chat.empty"
 const val SharedExtensionSlotChatListStart = "chat.list.start"
 const val SharedExtensionSlotChatListEnd = "chat.list.end"
 const val SharedExtensionSlotChatComposerTop = "chat.composer.top"
+const val SharedExtensionSlotChatComposerPlusMenu = "chat.composer.plus-menu"
 const val SharedExtensionSlotSettingsHub = "settings.hub"
 const val SharedExtensionSlotDrawer = "drawer"
 const val SharedExtensionSlotDrawerHeader = "drawer.header"
@@ -280,6 +284,15 @@ private fun SharedAetherExtensionView(
 }
 
 @Composable
+internal fun SharedAetherExtensionTree(
+    value: JsonElement?,
+    extensionId: String,
+    modifier: Modifier = Modifier,
+) {
+    SharedAetherExtensionView(value, extensionId, modifier)
+}
+
+@Composable
 private fun SharedAetherExtensionNode(
     node: JsonObject,
     extensionId: String,
@@ -423,6 +436,75 @@ private fun SharedAetherExtensionNode(
                     }
                 },
             )
+        }
+        "select" -> {
+            var expanded by remember(node.string("id"), node.string("value")) { mutableStateOf(false) }
+            val options = (node["options"] as? JsonArray).orEmpty().mapNotNull { option ->
+                val value = option as? JsonObject ?: return@mapNotNull null
+                value.string("value") to value.string("label").ifBlank { value.string("value") }
+            }
+            Box(modifier = resolvedModifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .background(AetherSurfaceHigh).clickable { expanded = true }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(node.string("label"), color = AetherOnSurface)
+                        node.string("value").takeIf(String::isNotBlank)?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = AetherOnSurfaceVariant)
+                        }
+                    }
+                    Text("v", color = AetherOnSurfaceVariant)
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    options.forEach { (value, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                expanded = false
+                                if (action.isNotBlank()) {
+                                    controller.onAction(
+                                        extensionId,
+                                        action,
+                                        JsonObject(args + ("value" to JsonPrimitive(value))),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        "slider" -> {
+            val min = node.double("min", 0.0).toFloat()
+            val max = node.double("max", 1.0).toFloat().coerceAtLeast(min)
+            val step = node.double("step", 0.01).toFloat().coerceAtLeast(0.0001f)
+            var value by remember(node.string("id"), node.string("value")) {
+                mutableStateOf(node.double("value", min.toDouble()).toFloat().coerceIn(min, max))
+            }
+            Column(modifier = resolvedModifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(node.string("label"), color = AetherOnSurface)
+                    Text("${value}", color = AetherOnSurfaceVariant)
+                }
+                Slider(
+                    value = value,
+                    onValueChange = { value = it },
+                    onValueChangeFinished = {
+                        if (action.isNotBlank()) {
+                            controller.onAction(
+                                extensionId,
+                                action,
+                                JsonObject(args + ("value" to JsonPrimitive(value.toDouble()))),
+                            )
+                        }
+                    },
+                    valueRange = min..max,
+                    steps = (((max - min) / step).toInt() - 1).coerceAtLeast(0),
+                )
+            }
         }
         "spacer" -> Spacer(
             Modifier.height(node.double("height", node.double("size", 8.0)).dp)

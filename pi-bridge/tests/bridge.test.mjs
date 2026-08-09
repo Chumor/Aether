@@ -250,6 +250,16 @@ export default defineAetherExtension((aether) => {
     icon: "code",
     render: () => ui.text("Aether page"),
   });
+  aether.registerSettings({
+    id: "preferences",
+    title: "Preferences",
+    sections: [{
+      title: "General",
+      settings: [{ id: "enabled", label: "Enabled", type: "toggle", default: true }],
+    }],
+  });
+  aether.registerComposerMenuItem({ id: "run", title: "Run demo", action: "run" });
+  aether.registerMessageType({ type: "demo", render: ({ message }) => ui.text(String(message.text ?? "")) });
   aether.registerAction("list-skills", async () =>
     aether.services.invoke("skills", "list"));
   aether.on("before_send", ({ text }) => ({ text: "[ext] " + text }));
@@ -274,6 +284,10 @@ export default defineAetherExtension((aether) => {
     assert.equal(loaded.snapshot.components[0].mode, "wrap");
     assert.equal(loaded.snapshot.components[0].tree.children[1].type, "core");
     assert.equal(loaded.snapshot.pages[0].title, "Demo");
+    assert.equal(loaded.snapshot.settings[0].title, "Preferences");
+    assert.equal(loaded.snapshot.settings[0].sections[0].settings[0].id, "enabled");
+    assert.equal(loaded.snapshot.composer_menu_items[0].title, "Run demo");
+    assert.equal(loaded.snapshot.message_types[0].type, "demo");
     assert.deepEqual(loaded.snapshot.event_names, ["before_send", "operation:chat.new"]);
 
     const disabled = await client.request("aether-disabled", "reload_aether_extensions", {

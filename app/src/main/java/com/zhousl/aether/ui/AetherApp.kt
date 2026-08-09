@@ -1046,6 +1046,7 @@ private fun AetherAppContent(
                     developerTermuxReadyOverride = uiState.developerTermuxReadyOverride,
                     installedSkills = uiState.installedSkills,
                     installedPiExtensions = uiState.installedPiExtensions,
+                    hasLoadedInstalledPiExtensions = uiState.hasLoadedInstalledPiExtensions,
                     nativeModState = nativeModState,
                     piExtensionCatalog = uiState.piExtensionCatalog,
                     isLoadingPiExtensions = uiState.isLoadingPiExtensions,

@@ -101,6 +101,7 @@ const val AetherExtensionSlotChatEmpty = "chat.empty"
 const val AetherExtensionSlotChatListStart = "chat.list.start"
 const val AetherExtensionSlotChatListEnd = "chat.list.end"
 const val AetherExtensionSlotChatComposerTop = "chat.composer.top"
+const val AetherExtensionSlotChatComposerPlusMenu = "chat.composer.plus-menu"
 const val AetherExtensionSlotSettingsHub = "settings.hub"
 const val AetherExtensionSlotDrawer = "drawer"
 const val AetherExtensionSlotDrawerHeader = "drawer.header"
@@ -694,7 +695,7 @@ private fun AetherExtensionNode(
             }
         }
 
-        "input" -> {
+        "input", "select", "slider" -> {
             val externalValue = node.optString("value")
             var value by remember(node.optString("id"), externalValue) {
                 mutableStateOf(externalValue)

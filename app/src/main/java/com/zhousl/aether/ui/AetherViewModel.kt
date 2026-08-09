@@ -25,6 +25,7 @@ import com.zhousl.aether.data.CurrentOnboardingVersion
 import com.zhousl.aether.data.DiagnosticRedactor
 import com.zhousl.aether.data.InstalledSkill
 import com.zhousl.aether.data.InstalledPiExtension
+import com.zhousl.aether.data.PiExtensionInstallKind
 import com.zhousl.aether.data.PiExtensionCatalogEntry
 import com.zhousl.aether.data.ProviderModelCatalogClient
 import com.zhousl.aether.data.thinkingCatalogKey
@@ -119,6 +120,8 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.Base64
+import java.util.Locale
+import java.util.UUID
 
 private const val FollowUpTourAutoOpenDelayMillis = 2_500L
 private const val AppUpdateCheckIntervalMillis = 3L * 24L * 60L * 60L * 1000L
@@ -149,6 +152,14 @@ internal fun shouldAutoCompactContext(
     }
     return totalTokens + trailingEstimate > contextWindow - reserveTokens
 }
+
+internal fun mergeImportedPiExtensions(
+    current: List<InstalledPiExtension>,
+    imported: List<InstalledPiExtension>,
+): List<InstalledPiExtension> =
+    (current.filter { it.kind != PiExtensionInstallKind.Imported } + imported)
+        .distinctBy(InstalledPiExtension::id)
+        .sortedBy { it.name.lowercase(Locale.US) }
 
 class AetherViewModel(
     application: Application,
@@ -197,6 +208,7 @@ class AetherViewModel(
         refreshTermuxSetup()
         refreshAlpineSetup(startPiIfReady = false)
         refreshRootSetup()
+        refreshImportedPiExtensions()
 
         viewModelScope.launch {
             settingsRepository.settings.collect { settings ->
@@ -2820,6 +2832,12 @@ class AetherViewModel(
         }
     }
 
+    private fun refreshImportedPiExtensions() {
+        viewModelScope.launch {
+            publishImportedPiExtensions(piExtensionManager.listImported())
+        }
+    }
+
     fun loadPiPackageDetails(entry: PiExtensionCatalogEntry) {
         viewModelScope.launch {
             _uiState.update {
@@ -2925,6 +2943,7 @@ class AetherViewModel(
 
     private suspend fun refreshPiExtensionState(loadCatalog: Boolean) {
         _uiState.update { it.copy(isLoadingPiExtensions = true) }
+        publishImportedPiExtensions(piExtensionManager.listImported())
         val installedResult = piExtensionManager.listInstalled()
         runtime.nativeModManager.refreshDiscovery()
         val catalogResult = if (loadCatalog) {
@@ -2935,6 +2954,7 @@ class AetherViewModel(
         _uiState.update { current ->
             current.copy(
                 installedPiExtensions = installedResult.getOrDefault(current.installedPiExtensions),
+                hasLoadedInstalledPiExtensions = true,
                 piExtensionCatalog = catalogResult?.getOrDefault(current.piExtensionCatalog)
                     ?: current.piExtensionCatalog,
                 isLoadingPiExtensions = false,
@@ -2948,6 +2968,19 @@ class AetherViewModel(
                     R.string.message_pi_extension_operation_failed,
                     throwable.userFacingMessage(),
                 )
+            )
+        }
+    }
+
+    private fun publishImportedPiExtensions(
+        result: Result<List<InstalledPiExtension>>,
+    ) {
+        _uiState.update { current ->
+            current.copy(
+                installedPiExtensions = result.getOrNull()?.let { imported ->
+                    mergeImportedPiExtensions(current.installedPiExtensions, imported)
+                } ?: current.installedPiExtensions,
+                hasLoadedInstalledPiExtensions = true,
             )
         }
     }
@@ -3707,6 +3740,31 @@ class AetherViewModel(
                 }
             }
             JSONObject().put("submitted", true)
+        }
+
+        "app.appendCustomMessage" -> {
+            val type = args.optString("type").trim()
+            require(type.isNotBlank()) { "Custom messages require a type." }
+            val text = args.optString("text")
+            val payload = args.optJSONObject("payload") ?: JSONObject()
+            val sessionId = _uiState.value.currentSessionId
+            val message = ChatMessage(
+                id = "aether-custom-${UUID.randomUUID()}",
+                author = MessageAuthor.Agent,
+                text = text,
+                createdAtMillis = System.currentTimeMillis(),
+                assistantActionsHidden = true,
+                providerPayloadJson = JSONObject()
+                    .put("aether_custom_type", type)
+                    .put("aether_custom_payload", payload)
+                    .toString(),
+            )
+            withContext(Dispatchers.Main.immediate) {
+                updateSession(sessionId) { session ->
+                    session.copy(messages = session.messages + message, preview = text)
+                }
+            }
+            JSONObject().put("appended", true).put("type", type)
         }
 
         "app.newChat" -> {

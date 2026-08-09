@@ -34,6 +34,62 @@ export interface AetherPageDefinition extends AetherSurfaceDefinition {
   icon?: string;
 }
 
+export type AetherSettingType = "text" | "number" | "toggle" | "select" | "slider";
+
+export interface AetherSettingOption {
+  value: string;
+  label: string;
+}
+
+export interface AetherSettingDefinition {
+  id: string;
+  label: string;
+  description?: string;
+  type?: AetherSettingType;
+  default?: string | number | boolean;
+  placeholder?: string;
+  options?: AetherSettingOption[];
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface AetherSettingsSection {
+  id?: string;
+  title?: string;
+  description?: string;
+  settings: AetherSettingDefinition[];
+}
+
+export interface AetherSettingsDefinition {
+  id: string;
+  title: string;
+  subtitle?: string;
+  icon?: string;
+  order?: number;
+  sections: AetherSettingsSection[];
+}
+
+export interface AetherComposerMenuItemDefinition {
+  id: string;
+  title: string;
+  subtitle?: string;
+  icon?: string;
+  order?: number;
+  action?: string;
+  args?: AetherJsonObject;
+  selected?: boolean;
+}
+
+export interface AetherMessageTypeDefinition {
+  type: string;
+  title?: string;
+  icon?: string;
+  render:
+    | AetherView
+    | ((context: AetherRenderContext & { message: AetherJsonObject }) => AetherView | Promise<AetherView>);
+}
+
 export type AetherComponentMode =
   | "before"
   | "after"
@@ -145,6 +201,9 @@ export interface AetherExtensionAPI {
     clear(): void;
     snapshot(): AetherJsonObject;
   };
+  readonly messages: {
+    append(type: string, payload?: AetherJsonObject, text?: string): Promise<AetherJsonObject>;
+  };
   registerSurface(
     slot: string,
     definition:
@@ -164,6 +223,12 @@ export interface AetherExtensionAPI {
       ) => AetherView | Promise<AetherView>),
   ): () => void;
   registerPage(definition: AetherPageDefinition): () => void;
+  registerSettings(definition: AetherSettingsDefinition): () => void;
+  registerSettingsPage(definition: AetherSettingsDefinition): () => void;
+  registerComposerMenuItem(definition: AetherComposerMenuItemDefinition): () => void;
+  registerComposerMenu(definition: AetherComposerMenuItemDefinition): () => void;
+  registerMessageType(definition: AetherMessageTypeDefinition): () => void;
+  registerCustomMessage(definition: AetherMessageTypeDefinition): () => void;
   registerAction(
     id: string,
     handler: (

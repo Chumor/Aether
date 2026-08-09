@@ -438,6 +438,7 @@ fun SettingsScreen(
     developerTermuxReadyOverride: Boolean?,
     installedSkills: List<com.zhousl.aether.data.InstalledSkill>,
     installedPiExtensions: List<InstalledPiExtension>,
+    hasLoadedInstalledPiExtensions: Boolean,
     nativeModState: AetherNativeModState,
     piExtensionCatalog: List<PiExtensionCatalogEntry>,
     isLoadingPiExtensions: Boolean,
@@ -817,6 +818,7 @@ fun SettingsScreen(
                 showRuntimeDefaults = termuxSetupState.isReady && alpineSetupState.isReady,
                 skillCount = installedSkills.size,
                 piExtensionCount = installedPiExtensions.size,
+                piExtensionsLoaded = hasLoadedInstalledPiExtensions,
                 mcpServerCount = mcpServers.size,
                 scheduledTaskCount = scheduledTasks.size,
                 statisticsSummary = buildSettingsStatisticsSummary(usageStatisticsSnapshots),
@@ -1031,6 +1033,7 @@ fun SettingsScreen(
 
             SettingsPage.Extensions -> PiExtensionsPage(
                 installedExtensions = installedPiExtensions,
+                hasLoadedInstalledExtensions = hasLoadedInstalledPiExtensions,
                 nativeModState = nativeModState,
                 catalog = piExtensionCatalog,
                 isLoading = isLoadingPiExtensions,
@@ -1307,6 +1310,7 @@ private fun SettingsHub(
     showRuntimeDefaults: Boolean,
     skillCount: Int,
     piExtensionCount: Int,
+    piExtensionsLoaded: Boolean,
     mcpServerCount: Int,
     scheduledTaskCount: Int,
     statisticsSummary: String,
@@ -1401,10 +1405,14 @@ private fun SettingsHub(
                 SettingsNavRow(
                     iconPainter = painterResource(R.drawable.pi_logo_on_light),
                     title = stringResource(R.string.settings_pi_extensions),
-                    subtitle = stringResource(
-                        R.string.settings_pi_extensions_count_configured,
-                        piExtensionCount,
-                    ),
+                    subtitle = if (piExtensionsLoaded) {
+                        stringResource(
+                            R.string.settings_pi_extensions_count_configured,
+                            piExtensionCount,
+                        )
+                    } else {
+                        stringResource(R.string.settings_loading_installed_extensions)
+                    },
                     onClick = { onNavigate(SettingsPage.Extensions) },
                 )
                 CardDivider()
@@ -3475,6 +3483,7 @@ private fun ScriptExtensionStatusCard(
 @Composable
 private fun PiExtensionsPage(
     installedExtensions: List<InstalledPiExtension>,
+    hasLoadedInstalledExtensions: Boolean,
     nativeModState: AetherNativeModState,
     catalog: List<PiExtensionCatalogEntry>,
     isLoading: Boolean,
@@ -3650,7 +3659,24 @@ private fun PiExtensionsPage(
             }
 
             else -> {
-                if (installedExtensions.isEmpty()) {
+                if (!hasLoadedInstalledExtensions) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                            color = AetherPrimary,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            stringResource(R.string.settings_loading_installed_extensions),
+                            color = AetherOnSurfaceVariant,
+                        )
+                    }
+                } else if (installedExtensions.isEmpty()) {
                     SettingsCardGroup {
                         Column(
                             modifier = Modifier.fillMaxWidth().padding(24.dp),

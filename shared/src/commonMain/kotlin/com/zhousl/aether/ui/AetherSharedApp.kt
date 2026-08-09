@@ -533,6 +533,8 @@ internal data class SharedChatMessage(
     val providerId: String = "",
     val modelId: String = "",
     val providerPayloadJson: String = "",
+    val customType: String = "",
+    val customPayloadJson: String = "",
     val thoughtDurationMillis: Long = 0,
     val responseDurationMillis: Long = 0,
     val firstTokenLatencyMillis: Long? = null,
@@ -1333,6 +1335,16 @@ fun AetherSharedApp(
             put("selected_model_key", state.selectedModelKey)
             put("reasoning_effort", sharedAppSettings.reasoningEffort)
             put("message_count", state.messages.size)
+            put("custom_messages", JsonArray(state.messages.filter { it.customType.isNotBlank() }.map { message ->
+                buildJsonObject {
+                    put("id", message.id)
+                    put("type", message.customType)
+                    put("text", message.text)
+                    put("payload", runCatching {
+                        Json.parseToJsonElement(message.customPayloadJson) as? JsonObject
+                    }.getOrNull() ?: JsonObject(emptyMap()))
+                }
+            }))
         }
 
         fun resolveProviderForModel(preferredKey: String, fallbackKey: String = ""): LlmProviderConfig? {
@@ -2176,6 +2188,21 @@ fun AetherSharedApp(
                             else -> startChatTurn(text)
                         }
                         buildJsonObject { put("submitted", true); put("mode", mode.ifBlank { "send" }) }
+                    }
+                    "app.appendCustomMessage" -> withContext(Dispatchers.Main) {
+                        val type = args["type"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
+                        require(type.isNotBlank()) { "Custom messages require a type." }
+                        val payload = args["payload"] as? JsonObject ?: JsonObject(emptyMap())
+                        val text = args["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                        currentSession.messages += SharedChatMessage(
+                            text = text,
+                            fromUser = false,
+                            customType = type,
+                            customPayloadJson = payload.toString(),
+                            assistantActionsHidden = true,
+                        )
+                        persistSession(currentSession)
+                        buildJsonObject { put("appended", true); put("type", type) }
                     }
                     "app.newChat" -> withContext(Dispatchers.Main) {
                         createNewSession()
@@ -6220,6 +6247,7 @@ private fun SharedComposerPlusMenu(
     onSkillSelected: (String, Boolean) -> Unit,
     onMcpServerSelected: (String, Boolean) -> Unit,
 ) {
+    val extensionUiController = LocalSharedAetherExtensionUiController.current
     SharedAnimatedPopupHost(visible = visible) { visibility ->
         Popup(
             alignment = Alignment.BottomStart,
@@ -6309,6 +6337,35 @@ private fun SharedComposerPlusMenu(
                                     onMcpServerSelected(server.id, !selected)
                                 },
                             )
+                        }
+                        LocalSharedAetherExtensionUiController.current
+                            ?.snapshot
+                            ?.composerMenuItems
+                            .orEmpty()
+                            .forEach { item ->
+                                SharedComposerPlusMenuRow(
+                                    title = item.title,
+                                    icon = Icons.Rounded.Extension,
+                                    iconTint = AetherPrimary,
+                                    selected = item.selected,
+                                    onClick = {
+                                        onDismiss()
+                                        extensionUiController?.onAction?.invoke(
+                                            item.extensionId,
+                                            item.action.ifBlank { item.localId },
+                                            item.args,
+                                        )
+                                    },
+                                )
+                            }
+                        if (extensionUiController
+                                ?.snapshot
+                                ?.surfacesAt(SharedExtensionSlotChatComposerPlusMenu)
+                                .orEmpty()
+                                .isNotEmpty()
+                        ) {
+                            Spacer(Modifier.height(6.dp))
+                            SharedAetherExtensionSlot(SharedExtensionSlotChatComposerPlusMenu)
                         }
                     }
                 }
@@ -6892,6 +6949,8 @@ private fun SharedChatMessage.toPersistedMessage(): PersistedChatMessage =
         providerId = providerId,
         modelId = modelId,
         providerPayloadJson = providerPayloadJson,
+        customType = customType,
+        customPayloadJson = customPayloadJson,
         thoughtDurationMillis = thoughtDurationMillis,
         responseDurationMillis = responseDurationMillis,
         firstTokenLatencyMillis = firstTokenLatencyMillis,
@@ -7088,7 +7147,9 @@ internal fun PersistedChatMessage.toSharedChatMessage(): SharedChatMessage {
     completedAtMillis = completedAtMillis,
     providerId = providerId,
     modelId = modelId,
-    providerPayloadJson = providerPayloadJson,
+        providerPayloadJson = providerPayloadJson,
+        customType = customType,
+        customPayloadJson = customPayloadJson,
     thoughtDurationMillis = thoughtDurationMillis,
     responseDurationMillis = responseDurationMillis,
     firstTokenLatencyMillis = firstTokenLatencyMillis,

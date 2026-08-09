@@ -27,14 +27,23 @@ export interface AetherSurfaceDefinition {
   tree?: AetherView;
 }
 
-export interface AetherPageDefinition extends AetherSurfaceDefinition {
-  id: string;
-  title: string;
-  subtitle?: string;
-  icon?: string;
-}
-
-export type AetherSettingType = "text" | "number" | "toggle" | "select" | "slider";
+export type AetherSettingType =
+  | "text"
+  | "password"
+  | "textarea"
+  | "number"
+  | "toggle"
+  | "select"
+  | "dropdown"
+  | "segmented"
+  | "tab"
+  | "tabs"
+  | "slider"
+  | "button"
+  | "link"
+  | "label"
+  | "divider"
+  | "spacer";
 
 export interface AetherSettingOption {
   value: string;
@@ -43,7 +52,7 @@ export interface AetherSettingOption {
 
 export interface AetherSettingDefinition {
   id: string;
-  label: string;
+  label?: string;
   description?: string;
   type?: AetherSettingType;
   default?: string | number | boolean;
@@ -52,6 +61,14 @@ export interface AetherSettingDefinition {
   min?: number;
   max?: number;
   step?: number;
+  action?: string;
+  args?: AetherJsonObject;
+  url?: string;
+  icon?: string;
+  tone?: "primary" | "neutral" | "danger";
+  enabled?: boolean;
+  multiline?: boolean;
+  secret?: boolean;
 }
 
 export interface AetherSettingsSection {
@@ -222,7 +239,6 @@ export interface AetherExtensionAPI {
         context: AetherRenderContext,
       ) => AetherView | Promise<AetherView>),
   ): () => void;
-  registerPage(definition: AetherPageDefinition): () => void;
   registerSettings(definition: AetherSettingsDefinition): () => void;
   registerSettingsPage(definition: AetherSettingsDefinition): () => void;
   registerComposerMenuItem(definition: AetherComposerMenuItemDefinition): () => void;

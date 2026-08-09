@@ -192,7 +192,7 @@ import com.zhousl.aether.data.SharedInstalledSkill
 import com.zhousl.aether.data.generateSharedQuickActionLabel
 import com.zhousl.aether.data.SharedAetherExtensionManager
 import com.zhousl.aether.data.SharedAetherExtensionSnapshot
-import com.zhousl.aether.data.SharedAetherExtensionPage
+import com.zhousl.aether.data.SharedAetherExtensionSettingsPage
 import com.zhousl.aether.data.SharedExtensionStateStore
 import com.zhousl.aether.data.SharedProviderModelCatalogClient
 import com.zhousl.aether.data.SharedModelCatalogInfo
@@ -709,6 +709,7 @@ private enum class SharedSettingsKind {
     Personalization,
     WebTools,
     Reliability,
+    ExtensionSettings,
     Skills,
     Extensions,
     Mcp,
@@ -723,16 +724,20 @@ private data class SettingsDestination(
     val title: String,
     val subtitle: String,
     val kind: SharedSettingsKind = SharedSettingsKind.Generic,
+    val extensionSettingsId: String = "",
 )
 
 private val SharedSettingsDestinationSaver = Saver<SettingsDestination?, String>(
-    save = { it?.kind?.name.orEmpty() },
-    restore = { savedKind ->
-        savedKind.takeIf(String::isNotBlank)?.let { kindName ->
+    save = { destination ->
+        destination?.let { it.kind.name + "\n" + it.extensionSettingsId }.orEmpty()
+    },
+    restore = { savedDestination ->
+        savedDestination.takeIf(String::isNotBlank)?.let { encoded ->
             SettingsDestination(
                 title = "",
                 subtitle = "",
-                kind = SharedSettingsKind.valueOf(kindName),
+                kind = SharedSettingsKind.valueOf(encoded.substringBefore('\n')),
+                extensionSettingsId = encoded.substringAfter('\n', ""),
             )
         }
     },
@@ -945,7 +950,6 @@ fun AetherSharedApp(
         val activeMcpServerIds = currentSession.activeMcpServerIds
         val backgroundLeases = remember { mutableMapOf<String, BackgroundExecutionLease>() }
         var extensionSnapshot by remember { mutableStateOf(SharedAetherExtensionSnapshot()) }
-        var activeExtensionPageId by rememberSaveable { mutableStateOf("") }
         var transientMessage by remember { mutableStateOf("") }
         var onboardingReplayMode by remember { mutableStateOf(false) }
         var onboardingEntryStage by remember { mutableStateOf(OnboardingStage.Landing) }
@@ -2372,7 +2376,6 @@ fun AetherSharedApp(
                         .onSuccess { extensionSnapshot = it }
                 }
             },
-            onOpenPage = { activeExtensionPageId = it },
         )
         val pauseBeforeDeletingSessionMessage =
             stringResource(Res.string.message_pause_before_deleting_session)
@@ -2538,13 +2541,7 @@ fun AetherSharedApp(
                 dismissRequestToken = tabletSettingsDismissRequest,
             )
         }
-        val activeExtensionPage = extensionSnapshot.pages.firstOrNull { it.id == activeExtensionPageId }
-        if (activeExtensionPage != null) {
-            SharedAetherExtensionPageScreen(
-                page = activeExtensionPage,
-                onBack = { activeExtensionPageId = "" },
-            )
-        } else AnimatedContent(
+        AnimatedContent(
             targetState = route,
             transitionSpec = {
                 if (!capabilities.layeredScreenTransitions) {
@@ -2947,8 +2944,6 @@ fun AetherSharedApp(
                         }
                     },
                     onExportSession = ::exportSession,
-                    extensionPages = extensionSnapshot.pages,
-                    onExtensionPageSelected = { activeExtensionPageId = it },
                     onOpenSettings = {
                         if (useTabletLayout) tabletSettingsVisible = true
                         else route = SharedRoute.Settings
@@ -4476,8 +4471,6 @@ private fun SharedChatScreen(
     onRenameSession: (String, String) -> Unit,
     onDeleteSession: (String) -> Unit,
     onExportSession: (String) -> Unit,
-    extensionPages: List<SharedAetherExtensionPage>,
-    onExtensionPageSelected: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onDrawerOpened: () -> Unit,
     drawerOpenedEventRegistered: Boolean,
@@ -4750,17 +4743,6 @@ private fun SharedChatScreen(
                 extraContent = { dismissSearch ->
                     SharedAetherExtensionSlot(SharedExtensionSlotDrawer)
                     SharedAetherExtensionSlot(SharedExtensionSlotDrawerListEnd)
-                    extensionPages.forEach { page ->
-                        SharedAetherExtensionPageLauncher(
-                            page = page,
-                            onClick = {
-                                dismissSearch()
-                                scope.launch { drawerState.close() }
-                                onExtensionPageSelected(page.id)
-                            },
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                    }
                 },
             )
         },
@@ -7263,6 +7245,10 @@ private fun SharedSettingsScreen(
     onTransientMessage: (String) -> Unit,
     dismissRequestToken: Int = 0,
 ) {
+    val registeredExtensionSettings = LocalSharedAetherExtensionUiController.current
+        ?.snapshot
+        ?.settings
+        .orEmpty()
     val terminalTitle = stringResource(Res.string.terminal_title)
     val terminalSubtitle = stringResource(Res.string.terminal_subtitle)
     val alpineTitle = stringResource(Res.string.alpine_title)
@@ -7358,12 +7344,18 @@ private fun SharedSettingsScreen(
                 onSave = ::updatePendingSettings,
                 onBack = { destination = null },
             )
-            SharedSettingsKind.Reliability -> SharedReliabilitySettingsDetail(
+    SharedSettingsKind.Reliability -> SharedReliabilitySettingsDetail(
                 settings = pendingSettings,
                 capabilities = capabilities,
                 onSave = ::updatePendingSettings,
                 onBack = { destination = null },
             )
+            SharedSettingsKind.ExtensionSettings -> {
+                val page = registeredExtensionSettings.firstOrNull { it.id == selected.extensionSettingsId }
+                if (page != null) {
+                    SharedAetherExtensionSettingsDetail(page = page, onBack = { destination = null })
+                }
+            }
             SharedSettingsKind.Skills -> SharedSkillsSettingsDetail(
                 skillManager = skillManager,
                 runtime = runtime,
@@ -7656,6 +7648,27 @@ private fun SharedSettingsScreen(
                                     reliability.title,
                                     reliability.subtitle,
                                 ) { destination = reliability }
+                            }
+                        }
+                        if (registeredExtensionSettings.isNotEmpty()) {
+                            item(key = "settings-extension-pages") {
+                                SettingsCardGroup {
+                                    registeredExtensionSettings.forEachIndexed { index, page ->
+                                        if (index > 0) CardDivider()
+                                        SettingsNavRow(
+                                            extensionIcon(page.icon),
+                                            page.title,
+                                            page.subtitle.ifBlank { page.extensionName },
+                                        ) {
+                                            destination = SettingsDestination(
+                                                title = page.title,
+                                                subtitle = page.subtitle,
+                                                kind = SharedSettingsKind.ExtensionSettings,
+                                                extensionSettingsId = page.id,
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                         item(key = "settings-tools") {

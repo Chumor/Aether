@@ -16,8 +16,10 @@ export const activateAether = defineAetherExtension((aether) => {
 });
 ```
 
-Extensions can register native-looking settings without building a separate
-screen. Values are stored per extension and restored across reloads:
+Extensions register data-only settings schemas. Aether renders them with the
+same scaffold, cards, spacing, typography, and controls as its built-in
+Settings pages, in a dedicated group between Reliability and Agent Skills.
+Values are stored per extension, page, and setting and restored across reloads:
 
 ```ts
 aether.registerSettings({
@@ -36,6 +38,11 @@ aether.registerSettings({
   }],
 });
 ```
+
+Supported controls are `text`, `password`, `textarea`, `number`, `toggle`,
+`select`/`dropdown`, `segmented`, `tab`/`tabs`, `slider`, `button`, `link`,
+`label`, `divider`, and `spacer`. Extensions do not provide page padding, card shapes, typography,
+or other page-level styling.
 
 The chat composer plus menu and transcript support extension-owned entries:
 

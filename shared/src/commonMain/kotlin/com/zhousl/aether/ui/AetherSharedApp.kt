@@ -197,6 +197,7 @@ import com.zhousl.aether.data.SharedExtensionStateStore
 import com.zhousl.aether.data.SharedProviderModelCatalogClient
 import com.zhousl.aether.data.SharedModelCatalogInfo
 import com.zhousl.aether.data.SharedThinkingCatalogCache
+import com.zhousl.aether.data.ModelsDevThinkingCatalogSource
 import com.zhousl.aether.data.PiProviderCatalog
 import com.zhousl.aether.data.ProviderAuthMethod
 import com.zhousl.aether.data.AetherPrivacyPolicyUrl
@@ -208,7 +209,6 @@ import com.zhousl.aether.data.shouldMarkOnboardingCompleted
 import com.zhousl.aether.data.shouldRevealFollowUpTourCard
 import com.zhousl.aether.data.withModelOption
 import com.zhousl.aether.data.toJsonObject
-import com.zhousl.aether.data.providerModelsFromCatalog
 import com.zhousl.aether.data.sharedThinkingCatalogKey
 import com.zhousl.aether.data.platformRandomUuid
 import com.zhousl.aether.data.platformCurrentTimeMillis
@@ -1185,10 +1185,12 @@ fun AetherSharedApp(
                 val persistedThinkingKeys = persistedModelOptions.mapTo(mutableSetOf()) { option ->
                     sharedThinkingCatalogKey(option.piProviderId, option.modelId)
                 }
-                thinkingLevelsByProviderModel = persisted.thinkingCatalogCache.levelsByProviderModel
+                thinkingLevelsByProviderModel = persisted.thinkingCatalogCache
+                    .takeIf { it.source == ModelsDevThinkingCatalogSource }
+                    ?.levelsByProviderModel
+                    .orEmpty()
                     .filterKeys(persistedThinkingKeys::contains)
-                thinkingLevelClampsByProviderModel = persisted.thinkingCatalogCache.clampsByProviderModel
-                    .filterKeys(persistedThinkingKeys::contains)
+                thinkingLevelClampsByProviderModel = emptyMap()
                 if (currentSession.isDraft) {
                     currentSession.selectedModelKey = resolveSharedConversationModelKey(
                         selectedModelKey = currentSession.selectedModelKey,
@@ -1275,8 +1277,8 @@ fun AetherSharedApp(
                 sharedThinkingCatalogKey(option.piProviderId, option.modelId)
             }
             val cache = SharedThinkingCatalogCache(
+                source = ModelsDevThinkingCatalogSource,
                 levelsByProviderModel = thinkingLevelsByProviderModel.filterKeys(validKeys::contains),
-                clampsByProviderModel = thinkingLevelClampsByProviderModel.filterKeys(validKeys::contains),
             )
             withContext(Dispatchers.Default) {
                 settingsStore?.saveThinkingCatalogCache(cache)
@@ -1290,35 +1292,7 @@ fun AetherSharedApp(
                 val publicLevels = modelCatalogClient.fetchThinkingLevels(options)
                 if (publicLevels.isNotEmpty()) {
                     thinkingLevelsByProviderModel = thinkingLevelsByProviderModel + publicLevels
-                    persistThinkingCatalogCache()
-                }
-
-                val providerConfigIds = options.mapTo(mutableSetOf(), ProviderModelOption::providerConfigId)
-                val configs = providerConfigs.filter { it.id in providerConfigIds }
-                val runtimeCatalog = runSharedAppCatching {
-                    bridgeClient.listProviders(startIfNeeded = false)
-                }.getOrNull()
-                if (runtimeCatalog != null && configs.isNotEmpty()) {
-                    val runtimeResult = withContext(Dispatchers.Default) {
-                        val levels = mutableMapOf<String, List<String>>()
-                        val clamps = mutableMapOf<String, Map<String, String>>()
-                        configs.distinctBy(LlmProviderConfig::piProviderId).forEach { config ->
-                            val result = providerModelsFromCatalog(runtimeCatalog, config.piProviderId)
-                            result.thinkingLevelsByModel.forEach { (modelId, supported) ->
-                                levels[sharedThinkingCatalogKey(config.piProviderId, modelId)] = supported
-                            }
-                            result.thinkingLevelClampsByModel.forEach { (modelId, supported) ->
-                                clamps[sharedThinkingCatalogKey(config.piProviderId, modelId)] = supported
-                            }
-                        }
-                        levels to clamps
-                    }
-                    val refreshedKeys = options.mapTo(mutableSetOf()) { option ->
-                        sharedThinkingCatalogKey(option.piProviderId, option.modelId)
-                    }
-                    thinkingLevelsByProviderModel = thinkingLevelsByProviderModel + runtimeResult.first
-                    thinkingLevelClampsByProviderModel =
-                        thinkingLevelClampsByProviderModel.filterKeys { it !in refreshedKeys } + runtimeResult.second
+                    thinkingLevelClampsByProviderModel = emptyMap()
                     persistThinkingCatalogCache()
                 }
                 true
@@ -3681,7 +3655,7 @@ private fun SharedProviderSetupStep(
                 fetchingModels = true
                 scope.launch {
                     try {
-                        val result = modelCatalogClient.fetchModels(config, bridgeClient::listProviders)
+                        val result = modelCatalogClient.fetchModels(config)
                         callback(result.models)
                         result.error?.let { error ->
                             onTransientMessage(fetchModelsFailedTemplate.replace(fetchErrorPlaceholder, error))

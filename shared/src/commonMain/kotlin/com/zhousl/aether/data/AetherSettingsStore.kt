@@ -41,8 +41,18 @@ class AetherSettingsStore(
     suspend fun load(): SharedPersistedSettings {
         val preferences = dataStore.data.first()
         val defaults = AppSettings()
+        // The first launch follows the platform language once, then keeps the
+        // persisted choice stable even if the system language changes later.
+        val storedLanguage = preferences[Language]
+        val initialLanguage = AppLanguage.fromStorage(
+            storedLanguage ?: preferences[AppSettingsJson]
+                ?.let { parseAppSettings(it, defaults).language.storageValue },
+        )
+        if (storedLanguage != initialLanguage.storageValue) {
+            dataStore.edit { it[Language] = initialLanguage.storageValue }
+        }
         val legacySettings = defaults.copy(
-            language = AppLanguage.fromStorage(preferences[Language]),
+            language = initialLanguage,
             themeMode = AppThemeMode.fromStorage(preferences[ThemeMode]),
             systemPrompt = preferences[SystemPrompt] ?: defaults.systemPrompt,
             reasoningEffort = normalizeReasoningEffort(preferences[ReasoningEffort]),

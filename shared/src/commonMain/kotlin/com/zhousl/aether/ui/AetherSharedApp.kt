@@ -104,6 +104,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -113,6 +114,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -193,6 +195,7 @@ import com.zhousl.aether.data.generateSharedQuickActionLabel
 import com.zhousl.aether.data.SharedAetherExtensionManager
 import com.zhousl.aether.data.SharedAetherExtensionSnapshot
 import com.zhousl.aether.data.SharedAetherExtensionSettingsPage
+import com.zhousl.aether.data.SharedPiExtensionUiRequest
 import com.zhousl.aether.data.SharedExtensionStateStore
 import com.zhousl.aether.data.SharedProviderModelCatalogClient
 import com.zhousl.aether.data.SharedModelCatalogInfo
@@ -1334,9 +1337,35 @@ fun AetherSharedApp(
         fun extensionContext(state: SharedSessionUiState = currentSession): JsonObject = buildJsonObject {
             put("screen", route.name.lowercase())
             put("session_id", state.id)
+            put("session_title", state.title)
             put("draft_input", state.input)
             put("is_generating", state.isWorking)
+            put("is_running", state.isWorking)
+            put("is_editing", state.editingMessageId.isNotBlank())
             put("selected_model_key", state.selectedModelKey)
+            put("agent_mode_enabled", false)
+            put("selected_skill_ids", JsonArray(state.selectedSkillIds.map(::JsonPrimitive)))
+            put("selected_mcp_server_ids", JsonArray(state.activeMcpServerIds.map(::JsonPrimitive)))
+            put(
+                "default_skill_ids",
+                JsonArray(sharedAppSettings.defaultSelectedSkillIds.map(::JsonPrimitive)),
+            )
+            put("language", sharedAppSettings.language.storageValue)
+            put("theme", sharedAppSettings.themeMode.storageValue)
+            put("extension_count", extensionSnapshot.extensions.size)
+            put("skill_count", installedSkills.count(SharedInstalledSkill::isEnabled))
+            put("mcp_server_count", mcpServers.count(SharedMcpServerConfig::enabled))
+            put("skills", JsonArray(installedSkills.map { skill ->
+                buildJsonObject {
+                    put("id", skill.id)
+                    put("name", skill.name)
+                    put("description", skill.description)
+                    put("action_label", skill.actionLabel)
+                    put("enabled", skill.isEnabled)
+                    put("selected", skill.id in state.selectedSkillIds)
+                    put("default_selected", skill.id in sharedAppSettings.defaultSelectedSkillIds)
+                }
+            }))
             put("reasoning_effort", sharedAppSettings.reasoningEffort)
             put("message_count", state.messages.size)
             put("custom_messages", JsonArray(state.messages.filter { it.customType.isNotBlank() }.map { message ->
@@ -2168,7 +2197,9 @@ fun AetherSharedApp(
 
         suspend fun handleSharedExtensionHostCall(method: String, args: JsonObject): JsonObject =
             when (method) {
-                    "app.getState", "state.get" -> extensionContext()
+                    "app.getState", "state.get" -> withContext(Dispatchers.Main) {
+                        extensionContext()
+                    }
                     "app.setDraftInput" -> withContext(Dispatchers.Main) {
                         currentSession.input = args["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
                         buildJsonObject { put("updated", true) }
@@ -2265,14 +2296,16 @@ fun AetherSharedApp(
                         transientMessage = args["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
                         buildJsonObject { put("notified", transientMessage.isNotBlank()) }
                     }
-                    "settings.get" -> buildJsonObject {
-                        put("system_prompt", sharedAppSettings.systemPrompt)
-                        put("reasoning_effort", sharedAppSettings.reasoningEffort)
-                        put("theme", sharedAppSettings.themeMode.storageValue)
-                        put("language", sharedAppSettings.language.storageValue)
-                        put("tavily_api_key", sharedAppSettings.tavilyApiKey)
-                        put("tavily_base_url", sharedAppSettings.tavilyBaseUrl)
-                        put("provider_configs", JsonArray(providerConfigs.map { it.toJsonObject() }))
+                    "settings.get" -> withContext(Dispatchers.Main) {
+                        buildJsonObject {
+                            put("system_prompt", sharedAppSettings.systemPrompt)
+                            put("reasoning_effort", sharedAppSettings.reasoningEffort)
+                            put("theme", sharedAppSettings.themeMode.storageValue)
+                            put("language", sharedAppSettings.language.storageValue)
+                            put("tavily_api_key", sharedAppSettings.tavilyApiKey)
+                            put("tavily_base_url", sharedAppSettings.tavilyBaseUrl)
+                            put("provider_configs", JsonArray(providerConfigs.map { it.toJsonObject() }))
+                        }
                     }
                     "settings.patch" -> withContext(Dispatchers.Main) {
                         args["system_prompt"]?.jsonPrimitive?.contentOrNull?.let {
@@ -2329,6 +2362,7 @@ fun AetherSharedApp(
         val extensionManager = remember(bridgeClient) {
             SharedAetherExtensionManager(bridgeClient, ::handleSharedExtensionHostCall)
         }
+        val piExtensionUiRequest by extensionManager.piUiRequest.collectAsState()
         val extensionDraftRefreshJob = remember(extensionManager) { SharedNonSnapshotJobSlot() }
 
         fun scheduleExtensionDraftRefresh() {
@@ -2338,8 +2372,6 @@ fun AetherSharedApp(
                 kotlinx.coroutines.delay(250)
                 runSharedAppCatching { extensionManager.refresh(extensionContext()) }
                     .onSuccess { extensionSnapshot = it }
-                extensionManager.notification.takeIf(String::isNotBlank)
-                    ?.let { transientMessage = it }
             }
         }
 
@@ -2349,6 +2381,42 @@ fun AetherSharedApp(
 
         LaunchedEffect(extensionManager) {
             extensionManagerRef = extensionManager
+        }
+
+        LaunchedEffect(extensionManager, capabilities.scriptExtensions) {
+            if (!capabilities.scriptExtensions) return@LaunchedEffect
+            while (true) {
+                try {
+                    extensionManager.subscribe {
+                        val context = withContext(Dispatchers.Main) { extensionContext() }
+                        val refreshed = extensionManager.refresh(context)
+                        withContext(Dispatchers.Main) { extensionSnapshot = refreshed }
+                    }
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (failure: Throwable) {
+                    SharedDiagnosticLogger.event(
+                        category = "aether_extension",
+                        event = "subscription_failed",
+                        level = "warn",
+                        details = mapOf("error" to failure.message.orEmpty()),
+                    )
+                    kotlinx.coroutines.delay(2_000)
+                }
+            }
+        }
+
+        LaunchedEffect(extensionManager, capabilities.scriptExtensions) {
+            if (capabilities.scriptExtensions) {
+                runSharedAppCatching { extensionManager.reload(extensionContext()) }
+                    .onSuccess { extensionSnapshot = it }
+            }
+        }
+
+        LaunchedEffect(extensionManager) {
+            extensionManager.notifications.collect { notification ->
+                transientMessage = notification.message
+            }
         }
 
         LaunchedEffect(
@@ -2362,7 +2430,6 @@ fun AetherSharedApp(
             if (capabilities.scriptExtensions && route != SharedRoute.Onboarding) {
                 runSharedAppCatching { extensionManager.refresh(extensionContext()) }
                     .onSuccess { extensionSnapshot = it }
-                extensionManager.notification.takeIf(String::isNotBlank)?.let { transientMessage = it }
             }
         }
 
@@ -2381,12 +2448,21 @@ fun AetherSharedApp(
             stringResource(Res.string.message_pause_before_deleting_session)
 
         SharedAetherExtensionUiProvider(extensionController) {
+        Box(Modifier.fillMaxSize()) {
+        SharedAetherExtensionComponentHost(
+            target = SharedExtensionComponentAppContent,
+            modifier = Modifier.fillMaxSize(),
+        ) {
         BoxWithConstraints {
         val useTabletLayout = shouldUseSharedTabletLayout(
             supportsTabletLayout = capabilities.supportsTabletLayout,
             availableWidthDp = maxWidth.value,
         )
         val settingsContent: @Composable () -> Unit = {
+            SharedAetherExtensionComponentHost(
+                target = SharedExtensionComponentSettingsScreen,
+                modifier = Modifier.fillMaxSize(),
+            ) {
             SharedSettingsScreen(
                 capabilities = capabilities,
                 runtime = runtime,
@@ -2540,6 +2616,7 @@ fun AetherSharedApp(
                 onTransientMessage = { transientMessage = it },
                 dismissRequestToken = tabletSettingsDismissRequest,
             )
+            }
         }
         AnimatedContent(
             targetState = route,
@@ -2639,7 +2716,11 @@ fun AetherSharedApp(
                         route = returnRoute
                     },
                 )
-                SharedRoute.Chat -> Box(Modifier.fillMaxSize()) {
+                SharedRoute.Chat -> SharedAetherExtensionComponentHost(
+                    target = SharedExtensionComponentChatScreen,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                Box(Modifier.fillMaxSize()) {
                     SharedChatScreen(
                     sessions = sessions.map { summary ->
                         val state = sessionStates[summary.id]
@@ -2970,8 +3051,11 @@ fun AetherSharedApp(
                         }
                     }
                 }
+                }
                 SharedRoute.Settings -> settingsContent()
             }
+        }
+        }
         }
         SharedAetherExtensionOverlay(Modifier.fillMaxSize())
         if (transientMessage.isNotBlank()) {
@@ -3013,6 +3097,16 @@ fun AetherSharedApp(
                 onBack = { alpineSetupPreviewVisible = false },
                 onClose = { alpineSetupPreviewVisible = false },
                 onContinue = { alpineSetupPreviewVisible = false },
+            )
+        }
+        piExtensionUiRequest?.let { request ->
+            SharedPiExtensionUiDialog(
+                request = request,
+                onResult = { value ->
+                    appScope.launch {
+                        extensionManager.respondToPiExtensionUiRequest(request.callId, value)
+                    }
+                },
             )
         }
         }
@@ -3087,6 +3181,70 @@ internal class SharedDrawerOpenedEventGate {
         }
         return false
     }
+}
+
+@Composable
+private fun SharedPiExtensionUiDialog(
+    request: SharedPiExtensionUiRequest,
+    onResult: (JsonPrimitive?) -> Unit,
+) {
+    var input by remember(request.callId) { mutableStateOf("") }
+    val dismissValue = if (request.method == "pi_extension_confirm") JsonPrimitive(false) else null
+    AlertDialog(
+        onDismissRequest = { onResult(dismissValue) },
+        containerColor = AetherSurface,
+        titleContentColor = AetherOnSurface,
+        textContentColor = AetherOnSurfaceVariant,
+        title = { Text(request.title) },
+        text = {
+            when (request.method) {
+                "pi_extension_select" -> Column {
+                    request.options.forEach { option ->
+                        TextButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { onResult(JsonPrimitive(option)) },
+                        ) {
+                            Text(option, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+
+                "pi_extension_input" -> OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = request.placeholder.takeIf(String::isNotBlank)?.let { placeholder ->
+                        { Text(placeholder) }
+                    },
+                    singleLine = true,
+                )
+
+                else -> Text(request.message)
+            }
+        },
+        confirmButton = {
+            if (request.method != "pi_extension_select") {
+                TextButton(
+                    onClick = {
+                        onResult(
+                            if (request.method == "pi_extension_confirm") {
+                                JsonPrimitive(true)
+                            } else {
+                                JsonPrimitive(input)
+                            },
+                        )
+                    },
+                ) {
+                    Text(stringResource(Res.string.common_done))
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { onResult(dismissValue) }) {
+                Text(stringResource(Res.string.common_cancel))
+            }
+        },
+    )
 }
 
 @Composable
@@ -5622,7 +5780,14 @@ private fun SharedComposer(
     val density = LocalDensity.current
     val selectedSkills = availableSkills.filter { it.id in selectedSkillIds }
     val selectedMcpServers = mcpServers.filter { it.id in activeMcpServerIds }
-    val hasComposerActionTray = selectedSkills.isNotEmpty() || selectedMcpServers.isNotEmpty() || chromeEnabled
+    val extensionUiController = LocalSharedAetherExtensionUiController.current
+    val hasExtensionActionTray = extensionUiController
+        ?.snapshot
+        ?.componentsAt(SharedExtensionComponentChatComposerActionTray)
+        .orEmpty()
+        .isNotEmpty()
+    val hasComposerActionTray = selectedSkills.isNotEmpty() || selectedMcpServers.isNotEmpty() ||
+        chromeEnabled || hasExtensionActionTray
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val composerPlaceholder = when {
         value.isNotBlank() -> ""
@@ -5942,15 +6107,20 @@ private fun SharedComposer(
                                 exit = fadeOut(tween(160, easing = SharedConversationMotionEasing)) +
                                     slideOutVertically(tween(220, easing = SharedConversationMotionEasing)) { -it / 3 },
                             ) {
-                                SharedComposerActionTray(
-                                    skills = selectedSkills,
-                                    mcpServers = selectedMcpServers,
-                                    chromeEnabled = chromeEnabled,
-                                    onRemoveSkill = { onSkillSelected(it, false) },
-                                    onRemoveMcpServer = { onMcpServerSelected(it, false) },
-                                    onRemoveChrome = { onChromeSelected(false) },
+                                SharedAetherExtensionComponentHost(
+                                    target = SharedExtensionComponentChatComposerActionTray,
                                     modifier = Modifier.fillMaxWidth(),
-                                )
+                                ) {
+                                    SharedComposerActionTray(
+                                        skills = selectedSkills,
+                                        mcpServers = selectedMcpServers,
+                                        chromeEnabled = chromeEnabled,
+                                        onRemoveSkill = { onSkillSelected(it, false) },
+                                        onRemoveMcpServer = { onMcpServerSelected(it, false) },
+                                        onRemoveChrome = { onChromeSelected(false) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -6293,18 +6463,23 @@ private fun SharedComposerPlusMenu(
                                 },
                             )
                         }
-                        availableSkills.forEach { skill ->
-                            val selected = skill.id in selectedSkillIds
-                            SharedComposerPlusMenuRow(
-                                title = skill.sharedQuickActionLabel(),
-                                icon = Icons.Rounded.Extension,
-                                iconTint = Color(0xFF9C6B2F),
-                                selected = selected,
-                                onClick = {
-                                    onDismiss()
-                                    onSkillSelected(skill.id, !selected)
-                                },
-                            )
+                        SharedAetherExtensionComponentHost(
+                            target = SharedExtensionComponentChatComposerSkillPicker,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            availableSkills.forEach { skill ->
+                                val selected = skill.id in selectedSkillIds
+                                SharedComposerPlusMenuRow(
+                                    title = skill.sharedQuickActionLabel(),
+                                    icon = Icons.Rounded.Extension,
+                                    iconTint = Color(0xFF9C6B2F),
+                                    selected = selected,
+                                    onClick = {
+                                        onDismiss()
+                                        onSkillSelected(skill.id, !selected)
+                                    },
+                                )
+                            }
                         }
                         mcpServers.forEach { server ->
                             val selected = server.id in activeMcpServerIds

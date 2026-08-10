@@ -2449,56 +2449,19 @@ class AetherViewModel(
             onResolved(levels.isNotEmpty())
             return
         }
-        val config = current.providerConfigs.firstOrNull { it.id == option.providerConfigId }
-            ?: return onResolved(false)
-        val definition = com.zhousl.aether.data.PiProviderCatalog.resolve(config.piProviderId)
-        if (!definition.isBuiltIn) {
-            onResolved(false)
-            return
-        }
-
         viewModelScope.launch {
             val publicThinkingLevels = ProviderModelCatalogClient.fetchPublicThinkingLevels(listOf(option))
             if (publicThinkingLevels.isNotEmpty()) {
                 _uiState.update { state ->
-                    state.copy(thinkingLevelsByProviderModel = state.thinkingLevelsByProviderModel + publicThinkingLevels)
+                    state.copy(
+                        thinkingLevelsByProviderModel =
+                            state.thinkingLevelsByProviderModel + publicThinkingLevels,
+                        thinkingLevelClampsByProviderModel =
+                            state.thinkingLevelClampsByProviderModel - publicThinkingLevels.keys,
+                    )
                 }
-                if (publicThinkingLevels[cacheKey].orEmpty().isNotEmpty()) {
-                    onResolved(true)
-                    return@launch
-                }
             }
-            val result = ProviderModelCatalogClient.fetchPiThinkingLevels(
-                config = config,
-                piKernelBridge = runtime.piKernelBridge,
-                startPiBridgeIfNeeded = false,
-            )
-            if (result.error != null) {
-                onResolved(false)
-                return@launch
-            }
-            _uiState.update { state ->
-                state.copy(
-                    thinkingLevelsByProviderModel = state.thinkingLevelsByProviderModel +
-                        result.thinkingLevelsByModel.mapKeys { (modelId, _) ->
-                            thinkingCatalogKey(config.piProviderId, modelId)
-                        },
-                    thinkingLevelClampsByProviderModel = state.thinkingLevelClampsByProviderModel +
-                        result.thinkingLevelClampsByModel.mapKeys { (modelId, _) ->
-                            thinkingCatalogKey(config.piProviderId, modelId)
-                        },
-                )
-            }
-            val selectedModelId = option.modelId.substringAfterLast('/').trim()
-            onResolved(
-                result.thinkingLevelsByModel.entries
-                    .firstOrNull { (modelId, _) ->
-                        modelId.substringAfterLast('/').trim() == selectedModelId
-                    }
-                    ?.value
-                    .orEmpty()
-                    .isNotEmpty(),
-            )
+            onResolved(publicThinkingLevels[cacheKey].orEmpty().isNotEmpty())
         }
     }
 
@@ -2513,34 +2476,15 @@ class AetherViewModel(
         val option = current.providerConfigs.availableModelOptions()
             .firstOrNull { it.key == selectedModelKey }
             ?: return
-        val config = current.providerConfigs.firstOrNull { it.id == option.providerConfigId }
-            ?: return
-        val definition = com.zhousl.aether.data.PiProviderCatalog.resolve(config.piProviderId)
-        if (!definition.isBuiltIn) return
-
         viewModelScope.launch {
             val publicThinkingLevels = ProviderModelCatalogClient.fetchPublicThinkingLevels(listOf(option))
-            if (publicThinkingLevels.isNotEmpty()) {
-                _uiState.update { state ->
-                    state.copy(thinkingLevelsByProviderModel = state.thinkingLevelsByProviderModel + publicThinkingLevels)
-                }
-            }
-            val result = ProviderModelCatalogClient.fetchPiThinkingLevels(
-                config = config,
-                piKernelBridge = runtime.piKernelBridge,
-                startPiBridgeIfNeeded = false,
-            )
-            if (result.error != null) return@launch
+            if (publicThinkingLevels.isEmpty()) return@launch
             _uiState.update { state ->
                 state.copy(
-                    thinkingLevelsByProviderModel = state.thinkingLevelsByProviderModel +
-                        result.thinkingLevelsByModel.mapKeys { (modelId, _) ->
-                            thinkingCatalogKey(config.piProviderId, modelId)
-                        },
-                    thinkingLevelClampsByProviderModel = state.thinkingLevelClampsByProviderModel +
-                        result.thinkingLevelClampsByModel.mapKeys { (modelId, _) ->
-                            thinkingCatalogKey(config.piProviderId, modelId)
-                        },
+                    thinkingLevelsByProviderModel =
+                        state.thinkingLevelsByProviderModel + publicThinkingLevels,
+                    thinkingLevelClampsByProviderModel =
+                        state.thinkingLevelClampsByProviderModel - publicThinkingLevels.keys,
                 )
             }
         }
@@ -2554,19 +2498,10 @@ class AetherViewModel(
         viewModelScope.launch {
             val result = ProviderModelCatalogClient.fetchModels(
                 config = config,
-                piKernelBridge = runtime.piKernelBridge,
             )
             _uiState.update { current ->
                 current.copy(
                     isFetchingModels = false,
-                    thinkingLevelsByProviderModel = current.thinkingLevelsByProviderModel +
-                        result.thinkingLevelsByModel.mapKeys { (modelId, _) ->
-                            thinkingCatalogKey(config.piProviderId, modelId)
-                        },
-                    thinkingLevelClampsByProviderModel = current.thinkingLevelClampsByProviderModel +
-                        result.thinkingLevelClampsByModel.mapKeys { (modelId, _) ->
-                            thinkingCatalogKey(config.piProviderId, modelId)
-                        },
                 )
             }
             onComplete(result.models)

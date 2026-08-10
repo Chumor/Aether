@@ -147,6 +147,7 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
                 let workspace = try workspaceURL()
                 let chromeRuntime = try chromeRuntimeURL()
                 let chromeDependencies = try chromeDependenciesURL()
+                try configureChinaApkMirror()
                 try guestCreateDirectories("/workspace")
                 try guestBind(hostPath: workspace.path, guestPath: "/workspace")
                 try guestCreateDirectories("/usr/lib/chromium")
@@ -1000,6 +1001,31 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
                 executable: false
             )
         }
+    }
+
+    private func configureChinaApkMirror() throws {
+        guard Locale.current.region?.identifier.caseInsensitiveCompare("CN") == .orderedSame else {
+            return
+        }
+        let repositoriesPath = "/etc/apk/repositories"
+        guard runtime.fileExists(repositoriesPath) else { return }
+        guard let original = try? runtime.readFile(repositoriesPath) else { return }
+        guard var contents = String(data: original, encoding: .utf8) else { return }
+        contents = contents
+            .replacingOccurrences(
+                of: "https://dl-cdn.alpinelinux.org/alpine",
+                with: "https://mirrors.tuna.tsinghua.edu.cn/alpine"
+            )
+            .replacingOccurrences(
+                of: "http://dl-cdn.alpinelinux.org/alpine",
+                with: "https://mirrors.tuna.tsinghua.edu.cn/alpine"
+            )
+        guard contents != String(data: original, encoding: .utf8) else { return }
+        try runtime.writeFile(
+            repositoriesPath,
+            data: Data(contents.utf8),
+            executable: false
+        )
     }
 
     private func guestCreateDirectories(_ path: String) throws {

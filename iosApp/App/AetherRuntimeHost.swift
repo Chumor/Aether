@@ -547,7 +547,10 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
                 return
             }
             directoryPickerListener = listener
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: true)
+            // Folder imports must keep the provider-backed URL in place. Asking the
+            // document picker to copy a directory can crash when the provider commits
+            // the selection; read it under its security-scoped access instead.
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.folder], asCopy: false)
             picker.delegate = self
             picker.allowsMultipleSelection = false
             presenter.present(picker, animated: true)

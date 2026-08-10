@@ -5350,7 +5350,7 @@ private fun SharedConversationModelSelector(
             )
             Row(
                 modifier = Modifier
-                    .matchParentSize()
+                    .height(38.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(AetherSurface.copy(alpha = 0.96f))
                     .clickable(enabled = options.isNotEmpty()) {

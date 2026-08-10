@@ -961,7 +961,7 @@ private fun ConversationModelSelector(
                     .background(ChatGptControlShadow),
             )
             Row(
-                modifier = Modifier.matchParentSize()
+                modifier = Modifier.height(38.dp)
                     .clip(RoundedCornerShape(999.dp))
                     .background(AetherSurface.copy(alpha = 0.96f))
                     .clickable(enabled = options.isNotEmpty()) {

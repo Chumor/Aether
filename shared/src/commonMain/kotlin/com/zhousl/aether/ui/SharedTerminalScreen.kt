@@ -62,7 +62,7 @@ import com.zhousl.aether.shared.resources.Res
 import com.zhousl.aether.shared.resources.back_label
 import com.zhousl.aether.shared.resources.common_send
 import com.zhousl.aether.shared.resources.settings_open_terminal
-import com.zhousl.aether.ui.theme.AetherBackground
+import com.zhousl.aether.ui.theme.AetherSettingsBackground
 import com.zhousl.aether.ui.theme.AetherOnSurface
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
 import com.zhousl.aether.ui.theme.AetherSurface
@@ -116,7 +116,7 @@ fun SharedTerminalScreen(
         }
 
         Column(
-            modifier = Modifier.fillMaxSize().background(AetherBackground)
+            modifier = Modifier.fillMaxSize().background(AetherSettingsBackground)
                 .imePadding().navigationBarsPadding(),
         ) {
             NativeTerminalTopBar(title = title, onBack = onBack)
@@ -329,7 +329,7 @@ private fun NativeTerminalTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .background(AetherBackground.copy(alpha = 0.86f))
+            .background(AetherSettingsBackground.copy(alpha = 0.86f))
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,6 +45,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
@@ -129,10 +131,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -266,6 +271,7 @@ import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
 import com.zhousl.aether.ui.theme.AetherOutlineSoft
 import com.zhousl.aether.ui.theme.AetherPrimary
 import com.zhousl.aether.ui.theme.AetherScrim
+import com.zhousl.aether.ui.theme.AetherSettingsBackground
 import com.zhousl.aether.ui.theme.AetherSecondary
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
@@ -781,6 +787,7 @@ internal fun resolveSharedConversationModelKey(
 
 private val TopFadeHeight = 42.dp
 private val SettingsTopFadeHeight = 40.dp
+private val SettingsBottomFadeHeight = 96.dp
 private const val FollowUpTourAutoOpenDelayMillis = 2_500L
 private const val TransientMessageDurationMillis = 2_000L
 private val ComposerShape = RoundedCornerShape(26.dp)
@@ -3231,54 +3238,102 @@ private fun SharedTabletSettingsOverlay(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(140, easing = SharedConversationMotionEasing)) +
-            slideInVertically(
-                animationSpec = tween(190, easing = SharedConversationMotionEasing),
-                initialOffsetY = { it / 42 },
-            ),
-        exit = fadeOut(tween(120, easing = SharedConversationMotionEasing)) +
-            slideOutVertically(
-                animationSpec = tween(150, easing = SharedConversationMotionEasing),
-                targetOffsetY = { it / 48 },
-            ),
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize()
-                .background(AetherScrim.copy(alpha = 0.38f))
-                .pointerInput(visible, onDismiss) {
-                    if (visible) detectTapGestures { onDismiss() }
-                }
-                .padding(
-                    horizontal = if (fullScreen) 0.dp else 56.dp,
-                    vertical = if (fullScreen) 0.dp else 44.dp,
-                ),
-            contentAlignment = Alignment.Center,
+    Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(280, easing = SharedConversationMotionEasing)),
+            exit = fadeOut(tween(240, easing = SharedConversationMotionEasing)),
         ) {
-            Surface(
-                modifier = (if (fullScreen) {
-                    Modifier.fillMaxSize()
-                } else {
-                    Modifier.widthIn(max = 720.dp).heightIn(max = 860.dp).fillMaxSize()
-                })
-                    .pointerInput(Unit) { detectTapGestures {} }
-                    .then(
-                        if (fullScreen) {
-                            Modifier
-                        } else {
-                            Modifier.shadow(
-                                18.dp,
-                                RoundedCornerShape(24.dp),
-                                ambientColor = AetherScrim,
-                                spotColor = AetherScrim,
-                            )
-                        },
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(AetherScrim.copy(alpha = 0.38f))
+                    .pointerInput(visible, onDismiss) {
+                        if (visible) detectTapGestures { onDismiss() }
+                    },
+            )
+        }
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(260, easing = SharedConversationMotionEasing)) +
+                slideInVertically(
+                    animationSpec = tween(320, easing = SharedConversationMotionEasing),
+                    initialOffsetY = { it / 42 },
+                ),
+            exit = fadeOut(tween(240, easing = SharedConversationMotionEasing)) +
+                slideOutVertically(
+                    animationSpec = tween(280, easing = SharedConversationMotionEasing),
+                    targetOffsetY = { it / 48 },
+                ),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        horizontal = if (fullScreen) 0.dp else 56.dp,
+                        vertical = if (fullScreen) 0.dp else 44.dp,
                     ),
-                shape = RoundedCornerShape(if (fullScreen) 0.dp else 24.dp),
-                color = AetherBackground,
+                contentAlignment = Alignment.Center,
             ) {
-                content()
+                Surface(
+                    modifier = (if (fullScreen) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier.widthIn(max = 720.dp).heightIn(max = 860.dp).fillMaxSize()
+                    })
+                        .pointerInput(Unit) { detectTapGestures {} }
+                        .then(
+                            if (fullScreen) {
+                                Modifier
+                            } else {
+                                Modifier.shadow(
+                                    18.dp,
+                                    RoundedCornerShape(24.dp),
+                                    ambientColor = AetherScrim,
+                                    spotColor = AetherScrim,
+                                )
+                            },
+                        ),
+                    shape = RoundedCornerShape(if (fullScreen) 0.dp else 24.dp),
+                    color = AetherSettingsBackground,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (fullScreen) {
+                                    Modifier
+                                } else {
+                                    Modifier.consumeWindowInsets(WindowInsets.navigationBars)
+                                },
+                            )
+                            .drawWithContent {
+                                drawContent()
+                                if (!fullScreen) {
+                                    val fadeHeight = SettingsBottomFadeHeight.toPx()
+                                    val fadeTop = size.height - fadeHeight
+                                    drawRect(
+                                        brush = Brush.verticalGradient(
+                                            colorStops = arrayOf(
+                                                0.0f to Color.Transparent,
+                                                0.24f to AetherSettingsBackground.copy(alpha = 0.04f),
+                                                0.48f to AetherSettingsBackground.copy(alpha = 0.12f),
+                                                0.70f to AetherSettingsBackground.copy(alpha = 0.28f),
+                                                0.88f to AetherSettingsBackground.copy(alpha = 0.58f),
+                                                1.0f to AetherSettingsBackground,
+                                            ),
+                                            startY = fadeTop,
+                                            endY = size.height,
+                                        ),
+                                        topLeft = Offset(0f, fadeTop),
+                                        size = Size(size.width, fadeHeight),
+                                    )
+                                }
+                            },
+                    ) {
+                        content()
+                    }
+                }
             }
         }
     }
@@ -4906,19 +4961,6 @@ private fun SharedChatScreen(
                 ).padding(innerPadding),
             ) {
                 if (visibleMessages.isEmpty()) {
-                    AetherConversationEmptyState(
-                        modifier = Modifier.fillMaxSize().padding(
-                            top = topBarBodyHeight + 20.dp,
-                            bottom = composerBodyHeight + animatedImeBottom + 16.dp,
-                        ),
-                        welcomeLabel = stringResource(Res.string.chat_welcome_help),
-                        analyzeImageLabel = stringResource(Res.string.chat_analyze_image_chip),
-                        codeLabel = stringResource(Res.string.chat_code_chip),
-                        helpWriteLabel = stringResource(Res.string.chat_help_me_write_chip),
-                        summarizeFileLabel = stringResource(Res.string.chat_summarize_file_chip),
-                        inputFocused = composerFocused,
-                        onStarterPromptSelected = onInputChanged,
-                    )
                     SharedAetherExtensionSlot(
                         SharedExtensionSlotChatEmpty,
                         Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(
@@ -5291,37 +5333,49 @@ private fun SharedConversationModelSelector(
         ?: fallbackLabel
 
     Box(modifier = modifier, contentAlignment = Alignment.CenterStart) {
-        Row(
+        Box(
             modifier = Modifier
+                .height(38.dp)
                 .onGloballyPositioned { coordinates ->
                     anchorHeightPx = coordinates.boundsInWindow().height.toInt()
-                }
-                .height(38.dp)
-                .shadow(4.dp, RoundedCornerShape(999.dp), ambientColor = ControlShadow, spotColor = ControlShadow)
-                .clip(RoundedCornerShape(999.dp))
-                .background(AetherSurface.copy(alpha = 0.96f))
-                .clickable(enabled = options.isNotEmpty()) {
-                    onOpened()
-                    menuSelectedModelKey = selectedModelKey
-                    showingReasoningEffort = false
-                    expanded = true
                 },
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (selectedDisplay != null) {
-                SharedSelectedModelDisplay(
-                    displayName = selectedDisplay,
-                    modifier = Modifier.widthIn(max = 240.dp).padding(horizontal = 17.dp),
-                )
-            } else {
-                Text(
-                    text = fallbackLabel,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal),
-                    color = AetherOnSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 220.dp).padding(horizontal = 17.dp),
-                )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .offset(y = 4.dp)
+                    .blur(14.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(ControlShadow),
+            )
+            Row(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(AetherSurface.copy(alpha = 0.96f))
+                    .clickable(enabled = options.isNotEmpty()) {
+                        onOpened()
+                        menuSelectedModelKey = selectedModelKey
+                        showingReasoningEffort = false
+                        expanded = true
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (selectedDisplay != null) {
+                    SharedSelectedModelDisplay(
+                        displayName = selectedDisplay,
+                        modifier = Modifier.widthIn(max = 240.dp).padding(horizontal = 17.dp),
+                    )
+                } else {
+                    Text(
+                        text = fallbackLabel,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal),
+                        color = AetherOnSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 220.dp).padding(horizontal = 17.dp),
+                    )
+                }
             }
         }
 
@@ -7765,7 +7819,7 @@ private fun SharedSettingsScreen(
         } else {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
-                containerColor = AetherBackground,
+                containerColor = AetherSettingsBackground,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
             ) { innerPadding ->
                 Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
@@ -7979,7 +8033,7 @@ private fun SharedAlpineSettingsDetail(
 
 @Composable
 private fun SettingsDetail(selected: SettingsDestination, onBack: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize().background(AetherBackground)) {
+    Box(modifier = Modifier.fillMaxSize().background(AetherSettingsBackground)) {
         Column(
             modifier = Modifier.fillMaxSize()
                 .padding(top = sharedSettingsContentTopPadding(), start = 20.dp, end = 20.dp)
@@ -8031,11 +8085,11 @@ internal fun SettingsTopBar(
             modifier = Modifier.fillMaxWidth().background(
                 Brush.verticalGradient(
                     colorStops = arrayOf(
-                        0.0f to AetherBackground.copy(alpha = 0.96f),
-                        0.18f to AetherBackground.copy(alpha = 0.86f),
-                        0.42f to AetherBackground.copy(alpha = 0.48f),
-                        0.72f to AetherBackground.copy(alpha = 0.22f),
-                        1.0f to AetherBackground.copy(alpha = 0.12f),
+                        0.0f to AetherSettingsBackground.copy(alpha = 0.96f),
+                        0.18f to AetherSettingsBackground.copy(alpha = 0.86f),
+                        0.42f to AetherSettingsBackground.copy(alpha = 0.48f),
+                        0.72f to AetherSettingsBackground.copy(alpha = 0.22f),
+                        1.0f to AetherSettingsBackground.copy(alpha = 0.12f),
                     ),
                 ),
             ),
@@ -8075,8 +8129,8 @@ internal fun SettingsTopBar(
             modifier = Modifier.fillMaxWidth().height(SettingsTopFadeHeight).background(
                 Brush.verticalGradient(
                     colorStops = arrayOf(
-                        0.0f to AetherBackground.copy(alpha = 0.12f),
-                        0.42f to AetherBackground.copy(alpha = 0.05f),
+                        0.0f to AetherSettingsBackground.copy(alpha = 0.12f),
+                        0.42f to AetherSettingsBackground.copy(alpha = 0.05f),
                         1.0f to Color.Transparent,
                     ),
                 )

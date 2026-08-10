@@ -186,12 +186,12 @@ import com.zhousl.aether.runtime.AlpineSetupActivity
 import com.zhousl.aether.runtime.AlpineSetupProgress
 import com.zhousl.aether.runtime.AlpineTerminalLaunchSpec
 import com.zhousl.aether.termux.TermuxSetupState
-import com.zhousl.aether.ui.theme.AetherBackground
 import com.zhousl.aether.ui.theme.AetherOnSurface
 import com.zhousl.aether.ui.theme.AetherOnPrimary
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
 import com.zhousl.aether.ui.theme.AetherPrimary
 import com.zhousl.aether.ui.theme.AetherScrim
+import com.zhousl.aether.ui.theme.AetherSettingsBackground
 import com.zhousl.aether.ui.theme.AetherSurface
 import com.zhousl.aether.ui.theme.AetherSurfaceHigh
 import kotlinx.coroutines.delay
@@ -387,18 +387,18 @@ private fun settingsReleaseSummary(versionName: String): String =
 
 private fun settingsTopOverlayBodyGradient(): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to AetherBackground.copy(alpha = 0.96f),
-        0.18f to AetherBackground.copy(alpha = 0.86f),
-        0.42f to AetherBackground.copy(alpha = 0.48f),
-        0.72f to AetherBackground.copy(alpha = 0.22f),
-        1.0f to AetherBackground.copy(alpha = 0.12f),
+        0.0f to AetherSettingsBackground.copy(alpha = 0.96f),
+        0.18f to AetherSettingsBackground.copy(alpha = 0.86f),
+        0.42f to AetherSettingsBackground.copy(alpha = 0.48f),
+        0.72f to AetherSettingsBackground.copy(alpha = 0.22f),
+        1.0f to AetherSettingsBackground.copy(alpha = 0.12f),
     )
 )
 
 private fun settingsTopOverlayTailGradient(): Brush = Brush.verticalGradient(
     colorStops = arrayOf(
-        0.0f to AetherBackground.copy(alpha = 0.12f),
-        0.42f to AetherBackground.copy(alpha = 0.05f),
+        0.0f to AetherSettingsBackground.copy(alpha = 0.12f),
+        0.42f to AetherSettingsBackground.copy(alpha = 0.05f),
         1.0f to Color.Transparent,
     )
 )
@@ -1357,7 +1357,7 @@ private fun SettingsHub(
     }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = AetherBackground,
+        containerColor = AetherSettingsBackground,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { innerPadding ->
         Box(
@@ -2560,7 +2560,7 @@ private fun ProviderCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(AetherSurfaceHigh)
+            .background(AetherSurface)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -2782,7 +2782,7 @@ private fun ModelSelectionListRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(if (selected) AetherBackground.copy(alpha = 0.9f) else Color.Transparent)
+            .background(if (selected) AetherSettingsBackground.copy(alpha = 0.9f) else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -5964,7 +5964,7 @@ private fun AgentModeSettingsPage(
                                 if (display.isAetherDisplay) {
                                     MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f)
                                 } else {
-                                    AetherBackground
+                                    AetherSettingsBackground
                                 }
                                     )
                                     .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -6824,7 +6824,7 @@ private fun SubPageScaffold(
     }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = AetherBackground,
+        containerColor = AetherSettingsBackground,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { innerPadding ->
         Box(

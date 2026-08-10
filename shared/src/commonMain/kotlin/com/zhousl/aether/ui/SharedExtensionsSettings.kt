@@ -74,7 +74,7 @@ import com.zhousl.aether.runtime.MultiplatformLocalRuntime
 import com.zhousl.aether.runtime.RuntimeProcessSpec
 import com.zhousl.aether.runtime.SharedPiBridgeClient
 import com.zhousl.aether.shared.resources.*
-import com.zhousl.aether.ui.theme.AetherBackground
+import com.zhousl.aether.ui.theme.AetherSettingsBackground
 import com.zhousl.aether.ui.theme.AetherOnPrimary
 import com.zhousl.aether.ui.theme.AetherOnSurface
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
@@ -1361,7 +1361,7 @@ internal fun SharedExtensionsSettingsDetail(
                 onBack = { selectedCatalogSource = "" },
             )
         } else {
-            Box(Modifier.fillMaxSize().background(AetherBackground)) {
+            Box(Modifier.fillMaxSize().background(AetherSettingsBackground)) {
                 Column(
                     modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                         .padding(top = sharedSettingsContentTopPadding(), start = 20.dp, end = 20.dp)
@@ -1439,7 +1439,7 @@ private fun SharedExtensionsTopBar(
 ) {
     Column(Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().background(AetherBackground).statusBarsPadding()
+            modifier = Modifier.fillMaxWidth().background(AetherSettingsBackground).statusBarsPadding()
                 .padding(horizontal = 15.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1481,7 +1481,7 @@ private fun SharedExtensionsTopBar(
         }
         Spacer(
             Modifier.fillMaxWidth().height(28.dp).background(
-                Brush.verticalGradient(listOf(AetherBackground, Color.Transparent))
+                Brush.verticalGradient(listOf(AetherSettingsBackground, Color.Transparent))
             )
         )
     }
@@ -2343,7 +2343,7 @@ private fun SharedExtensionDetailScaffold(
     onBack: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Box(Modifier.fillMaxSize().background(AetherBackground)) {
+    Box(Modifier.fillMaxSize().background(AetherSettingsBackground)) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(top = sharedSettingsContentTopPadding(), start = 20.dp, end = 20.dp)

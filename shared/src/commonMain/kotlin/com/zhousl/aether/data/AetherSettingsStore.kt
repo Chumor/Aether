@@ -2,6 +2,7 @@ package com.zhousl.aether.data
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -59,12 +60,15 @@ class AetherSettingsStore(
             onboardingCompletedVersion = preferences[OnboardingCompletedVersion] ?: 0,
         )
         val fullSettings = parseAppSettings(preferences[AppSettingsJson].orEmpty(), legacySettings)
+        val privacyPolicyAccepted = preferences[PrivacyPolicyAccepted]
+            ?: fullSettings.privacyPolicyAccepted
         return SharedPersistedSettings(
             providerConfigs = parseProviderConfigs(preferences[ProviderConfigs].orEmpty()),
             activeProviderConfigId = preferences[ActiveProviderConfigId].orEmpty(),
             onboardingCompletedVersion = preferences[OnboardingCompletedVersion] ?: 0,
             appSettings = fullSettings.copy(
                 onboardingCompletedVersion = preferences[OnboardingCompletedVersion] ?: 0,
+                privacyPolicyAccepted = privacyPolicyAccepted,
             ),
             thinkingCatalogCache = parseSharedThinkingCatalogCache(
                 preferences[ThinkingCatalogCacheJson].orEmpty(),
@@ -117,7 +121,14 @@ class AetherSettingsStore(
 
     suspend fun saveGeneralSettings(settings: AppSettings) {
         dataStore.edit { preferences ->
-            preferences[AppSettingsJson] = serializeAppSettings(settings)
+            val accepted = privacyPolicyAccepted(
+                persisted = preferences[PrivacyPolicyAccepted]
+                    ?: parseAppSettings(preferences[AppSettingsJson].orEmpty()).privacyPolicyAccepted,
+                requested = settings.privacyPolicyAccepted,
+            )
+            val persistedSettings = settings.copy(privacyPolicyAccepted = accepted)
+            preferences[AppSettingsJson] = serializeAppSettings(persistedSettings)
+            preferences[PrivacyPolicyAccepted] = accepted
             preferences[Language] = settings.language.storageValue
             preferences[ThemeMode] = settings.themeMode.storageValue
             preferences[SystemPrompt] = settings.systemPrompt
@@ -158,15 +169,22 @@ class AetherSettingsStore(
             val current = parseAppSettings(preferences[AppSettingsJson].orEmpty())
             val updated = current.copy(privacyPolicyAccepted = true)
             preferences[AppSettingsJson] = serializeAppSettings(updated)
+            preferences[PrivacyPolicyAccepted] = true
         }
     }
 
     suspend fun replaceAll(persisted: SharedPersistedSettings) {
         dataStore.edit { preferences ->
+            val accepted = privacyPolicyAccepted(
+                persisted = preferences[PrivacyPolicyAccepted] ?: false,
+                requested = persisted.appSettings.privacyPolicyAccepted,
+            )
+            val persistedSettings = persisted.appSettings.copy(privacyPolicyAccepted = accepted)
             preferences[ProviderConfigs] = serializeProviderConfigs(persisted.providerConfigs)
             preferences[ActiveProviderConfigId] = persisted.activeProviderConfigId
             preferences[OnboardingCompletedVersion] = persisted.onboardingCompletedVersion
-            preferences[AppSettingsJson] = serializeAppSettings(persisted.appSettings)
+            preferences[AppSettingsJson] = serializeAppSettings(persistedSettings)
+            preferences[PrivacyPolicyAccepted] = accepted
             preferences[Language] = persisted.appSettings.language.storageValue
             preferences[ThemeMode] = persisted.appSettings.themeMode.storageValue
             preferences[SystemPrompt] = persisted.appSettings.systemPrompt
@@ -183,9 +201,13 @@ class AetherSettingsStore(
         val SystemPrompt = stringPreferencesKey("system_prompt")
         val ReasoningEffort = stringPreferencesKey("reasoning_effort")
         val AppSettingsJson = stringPreferencesKey("app_settings_json")
+        val PrivacyPolicyAccepted = booleanPreferencesKey("privacy_policy_accepted")
         val ThinkingCatalogCacheJson = stringPreferencesKey("thinking_catalog_cache_json")
     }
 }
+
+internal fun privacyPolicyAccepted(persisted: Boolean, requested: Boolean): Boolean =
+    persisted || requested
 
 private val SharedThinkingCatalogCacheJson = Json {
     ignoreUnknownKeys = true

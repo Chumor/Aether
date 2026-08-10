@@ -4096,17 +4096,20 @@ private fun RuntimeSetupStep(
             return@LaunchedEffect
         }
         alpineReady = installed
-        if (retryKey == 0) return@LaunchedEffect
+        if (retryKey == 0 && !installed) return@LaunchedEffect
+        if (installed) running = true
 
         try {
-            progress = RuntimeSetupProgress(
-                phase = RuntimePhaseCheckingAlpine,
-                output = progress.output,
-            )
-            runtime.initialize { update ->
-                progress = update.copy(phase = normalizeRuntimeSetupPhase(update.phase))
+            if (!installed) {
+                progress = RuntimeSetupProgress(
+                    phase = RuntimePhaseCheckingAlpine,
+                    output = progress.output,
+                )
+                runtime.initialize { update ->
+                    progress = update.copy(phase = normalizeRuntimeSetupPhase(update.phase))
+                }
+                alpineReady = true
             }
-            alpineReady = true
             if (runtimeSetupStepIndex(progress.phase) < 2) {
                 progress = progress.copy(phase = RuntimePhaseCheckingNode, detail = "")
             }
@@ -8057,6 +8060,7 @@ internal fun SettingsTopBar(
     onBack: () -> Unit,
     trailingIcon: ImageVector? = null,
     trailingEnabled: Boolean = true,
+    trailingLoading: Boolean = false,
     trailingContentDescription: String = "",
     onTrailingAction: () -> Unit = {},
 ) {
@@ -8110,7 +8114,18 @@ internal fun SettingsTopBar(
                     color = AetherOnSurface,
                     modifier = Modifier.align(Alignment.Center),
                 )
-                if (trailingIcon != null) {
+                if (trailingLoading) {
+                    Box(
+                        modifier = Modifier.align(Alignment.CenterEnd).size(44.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = AetherPrimary,
+                        )
+                    }
+                } else if (trailingIcon != null) {
                     SharedSettingsCircleButton(
                         icon = trailingIcon,
                         contentDescription = trailingContentDescription,

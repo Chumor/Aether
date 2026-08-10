@@ -3761,6 +3761,7 @@ private fun PiExtensionsPage(
         onBack = onBack,
         trailingIcon = Icons.Rounded.FileUpload,
         trailingEnabled = operationSource.isBlank(),
+        trailingLoading = operationSource == "import",
         trailingContentDescription = stringResource(R.string.settings_import_extension),
         onTrailingAction = onImport,
     ) {
@@ -3927,6 +3928,7 @@ private fun PiExtensionsPage(
                                 label = stringResource(R.string.settings_import_extension),
                                 onClick = onImport,
                                 enabled = operationSource.isBlank(),
+                                isLoading = operationSource == "import",
                             )
                         }
                     }
@@ -6768,6 +6770,7 @@ private fun AboutPage(
                 },
                 onClick = onDownloadAndInstallUpdate,
                 enabled = !appUpdate.isDownloading,
+                isLoading = appUpdate.isDownloading,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -6806,6 +6809,7 @@ private fun SubPageScaffold(
     onBack: () -> Unit,
     trailingIcon: ImageVector? = null,
     trailingEnabled: Boolean = true,
+    trailingLoading: Boolean = false,
     trailingContentDescription: String = title,
     onTrailingAction: (() -> Unit)? = null,
     secondaryTrailingIcon: ImageVector? = null,
@@ -6852,6 +6856,7 @@ private fun SubPageScaffold(
                 onBack = onBack,
                 trailingIcon = trailingIcon,
                 trailingEnabled = trailingEnabled,
+                trailingLoading = trailingLoading,
                 trailingContentDescription = trailingContentDescription,
                 onTrailingAction = onTrailingAction,
                 secondaryTrailingIcon = secondaryTrailingIcon,
@@ -6873,6 +6878,7 @@ private fun SettingsTopBarOverlay(
     onBack: () -> Unit,
     trailingIcon: ImageVector? = null,
     trailingEnabled: Boolean = true,
+    trailingLoading: Boolean = false,
     trailingContentDescription: String = title,
     onTrailingAction: (() -> Unit)? = null,
     secondaryTrailingIcon: ImageVector? = null,
@@ -6895,6 +6901,7 @@ private fun SettingsTopBarOverlay(
                 onBack = onBack,
                 trailingIcon = trailingIcon,
                 trailingEnabled = trailingEnabled,
+                trailingLoading = trailingLoading,
                 trailingContentDescription = trailingContentDescription,
                 onTrailingAction = onTrailingAction,
                 secondaryTrailingIcon = secondaryTrailingIcon,
@@ -6918,6 +6925,7 @@ private fun SettingsTopBar(
     onBack: () -> Unit,
     trailingIcon: ImageVector? = null,
     trailingEnabled: Boolean = true,
+    trailingLoading: Boolean = false,
     trailingContentDescription: String = title,
     onTrailingAction: (() -> Unit)? = null,
     secondaryTrailingIcon: ImageVector? = null,
@@ -6956,7 +6964,15 @@ private fun SettingsTopBar(
                     onClick = onSecondaryTrailingAction,
                 )
             }
-            if (trailingIcon != null && onTrailingAction != null) {
+            if (trailingLoading) {
+                Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = AetherPrimary,
+                    )
+                }
+            } else if (trailingIcon != null && onTrailingAction != null) {
                 SettingsCircleButton(
                     icon = trailingIcon,
                     contentDescription = trailingContentDescription,

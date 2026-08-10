@@ -1408,6 +1408,7 @@ internal fun SharedExtensionsSettingsDetail(
                     onBack = onBack,
                     trailingIcon = Icons.Rounded.FileUpload,
                     trailingEnabled = operationKey.isBlank(),
+                    trailingLoading = operationKey == "import",
                     trailingContentDescription = stringResource(Res.string.settings_import_extension),
                     onTrailingAction = ::importExtension,
                 )
@@ -1752,6 +1753,7 @@ private fun SharedExtensionInstalledTab(
                     label = stringResource(Res.string.settings_import_extension),
                     onClick = onImport,
                     enabled = operationKey.isBlank(),
+                    isLoading = operationKey == "import",
                 )
             }
         }

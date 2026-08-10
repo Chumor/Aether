@@ -368,7 +368,8 @@ class SettingsRepository(
             it.remove(UNSUPPORTED_PARALLEL_TOOL_CALL_PROVIDER_KEYS)
             it[ONBOARDING_SEEN_VERSION] = settings.onboardingSeenVersion
             it[ONBOARDING_COMPLETED_VERSION] = settings.onboardingCompletedVersion
-            it[PRIVACY_POLICY_ACCEPTED] = settings.privacyPolicyAccepted
+            it[PRIVACY_POLICY_ACCEPTED] =
+                (it[PRIVACY_POLICY_ACCEPTED] ?: false) || settings.privacyPolicyAccepted
             it[LAST_UPDATE_CHECK_AT_MILLIS] = settings.lastUpdateCheckAtMillis
             it[PROVIDER_CONFIGS] = serializeProviderConfigs(providerConfigs)
         }
@@ -448,7 +449,8 @@ class SettingsRepository(
             it.remove(PROVIDER)
             it.remove(BASIC_FUNCTION_CALLING_COMPATIBILITY_MODE)
             it.remove(UNSUPPORTED_PARALLEL_TOOL_CALL_PROVIDER_KEYS)
-            it[PRIVACY_POLICY_ACCEPTED] = settings.privacyPolicyAccepted
+            it[PRIVACY_POLICY_ACCEPTED] =
+                (it[PRIVACY_POLICY_ACCEPTED] ?: false) || settings.privacyPolicyAccepted
             it[LAST_UPDATE_CHECK_AT_MILLIS] = settings.lastUpdateCheckAtMillis
         }
     }

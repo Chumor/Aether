@@ -348,6 +348,36 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
         runtime.resizeTerminal(forProcessId: Int32(processId), columns: columns, rows: rows)
     }
 
+    func createTerminalView(listener: NativeTerminalViewListener) -> Any {
+        let view = AetherTerminalView(frame: .zero)
+        view.onInput = { data in listener.onInput(bytes: data.kotlinByteArray) }
+        view.onResize = { columns, rows in
+            listener.onResize(columns: Int32(columns), rows: Int32(rows))
+        }
+        view.onTitleChanged = { title in listener.onTitleChanged(title: title) }
+        return view
+    }
+
+    func updateTerminalView(view: Any, bytes: KotlinByteArray) {
+        (view as? AetherTerminalView)?.feed(bytes.data)
+    }
+
+    func setTerminalDarkTheme(view: Any, darkTheme: Bool) {
+        (view as? AetherTerminalView)?.setDarkTheme(darkTheme)
+    }
+
+    func focusTerminalView(view: Any) {
+        (view as? AetherTerminalView)?.focus()
+    }
+
+    func sendTerminalKey(view: Any, key: String, controlDown: Bool, altDown: Bool) {
+        (view as? AetherTerminalView)?.sendKey(key, control: controlDown, alt: altDown)
+    }
+
+    func destroyTerminalView(view: Any) {
+        (view as? AetherTerminalView)?.cleanup()
+    }
+
     func fileExists(path: String, listener: NativeBooleanResultListener) {
         operations.async { [self] in
             guard runtime.isInitialized else {

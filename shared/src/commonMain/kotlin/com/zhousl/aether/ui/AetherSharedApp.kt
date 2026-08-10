@@ -919,6 +919,7 @@ fun AetherSharedApp(
         }
         var route by rememberSaveable { mutableStateOf(SharedRoute.Onboarding) }
         var tabletSettingsVisible by rememberSaveable { mutableStateOf(false) }
+        var tabletSettingsFullScreen by remember { mutableStateOf(false) }
         var tabletSettingsDismissRequest by remember { mutableIntStateOf(0) }
         var startupResolved by remember { mutableStateOf(false) }
         val historyStore = remember(chatHistoryDatabase) {
@@ -2513,6 +2514,7 @@ fun AetherSharedApp(
                 },
                 onTransientMessage = { transientMessage = it },
                 dismissRequestToken = tabletSettingsDismissRequest,
+                onFullScreenChange = { tabletSettingsFullScreen = it },
             )
         }
         AnimatedContent(
@@ -2938,6 +2940,7 @@ fun AetherSharedApp(
                     if (useTabletLayout) {
                         SharedTabletSettingsOverlay(
                             visible = tabletSettingsVisible,
+                            fullScreen = tabletSettingsFullScreen,
                             onDismiss = { tabletSettingsDismissRequest += 1 },
                         ) {
                             settingsContent()
@@ -3066,6 +3069,7 @@ internal class SharedDrawerOpenedEventGate {
 @Composable
 private fun SharedTabletSettingsOverlay(
     visible: Boolean,
+    fullScreen: Boolean,
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
@@ -3088,20 +3092,32 @@ private fun SharedTabletSettingsOverlay(
                 .pointerInput(visible, onDismiss) {
                     if (visible) detectTapGestures { onDismiss() }
                 }
-                .padding(horizontal = 56.dp, vertical = 44.dp),
+                .padding(
+                    horizontal = if (fullScreen) 0.dp else 56.dp,
+                    vertical = if (fullScreen) 0.dp else 44.dp,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             Surface(
-                modifier = Modifier
-                    .widthIn(max = 720.dp).heightIn(max = 860.dp).fillMaxSize()
+                modifier = (if (fullScreen) {
+                    Modifier.fillMaxSize()
+                } else {
+                    Modifier.widthIn(max = 720.dp).heightIn(max = 860.dp).fillMaxSize()
+                })
                     .pointerInput(Unit) { detectTapGestures {} }
-                    .shadow(
-                        18.dp,
-                        RoundedCornerShape(24.dp),
-                        ambientColor = AetherScrim,
-                        spotColor = AetherScrim,
+                    .then(
+                        if (fullScreen) {
+                            Modifier
+                        } else {
+                            Modifier.shadow(
+                                18.dp,
+                                RoundedCornerShape(24.dp),
+                                ambientColor = AetherScrim,
+                                spotColor = AetherScrim,
+                            )
+                        },
                     ),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(if (fullScreen) 0.dp else 24.dp),
                 color = AetherBackground,
             ) {
                 content()
@@ -7218,6 +7234,7 @@ private fun SharedSettingsScreen(
     onExportLogs: suspend () -> String,
     onTransientMessage: (String) -> Unit,
     dismissRequestToken: Int = 0,
+    onFullScreenChange: (Boolean) -> Unit = {},
 ) {
     val registeredExtensionSettings = LocalSharedAetherExtensionUiController.current
         ?.snapshot
@@ -7237,6 +7254,13 @@ private fun SharedSettingsScreen(
         mutableStateOf(appSettings.alpineSetupCompleted)
     }
     var pendingSettings by remember { mutableStateOf(appSettings) }
+
+    LaunchedEffect(destination?.kind) {
+        onFullScreenChange(destination?.kind == SharedSettingsKind.Terminal)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onFullScreenChange(false) }
+    }
 
     fun updatePendingSettings(updated: AppSettings) {
         pendingSettings = updated

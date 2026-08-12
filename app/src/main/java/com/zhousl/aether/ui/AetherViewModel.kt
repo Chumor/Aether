@@ -27,6 +27,7 @@ import com.zhousl.aether.data.InstalledSkill
 import com.zhousl.aether.data.InstalledPiExtension
 import com.zhousl.aether.data.PiExtensionInstallKind
 import com.zhousl.aether.data.PiExtensionCatalogEntry
+import com.zhousl.aether.data.PiDiscoveredSkillSource
 import com.zhousl.aether.data.ProviderModelCatalogClient
 import com.zhousl.aether.data.thinkingCatalogKey
 import com.zhousl.aether.data.LlmProviderConfig
@@ -616,6 +617,8 @@ class AetherViewModel(
                 }
                 if (startPiIfReady) {
                     refreshPiCoreSetup()
+                } else {
+                    viewModelScope.launch { syncPiDiscoveredSkills() }
                 }
             } else {
                 _uiState.update {
@@ -815,6 +818,7 @@ class AetherViewModel(
                         )
                     )
                 }
+                syncPiDiscoveredSkills()
             },
             onFailure = { throwable ->
                 if (throwable is CancellationException) throw throwable
@@ -833,6 +837,35 @@ class AetherViewModel(
                 }
             },
         )
+    }
+
+    private suspend fun syncPiDiscoveredSkills() {
+        runCatching {
+            val response = piKernelBridge.listDiscoveredSkills()
+            val skills = response.optJSONArray("skills") ?: return@runCatching
+            val discovered = buildList {
+                for (index in 0 until skills.length()) {
+                    val item = skills.optJSONObject(index) ?: continue
+                    val guestFilePath = item.optString("file_path").trim()
+                    val guestBaseDir = item.optString("base_dir").trim()
+                    if (guestFilePath.isBlank() || guestBaseDir.isBlank()) continue
+                    val hostFile = runtime.alpineRuntime.resolveWorkspaceHostPath(guestFilePath)?.hostFile
+                        ?: runtime.alpineRuntime.resolveGuestPath(guestFilePath)
+                    val hostRoot = runtime.alpineRuntime.resolveWorkspaceHostPath(guestBaseDir)?.hostFile
+                        ?: runtime.alpineRuntime.resolveGuestPath(guestBaseDir)
+                    if (!hostFile.isFile || !hostRoot.isDirectory) continue
+                    add(
+                        PiDiscoveredSkillSource(
+                            guestFilePath = guestFilePath,
+                            guestBaseDir = guestBaseDir,
+                            hostFile = hostFile,
+                            hostRoot = hostRoot,
+                        )
+                    )
+                }
+            }
+            skillManager.syncPiDiscoveredSkills(discovered).getOrThrow()
+        }
     }
 
     fun resetAlpineRuntime() {

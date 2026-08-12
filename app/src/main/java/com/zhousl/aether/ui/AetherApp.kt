@@ -273,7 +273,8 @@ fun AetherApp(
         }
     }
 
-    LaunchedEffect(extensionManager, extensionContext.toString()) {
+    LaunchedEffect(extensionManager, extensionContext.toString(), uiState.alpineSetupState.isReady) {
+        if (!uiState.alpineSetupState.isReady) return@LaunchedEffect
         extensionManager.start(extensionContext)
         extensionManager.updateContext(extensionContext)
     }

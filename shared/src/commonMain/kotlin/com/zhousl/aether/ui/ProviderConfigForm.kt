@@ -60,6 +60,7 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -97,6 +98,7 @@ import com.zhousl.aether.data.normalizeLlmUserAgent
 import com.zhousl.aether.data.sanitizeProviderId
 import com.zhousl.aether.data.pi.PiOAuthPrompt
 import com.zhousl.aether.data.pi.PiProviderAuthState
+import com.zhousl.aether.platform.PlatformServices
 import com.zhousl.aether.ui.theme.AetherOnPrimary
 import com.zhousl.aether.ui.theme.AetherOnSurface
 import com.zhousl.aether.ui.theme.AetherOnSurfaceVariant
@@ -113,6 +115,8 @@ private val InteractiveCredentialProviderIds = setOf(
 )
 private const val OAuthFlowBrowser = "browser"
 private const val OAuthFlowDeviceCode = "device_code"
+
+internal val LocalPlatformServices = staticCompositionLocalOf<PlatformServices?> { null }
 
 @Stable
 class ProviderFormState constructor(
@@ -455,7 +459,7 @@ fun ProviderConfigurationForm(
     val relevantAuthState = authState.takeIf {
         it.providerId == selectedDefinition.id && it.authMethod == state.authMethod
     }
-    ProviderAuthStateEffects(state, relevantAuthState)
+    ProviderAuthStateEffects(state, relevantAuthState, onSubmitAuthPrompt)
     val providerIdAlreadyUsed = state.providerId.trim() in
         (existingProviderIds - setOf(state.originalProviderId))
     val providerIdError = when {
@@ -636,12 +640,36 @@ fun ProviderConfigurationForm(
 private fun ProviderAuthStateEffects(
     state: ProviderFormState,
     authState: PiProviderAuthState?,
+    onSubmitAuthPrompt: (String, String, Boolean) -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
+    val platformServices = LocalPlatformServices.current
+    var authenticationCallback by remember { mutableStateOf("") }
     LaunchedEffect(authState?.authorizationUrl) {
         authState?.authorizationUrl
             ?.takeIf(String::isNotBlank)
-            ?.let { url -> runCatching { uriHandler.openUri(url) } }
+            ?.let { url ->
+                runCatching {
+                    if (platformServices?.openAuthenticationUrl(
+                            url = url,
+                            onCallback = { authenticationCallback = it },
+                            onCancelled = {
+                                authState.prompt?.id?.takeIf(String::isNotBlank)?.let { promptId ->
+                                    onSubmitAuthPrompt(promptId, "", true)
+                                }
+                            },
+                        ) != true
+                    ) {
+                        uriHandler.openUri(url)
+                    }
+                }
+            }
+    }
+    LaunchedEffect(authenticationCallback, authState?.prompt?.id) {
+        val callback = authenticationCallback.takeIf(String::isNotBlank) ?: return@LaunchedEffect
+        val prompt = authState?.prompt?.takeIf { it.type == "manual_code" } ?: return@LaunchedEffect
+        authenticationCallback = ""
+        onSubmitAuthPrompt(prompt.id, callback, false)
     }
     LaunchedEffect(authState?.verificationUrl) {
         authState?.verificationUrl
@@ -696,7 +724,7 @@ fun ProviderAuthenticationSetup(
         it.providerId == definition.id && it.authMethod == state.authMethod
     }
     val clipboardManager = LocalClipboardManager.current
-    ProviderAuthStateEffects(state, relevantAuthState)
+    ProviderAuthStateEffects(state, relevantAuthState, onSubmitAuthPrompt)
 
     Column(
         modifier = modifier.fillMaxWidth(),

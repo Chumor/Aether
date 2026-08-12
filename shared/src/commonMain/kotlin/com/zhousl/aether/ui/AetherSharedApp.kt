@@ -982,11 +982,15 @@ fun AetherSharedApp(
         val thinkingCatalogRefreshMutex = remember { Mutex() }
         LaunchedEffect(modelCatalogRequestKey) {
             val fetched = modelCatalogClient.fetchModelInfo(modelOptions)
+            if (fetched.isEmpty()) return@LaunchedEffect
             fetched.values.distinctBy(SharedModelCatalogInfo::labLogoPathData).forEach { info ->
                 kotlinx.coroutines.yield()
                 SharedModelLogoPathCache.getOrParse(info.labLogoPathData)
             }
             modelCatalogInfo = fetched
+            settingsStore?.saveModelCatalogCache(
+                com.zhousl.aether.data.SharedModelCatalogCache(fetched)
+            )
         }
         val installedSkills = remember { mutableStateListOf<SharedInstalledSkill>() }
         val mcpServers = remember { mutableStateListOf<SharedMcpServerConfig>() }
@@ -1263,6 +1267,9 @@ fun AetherSharedApp(
                 val persistedModelOptions = withContext(Dispatchers.Default) {
                     persisted.providerConfigs.availableModelOptions()
                 }
+                val persistedCatalogKeys = persistedModelOptions.mapTo(mutableSetOf(), ProviderModelOption::key)
+                modelCatalogInfo = persisted.modelCatalogCache.models
+                    .filterKeys(persistedCatalogKeys::contains)
                 val persistedThinkingKeys = persistedModelOptions.mapTo(mutableSetOf()) { option ->
                     sharedThinkingCatalogKey(option.piProviderId, option.modelId)
                 }

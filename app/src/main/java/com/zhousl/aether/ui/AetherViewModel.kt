@@ -406,8 +406,18 @@ class AetherViewModel(
             return
         }
         viewModelScope.launch {
+            if (_uiState.value.modelCatalogInfo.isEmpty()) {
+                val cached = settingsRepository.loadModelCatalogCache()
+                    .filterKeys(options.mapTo(mutableSetOf(), ProviderModelOption::key)::contains)
+                if (cached.isNotEmpty() && requestKey == lastModelCatalogRequestKey) {
+                    _uiState.update { current -> current.copy(modelCatalogInfo = cached) }
+                }
+            }
             val modelInfo = ModelCatalogClient.fetchModelInfo(options)
-            if (requestKey == lastModelCatalogRequestKey) {
+            if (modelInfo.isNotEmpty()) {
+                settingsRepository.saveModelCatalogCache(modelInfo)
+            }
+            if (modelInfo.isNotEmpty() && requestKey == lastModelCatalogRequestKey) {
                 _uiState.update { current -> current.copy(modelCatalogInfo = modelInfo) }
             }
         }

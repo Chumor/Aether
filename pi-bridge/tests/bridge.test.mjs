@@ -135,6 +135,38 @@ afterEach(async () => {
   await Promise.all([...activeClients].map((client) => client.close()));
 });
 
+test("lists Pi-discovered project skills without Aether managed copies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aether-skills-"));
+  const workspace = join(root, "workspace");
+  const agentDir = join(root, "agent");
+  const projectSkill = join(workspace, ".agents", "skills", "review");
+  const managedSkill = join(workspace, ".aether", "skills", "managed");
+  await mkdir(projectSkill, { recursive: true });
+  await mkdir(managedSkill, { recursive: true });
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    join(projectSkill, "SKILL.md"),
+    "---\nname: review\ndescription: Reviews code changes\n---\n",
+  );
+  await writeFile(
+    join(managedSkill, "SKILL.md"),
+    "---\nname: managed\ndescription: Already managed by Aether\n---\n",
+  );
+  const client = new BridgeClient({ HOME: root });
+  try {
+    const payload = await client.request("skills-1", "list_discovered_skills", {
+      workspace_directory: workspace,
+      agent_directory: agentDir,
+      workspace_trusted: true,
+    });
+    assert.deepEqual(payload.skills.map((skill) => skill.name), ["review"]);
+    assert.equal(payload.skills[0].file_path, join(projectSkill, "SKILL.md"));
+  } finally {
+    await client.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("lists Pi extension packages from an isolated agent directory", async () => {
   const home = await mkdtemp(join(tmpdir(), "aether-pi-packages-"));
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
@@ -938,6 +970,32 @@ test("closes AgentSession instances explicitly", async () => {
   );
 });
 
+test("rehydrates a persisted AgentSession before navigation", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "aether-session-rehydrate-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const client = new BridgeClient({ HOME: home, USERPROFILE: home });
+  const config = fauxConfig();
+  const first = await client.request(
+    "rehydrate-create",
+    "run_turn",
+    turnPayload("session-rehydrate", [userMessage("hello")], config),
+  );
+  await client.request("rehydrate-close", "close_session", {
+    session_id: "session-rehydrate",
+  });
+
+  const navigation = await client.request("rehydrate-navigate", "navigate_session", {
+    session_id: "session-rehydrate",
+    entry_id: first.session_leaf_id,
+    model_config: config,
+    workspace_directory: process.cwd(),
+    workspace_trusted: true,
+  });
+
+  assert.equal(navigation.session_id, "session-rehydrate");
+  assert.equal(navigation.session_leaf_id, first.session_leaf_id);
+});
+
 test("imports validated Pi JSONL into a relocated session file", async (t) => {
   const home = await mkdtemp(join(tmpdir(), "aether-jsonl-import-"));
   t.after(() => rm(home, { recursive: true, force: true }));
@@ -1015,7 +1073,7 @@ test("uses Pi Coding Agent native tool schemas and platform runtime sets", async
   assert.equal("environment" in actualByName.bash.properties, false);
 });
 
-test("allows only Aether-owned host tools and keeps Chrome Android-only", async (t) => {
+test("allows only Aether-owned host tools and exposes the platform browser", async (t) => {
   const home = await mkdtemp(join(tmpdir(), "aether-host-tools-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
@@ -1035,7 +1093,7 @@ test("allows only Aether-owned host tools and keeps Chrome Android-only", async 
     "mcp_call_tool",
     "aether_mcp_manage",
   ];
-  const requested = [...sharedNames, ...removedNames].map((name) => hostTool(name));
+  const requested = ["browser", ...sharedNames, ...removedNames].map((name) => hostTool(name));
 
   await client.request("android-host-turn", "run_turn", {
     ...turnPayload("android-host", [userMessage("hello")], fauxConfig(), requested),
@@ -1045,7 +1103,8 @@ test("allows only Aether-owned host tools and keeps Chrome Android-only", async 
   const android = await client.request("android-host-state", "get_session_state", {
     session_id: "android-host",
   });
-  assert.equal(android.active_tools.includes("chrome"), true);
+  assert.equal(android.active_tools.includes("browser"), true);
+  assert.equal(android.active_tools.includes("chrome"), false);
   assert.deepEqual(sharedNames.filter((name) => android.active_tools.includes(name)), sharedNames);
   assert.deepEqual(removedNames.filter((name) => android.active_tools.includes(name)), []);
 
@@ -1057,6 +1116,7 @@ test("allows only Aether-owned host tools and keeps Chrome Android-only", async 
   const ios = await client.request("ios-host-state", "get_session_state", {
     session_id: "ios-host",
   });
+  assert.equal(ios.active_tools.includes("browser"), true);
   assert.equal(ios.active_tools.includes("chrome"), false);
   assert.deepEqual(sharedNames.filter((name) => ios.active_tools.includes(name)), sharedNames);
   assert.deepEqual(removedNames.filter((name) => ios.active_tools.includes(name)), []);
@@ -1454,7 +1514,7 @@ test("bundles every Pi OAuth flow into the standalone bridge", async () => {
   }
 });
 
-test("keeps Codex browser OAuth on the manual redirect flow", async () => {
+test("keeps Codex browser OAuth ready for an intercepted loopback redirect", async () => {
   const client = new BridgeClient();
   const login = client.request(
     "oauth-codex-manual",
@@ -1476,15 +1536,11 @@ test("keeps Codex browser OAuth on the manual redirect flow", async () => {
       frame.event === "auth_prompt" &&
       frame.payload.prompt_type === "manual_code",
   );
-  assert.match(authUrl.payload.instructions, /copy the full URL back into Aether/i);
+  assert.match(authUrl.payload.instructions, /authentication window/i);
   assert.equal(manualPrompt.payload.placeholder, "http://localhost:...");
 
   const state = new URL(authUrl.payload.url).searchParams.get("state");
-  await assert.rejects(
-    fetch(`http://127.0.0.1:1455/auth/callback?code=test-code&state=${state}`, {
-      signal: AbortSignal.timeout(500),
-    }),
-  );
+  assert.equal(new URL(authUrl.payload.url).searchParams.get("redirect_uri"), "http://localhost:1455/auth/callback");
 
   const cancelled = await client.request("oauth-codex-cancel", "auth_prompt_result", {
     prompt_id: manualPrompt.payload.prompt_id,

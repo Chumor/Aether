@@ -193,6 +193,8 @@ class AetherViewModel(
     private var lastTrackedTermuxDetectedIssue: TermuxSetupIssue? = null
     private var pendingTermuxSetupSource: String? = null
     private var lastModelCatalogRequestKey: String = ""
+    private var didInitializeStartupDraftModel = false
+    private var didReceiveInitialChatState = false
     private val _uiState = MutableStateFlow(AetherUiState())
     private val _transientMessages = MutableSharedFlow<UiText>(extraBufferCapacity = 4)
     private var didEvaluateWorkspaceMode = false
@@ -235,6 +237,7 @@ class AetherViewModel(
                         current.copy(settings = settings)
                     }
                 }
+                initializeStartupDraftModelIfReady()
                 syncTermuxSettings()
                 bashTool.setEnvironmentVariables(settings.termuxEnvironmentVariables)
                 bashTool.setManagedBashRunCleanupPolicy(
@@ -256,6 +259,8 @@ class AetherViewModel(
             chatStateStore.state.collect { persisted ->
                 if (!didReceiveChatState && persisted.sessions.isEmpty() && persisted.currentSessionId == DraftSessionId) {
                     didReceiveChatState = true
+                    didReceiveInitialChatState = true
+                    initializeStartupDraftModelIfReady()
                     return@collect
                 }
                 didReceiveChatState = true
@@ -275,6 +280,8 @@ class AetherViewModel(
                         pendingStatusDetail = currentExecution?.pendingStatusDetail.orEmpty(),
                     )
                 }
+                didReceiveInitialChatState = true
+                initializeStartupDraftModelIfReady()
             }
         }
 
@@ -363,6 +370,7 @@ class AetherViewModel(
         viewModelScope.launch {
             settingsRepository.providerConfigs.collect { configs ->
                 _uiState.update { current -> current.copy(providerConfigs = configs) }
+                initializeStartupDraftModelIfReady()
                 refreshModelCatalogInfo(configs)
             }
         }
@@ -1618,6 +1626,7 @@ class AetherViewModel(
         selectedSkillIds: List<String>,
     ) {
         _uiState.update {
+            val inheritedModelKey = currentConversationModelKey(it)
             val enabledSkillIds = it.installedSkills
                 .filter(InstalledSkill::isEnabled)
                 .map(InstalledSkill::id)
@@ -1627,7 +1636,7 @@ class AetherViewModel(
                 currentSessionId = DraftSessionId,
                 draftInput = "",
                 draftAttachments = emptyList(),
-                draftSelectedModelKey = resolveDefaultChatModelKey(it.settings, it.providerConfigs),
+                draftSelectedModelKey = inheritedModelKey,
                 draftSelectedSkillIds = selectedSkillIds.filter(enabledSkillIds::contains),
                 draftSelectedMcpServerIds = emptyList(),
                 draftAgentModeEnabled = false,
@@ -1641,6 +1650,51 @@ class AetherViewModel(
         }
         persistCurrentSessionId(DraftSessionId)
         captureAnalyticsEvent(event = "conversation started")
+    }
+
+    private fun initializeStartupDraftModelIfReady() {
+        if (didInitializeStartupDraftModel) return
+        var sessionToPersist: Pair<String, String>? = null
+        _uiState.update { current ->
+            val options = current.providerConfigs.availableModelOptions()
+            if (
+                !current.isStartupRouteResolved ||
+                !didReceiveInitialChatState ||
+                options.isEmpty()
+            ) return@update current
+            didInitializeStartupDraftModel = true
+            val defaultModelKey = resolveDefaultChatModelKey(current.settings, current.providerConfigs)
+            if (current.currentSessionId == DraftSessionId) {
+                current.copy(draftSelectedModelKey = defaultModelKey)
+            } else {
+                sessionToPersist = current.currentSessionId to defaultModelKey
+                current.copy(
+                    sessions = current.sessions.map { session ->
+                        if (session.id == current.currentSessionId) {
+                            session.copy(selectedModelKey = defaultModelKey)
+                        } else {
+                            session
+                        }
+                    },
+                )
+            }
+        }
+        sessionToPersist?.let { (sessionId, defaultModelKey) ->
+            persistSessionMutation(sessionId) { session ->
+                if (session.selectedModelKey == defaultModelKey) null
+                else session.copy(selectedModelKey = defaultModelKey)
+            }
+        }
+    }
+
+    private fun currentConversationModelKey(state: AetherUiState): String {
+        val options = state.providerConfigs.availableModelOptions()
+        val selectedKey = state.sessions
+            .firstOrNull { it.id == state.currentSessionId }
+            ?.selectedModelKey
+            ?: state.draftSelectedModelKey
+        return selectedKey.takeIf { key -> options.any { it.key == key } }
+            ?: resolveDefaultChatModelKey(state.settings, state.providerConfigs)
     }
 
     fun selectSession(sessionId: String) {

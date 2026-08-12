@@ -845,6 +845,7 @@ private val SettingsTopFadeHeight = 40.dp
 private val SettingsBottomFadeHeight = 96.dp
 private const val FollowUpTourAutoOpenDelayMillis = 2_500L
 private const val TransientMessageDurationMillis = 2_000L
+private const val RuntimeSetupProgressTickMillis = 450L
 private val ComposerShape = RoundedCornerShape(26.dp)
 private val ComposerFocusedShape = RoundedCornerShape(28.dp)
 private val ComposerPlusMenuMaxHeight = 372.dp
@@ -1288,8 +1289,14 @@ fun AetherSharedApp(
                     ?: sessionStates.values.firstOrNull()
                     ?: initialSession
             }
+            restored.selectedModelKey = resolveSharedConversationModelKey(
+                selectedModelKey = "",
+                defaultChatModelKey = sharedAppSettings.defaultChatModelKey,
+                options = providerConfigs.availableModelOptions(),
+            )
             currentSession = restored
             sessionId = restored.id
+            if (!restored.isDraft) persistSession(restored)
             historyStore?.load(restored.id)?.let { persisted ->
                 chromeEnabled = persisted.chromeEnabled && capabilities.alpineChrome
                 chromeManager.enabled = chromeEnabled
@@ -2201,8 +2208,8 @@ fun AetherSharedApp(
 
         fun createNewSession(useDefaultSkills: Boolean = true): SharedSessionUiState {
             currentSession.clearComposerDraft()
-            val resolvedDefaultModelKey = resolveSharedConversationModelKey(
-                selectedModelKey = "",
+            val inheritedModelKey = resolveSharedConversationModelKey(
+                selectedModelKey = currentSession.selectedModelKey,
                 defaultChatModelKey = sharedAppSettings.defaultChatModelKey,
                 options = providerConfigs.availableModelOptions(),
             )
@@ -2217,7 +2224,7 @@ fun AetherSharedApp(
                     emptyList()
                 },
                 activeMcpServerIds = emptyList(),
-                selectedModelKey = resolvedDefaultModelKey,
+                selectedModelKey = inheritedModelKey,
             )
             currentSession = state
             sessionId = state.id
@@ -4426,9 +4433,30 @@ private fun RuntimeSetupProgressPanel(
     showDetailsAction: Boolean,
 ) {
     val currentStep = runtimeSetupDisplayedStep(progress.phase, ready)
-    val fraction = if (ready) 1f else currentStep / 5f
+    var organicFraction by remember { mutableStateOf(0f) }
+    var previousError by remember { mutableStateOf("") }
+    val phaseFraction = currentStep / 5f
+    LaunchedEffect(ready, error, progress.phase) {
+        val restarting = previousError.isNotBlank() && error.isBlank()
+        previousError = error
+        if (restarting) organicFraction = phaseFraction
+        organicFraction = maxOf(organicFraction, phaseFraction)
+        if (ready) {
+            organicFraction = 1f
+        } else if (error.isBlank()) {
+            while (true) {
+                kotlinx.coroutines.delay(RuntimeSetupProgressTickMillis)
+                val remaining = 0.94f - organicFraction
+                if (remaining > 0f) {
+                    organicFraction = (
+                        organicFraction + (remaining * 0.018f).coerceIn(0.001f, 0.006f)
+                    ).coerceAtMost(0.94f)
+                }
+            }
+        }
+    }
     val animatedFraction by animateFloatAsState(
-        targetValue = fraction,
+        targetValue = organicFraction,
         animationSpec = tween(durationMillis = 700, easing = SharedScreenTransitionEasing),
         label = "pi_core_setup_progress",
     )
@@ -4482,7 +4510,7 @@ private fun RuntimeSetupProgressPanel(
                 .clip(RoundedCornerShape(3.dp))
                 .background(AetherOutlineSoft),
         ) {
-            if (fraction > 0f) {
+            if (organicFraction > 0f) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(animatedFraction)
@@ -5502,6 +5530,10 @@ private fun SharedConversationModelSelector(
     var anchorHeightPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
     val selectedOption = options.findModelOption(menuSelectedModelKey) ?: options.firstOrNull()
+
+    LaunchedEffect(selectedModelKey) {
+        menuSelectedModelKey = selectedModelKey
+    }
     val thinkingKey = selectedOption?.let { option ->
         sharedThinkingCatalogKey(option.piProviderId, option.modelId)
     }

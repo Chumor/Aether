@@ -96,6 +96,7 @@ import com.zhousl.aether.data.defaultAuthMethod
 import com.zhousl.aether.data.isValidProviderId
 import com.zhousl.aether.data.normalizeLlmUserAgent
 import com.zhousl.aether.data.sanitizeProviderId
+import com.zhousl.aether.data.sortedByPreferredModelName
 import com.zhousl.aether.data.pi.PiOAuthPrompt
 import com.zhousl.aether.data.pi.PiProviderAuthState
 import com.zhousl.aether.platform.PlatformServices
@@ -1563,6 +1564,7 @@ private fun normalizeModelIds(values: List<String>): List<String> =
         .map(String::trim)
         .filter(String::isNotEmpty)
         .distinct()
+        .sortedByPreferredModelName()
 
 @Composable
 private fun ProviderFormCard(

@@ -807,6 +807,17 @@ private fun decodeSettingsDestination(encoded: String): SettingsDestination? =
         }.getOrNull()
     }
 
+internal fun shouldReturnToSettingsHubForMissingExtension(
+    encodedDestination: String,
+    registeredExtensionSettingsIds: Set<String>,
+    extensionSnapshotResolved: Boolean,
+): Boolean {
+    if (!extensionSnapshotResolved) return false
+    val destination = decodeSettingsDestination(encodedDestination) ?: return false
+    return destination.kind == SharedSettingsKind.ExtensionSettings &&
+        destination.extensionSettingsId !in registeredExtensionSettingsIds
+}
+
 private fun SettingsDestination?.depth(): Int = when (this?.kind) {
     null -> 0
     SharedSettingsKind.Terminal,
@@ -1018,6 +1029,7 @@ fun AetherSharedApp(
         val activeMcpServerIds = currentSession.activeMcpServerIds
         val backgroundLeases = remember { mutableMapOf<String, BackgroundExecutionLease>() }
         var extensionSnapshot by remember { mutableStateOf(SharedAetherExtensionSnapshot()) }
+        var extensionSnapshotResolved by remember { mutableStateOf(false) }
         var transientMessage by remember { mutableStateOf("") }
         var onboardingReplayMode by remember { mutableStateOf(false) }
         var onboardingEntryStage by remember { mutableStateOf(OnboardingStage.Landing) }
@@ -2483,7 +2495,10 @@ fun AetherSharedApp(
             extensionDraftRefreshJob.job = appScope.launch {
                 kotlinx.coroutines.delay(250)
                 runSharedAppCatching { extensionManager.refresh(extensionContext()) }
-                    .onSuccess { extensionSnapshot = it }
+                    .onSuccess {
+                        extensionSnapshot = it
+                        extensionSnapshotResolved = true
+                    }
             }
         }
 
@@ -2507,7 +2522,10 @@ fun AetherSharedApp(
                     extensionManager.subscribe {
                         val context = withContext(Dispatchers.Main) { extensionContext() }
                         val refreshed = extensionManager.refresh(context)
-                        withContext(Dispatchers.Main) { extensionSnapshot = refreshed }
+                        withContext(Dispatchers.Main) {
+                            extensionSnapshot = refreshed
+                            extensionSnapshotResolved = true
+                        }
                     }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
@@ -2528,7 +2546,10 @@ fun AetherSharedApp(
                 runSharedAppCatching { runtime.isReady() }.getOrDefault(false)
             ) {
                 runSharedAppCatching { extensionManager.reload(extensionContext()) }
-                    .onSuccess { extensionSnapshot = it }
+                    .onSuccess {
+                        extensionSnapshot = it
+                        extensionSnapshotResolved = true
+                    }
             }
         }
 
@@ -2548,7 +2569,10 @@ fun AetherSharedApp(
         ) {
             if (capabilities.scriptExtensions && route != SharedRoute.Onboarding) {
                 runSharedAppCatching { extensionManager.refresh(extensionContext()) }
-                    .onSuccess { extensionSnapshot = it }
+                    .onSuccess {
+                        extensionSnapshot = it
+                        extensionSnapshotResolved = true
+                    }
             }
         }
 
@@ -2559,7 +2583,10 @@ fun AetherSharedApp(
                     runSharedAppCatching {
                         extensionManager.invokeAction(extensionId, action, args, extensionContext())
                     }
-                        .onSuccess { extensionSnapshot = it }
+                        .onSuccess {
+                            extensionSnapshot = it
+                            extensionSnapshotResolved = true
+                        }
                 }
             },
         )
@@ -2615,7 +2642,11 @@ fun AetherSharedApp(
                 bridgeClient = bridgeClient,
                 extensionManager = extensionManager,
                 extensionStateStore = extensionStateStore,
-                onExtensionSnapshotChanged = { extensionSnapshot = it },
+                onExtensionSnapshotChanged = {
+                    extensionSnapshot = it
+                    extensionSnapshotResolved = true
+                },
+                extensionSnapshotResolved = extensionSnapshotResolved,
                 skillManager = skillManager,
                 installedSkills = installedSkills,
                 extensionCount = extensionSnapshot.extensions.size,
@@ -7836,6 +7867,7 @@ private fun SharedSettingsScreen(
     extensionManager: SharedAetherExtensionManager,
     extensionStateStore: SharedExtensionStateStore,
     onExtensionSnapshotChanged: (SharedAetherExtensionSnapshot) -> Unit,
+    extensionSnapshotResolved: Boolean,
     skillManager: SharedSkillManager,
     installedSkills: List<SharedInstalledSkill>,
     extensionCount: Int,
@@ -7877,6 +7909,12 @@ private fun SharedSettingsScreen(
     var destination by rememberSaveable(stateSaver = SharedSettingsDestinationSaver) {
         mutableStateOf(decodeSettingsDestination(restoredDestination))
     }
+    val missingExtensionDestination = shouldReturnToSettingsHubForMissingExtension(
+        encodedDestination = encodeSettingsDestination(destination),
+        registeredExtensionSettingsIds = registeredExtensionSettings.mapTo(mutableSetOf()) { it.id },
+        extensionSnapshotResolved = extensionSnapshotResolved,
+    )
+    val renderedDestination = destination.takeUnless { missingExtensionDestination }
     var statisticsReport by remember {
         mutableStateOf<com.zhousl.aether.data.SharedUsageStatisticsReport?>(null)
     }
@@ -7887,6 +7925,10 @@ private fun SharedSettingsScreen(
 
     LaunchedEffect(destination) {
         onDestinationChanged(encodeSettingsDestination(destination))
+    }
+
+    LaunchedEffect(missingExtensionDestination) {
+        if (missingExtensionDestination) destination = null
     }
 
     LaunchedEffect(destination?.kind) {
@@ -8232,7 +8274,7 @@ private fun SharedSettingsScreen(
     )
     CompositionLocalProvider(LocalSharedSettingsDismissGuard provides dismissGuard) {
         SharedSettingsPageTransition(
-            targetState = destination,
+            targetState = renderedDestination,
             depth = { it.depth() },
             label = "settings_page_transition",
         ) { selected ->

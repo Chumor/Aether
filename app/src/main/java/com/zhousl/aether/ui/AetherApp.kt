@@ -526,6 +526,7 @@ private fun AetherAppContent(
     var pendingSessionExportId by remember { mutableStateOf<String?>(null) }
     var pendingSkillZipCompletion by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
     var pendingTermuxPermissionSource by remember { mutableStateOf("unknown") }
+    var pendingTermuxPermissionGrantedAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var didAutoRequestTermuxPermission by rememberSaveable { mutableStateOf(false) }
     var showAppDataExportWarning by remember { mutableStateOf(false) }
     val onPickedDocuments: (List<Uri>) -> Unit = { uris ->
@@ -675,7 +676,9 @@ private fun AetherAppContent(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { granted ->
             val source = pendingTermuxPermissionSource
+            val onGranted = pendingTermuxPermissionGrantedAction
             pendingTermuxPermissionSource = "unknown"
+            pendingTermuxPermissionGrantedAction = null
             viewModel.trackPermissionResult(
                 permission = "termux_run_command",
                 granted = granted,
@@ -693,22 +696,41 @@ private fun AetherAppContent(
                 ),
                 Toast.LENGTH_SHORT,
             ).show()
+            if (granted) {
+                onGranted?.invoke()
+            }
         },
     )
-    fun requestTermuxPermission(source: String) {
+    fun requestTermuxPermission(
+        source: String,
+        onGranted: (() -> Unit)? = null,
+    ) {
         viewModel.trackTermuxSetupStarted(source)
         viewModel.trackPermissionRequested(
             permission = "termux_run_command",
             source = source,
         )
         pendingTermuxPermissionSource = source
+        pendingTermuxPermissionGrantedAction = onGranted
         termuxPermissionLauncher.launch(TermuxContract.RunCommandPermission)
+    }
+
+    fun runRootSetupAfterTermuxPermission(
+        source: String,
+        action: () -> Unit,
+    ) {
+        if (shouldRequestTermuxPermissionBeforeRootSetup(uiState.termuxSetupState.issue)) {
+            requestTermuxPermission(source = source, onGranted = action)
+        } else {
+            action()
+        }
     }
 
     LaunchedEffect(
         uiState.isStartupRouteResolved,
         uiState.settings.privacyPolicyAccepted,
         uiState.termuxSetupState.issue,
+        uiState.rootSetupState.issue,
     ) {
         if (
             shouldAutoRequestTermuxPermission(
@@ -719,7 +741,16 @@ private fun AetherAppContent(
             )
         ) {
             didAutoRequestTermuxPermission = true
-            requestTermuxPermission("termux_detected_permission_missing")
+            requestTermuxPermission(
+                source = if (shouldResumeRootSetupAfterTermuxPermission(uiState.rootSetupState.issue)) {
+                    "root_setup_termux_installed_permission"
+                } else {
+                    "termux_detected_permission_missing"
+                },
+                onGranted = viewModel::configureLocalAccessWithRoot.takeIf {
+                    shouldResumeRootSetupAfterTermuxPermission(uiState.rootSetupState.issue)
+                },
+            )
         }
     }
 
@@ -870,7 +901,12 @@ private fun AetherAppContent(
                             }
                         },
                         onRefreshRootSetup = viewModel::refreshRootSetup,
-                        onConfigureWithRoot = viewModel::configureLocalAccessWithRoot,
+                        onConfigureWithRoot = {
+                            runRootSetupAfterTermuxPermission(
+                                source = "onboarding_root_setup_termux_permission",
+                                action = viewModel::configureLocalAccessWithRoot,
+                            )
+                        },
                         onSaveAgentModeAuthorization = { enabled, method ->
                             viewModel.saveOnboardingAgentModeAuthorization(enabled, method)
                             if (enabled && method == AgentModeAuthorizationMethod.Shizuku) {
@@ -1146,7 +1182,12 @@ private fun AetherAppContent(
                     onShouldShowAlpineChromeKeyboard = viewModel::shouldShowAlpineChromeKeyboard,
                     onSetDefaultRuntime = viewModel::setDefaultRuntime,
                     onRefreshRootSetup = viewModel::refreshRootSetup,
-                    onStartRootSetupFromSettings = viewModel::startRootSetupFromSettings,
+                    onStartRootSetupFromSettings = { returnPage ->
+                        runRootSetupAfterTermuxPermission(
+                            source = "settings_root_setup_termux_permission",
+                            action = { viewModel.startRootSetupFromSettings(returnPage) },
+                        )
+                    },
                     onDismissRootSetupProgress = viewModel::dismissRootSetupProgress,
                     onRequestShizukuPermission = viewModel::requestShizukuPermission,
                     onRefreshAgentModeAuthorization = viewModel::refreshAgentModeAuthorization,
@@ -1435,6 +1476,14 @@ internal fun shouldAutoRequestTermuxPermission(
     privacyPolicyAccepted &&
     setupIssue == TermuxSetupIssue.PermissionMissing &&
     !didAutoRequest
+
+internal fun shouldRequestTermuxPermissionBeforeRootSetup(
+    setupIssue: TermuxSetupIssue,
+): Boolean = setupIssue == TermuxSetupIssue.PermissionMissing
+
+internal fun shouldResumeRootSetupAfterTermuxPermission(
+    rootSetupIssue: com.zhousl.aether.data.RootSetupIssue,
+): Boolean = rootSetupIssue == com.zhousl.aether.data.RootSetupIssue.TermuxNotInstalled
 
 private fun normalizeAssistantLink(rawLink: String): String {
     val trimmed = rawLink.trim().removeSurrounding("<", ">")

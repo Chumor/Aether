@@ -981,6 +981,24 @@ fun AetherSharedApp(
         }
         val thinkingCatalogRefreshMutex = remember { Mutex() }
         LaunchedEffect(modelCatalogRequestKey) {
+            if (modelOptions.isNotEmpty()) {
+                // Restore the persisted effort catalog as soon as provider/model
+                // options exist. This is independent of the slower network
+                // refresh and keeps the picker usable while offline.
+                val cachedThinkingLevels = withContext(Dispatchers.Default) {
+                    settingsStore?.load()?.thinkingCatalogCache
+                        ?.takeIf { it.source == ModelsDevThinkingCatalogSource }
+                        ?.levelsByProviderModel
+                        .orEmpty()
+                }
+                val validKeys = modelOptions.mapTo(mutableSetOf()) { option ->
+                    sharedThinkingCatalogKey(option.piProviderId, option.modelId)
+                }
+                val restored = cachedThinkingLevels.filterKeys(validKeys::contains)
+                if (restored.isNotEmpty()) {
+                    thinkingLevelsByProviderModel = thinkingLevelsByProviderModel + restored
+                }
+            }
             val fetched = modelCatalogClient.fetchModelInfo(modelOptions)
             if (fetched.isEmpty()) return@LaunchedEffect
             fetched.values.distinctBy(SharedModelCatalogInfo::labLogoPathData).forEach { info ->

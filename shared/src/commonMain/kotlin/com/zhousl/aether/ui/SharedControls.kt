@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
@@ -172,9 +173,11 @@ internal fun <T> SharedSettingsPageTransition(
     targetState: T,
     depth: (T) -> Int,
     label: String,
+    stateKey: (T) -> Any = { it.toString() },
     content: @Composable (T) -> Unit,
 ) {
     val richMotion = LocalSharedSettingsRichMotion.current
+    val stateHolder = rememberSaveableStateHolder()
     AnimatedContent(
         targetState = targetState,
         transitionSpec = {
@@ -211,7 +214,9 @@ internal fun <T> SharedSettingsPageTransition(
         },
         label = label,
     ) { currentState ->
-        content(currentState)
+        stateHolder.SaveableStateProvider(stateKey(currentState)) {
+            content(currentState)
+        }
     }
 }
 

@@ -217,6 +217,7 @@ private enum class SettingsPage {
     WebTools,
     Reliability,
     ExtensionSettings,
+    ExtensionSettingsCategory,
     Skills,
     AddSkill,
     Extensions,
@@ -272,6 +273,7 @@ private fun SettingsPage.depth(): Int = when (this) {
     SettingsPage.AlpineTerminal,
     SettingsPage.AlpineChrome,
     SettingsPage.RootSetupProgress -> 2
+    SettingsPage.ExtensionSettingsCategory -> 2
     SettingsPage.DefaultChatModel,
     SettingsPage.DefaultTitleModel,
     SettingsPage.DefaultNamingModel,
@@ -716,6 +718,7 @@ fun SettingsScreen(
     var rootSetupReturnPage by rememberSaveable { mutableStateOf(SettingsPage.Termux.name) }
     var selectedPiPackageSourceValue by rememberSaveable { mutableStateOf("") }
     var selectedExtensionSettingsId by rememberSaveable { mutableStateOf("") }
+    var selectedExtensionSettingsCategoryId by rememberSaveable { mutableStateOf("") }
     val extensionSettings = LocalAetherExtensionUiController.current
         ?.snapshot
         ?.settings
@@ -757,6 +760,7 @@ fun SettingsScreen(
         SettingsPage.AddSkill -> SettingsPage.Skills
         SettingsPage.PackageDetail -> SettingsPage.Extensions
         SettingsPage.ExtensionSettings -> SettingsPage.Hub
+        SettingsPage.ExtensionSettingsCategory -> SettingsPage.ExtensionSettings
         SettingsPage.AddMcpServer, SettingsPage.EditMcpServer -> SettingsPage.McpServers
         SettingsPage.AddScheduledTask, SettingsPage.EditScheduledTask -> SettingsPage.ScheduledTasks
         SettingsPage.AlpineTerminal,
@@ -837,6 +841,7 @@ fun SettingsScreen(
                 extensionSettings = extensionSettings,
                 onOpenExtensionSettings = { id ->
                     selectedExtensionSettingsId = id
+                    selectedExtensionSettingsCategoryId = ""
                     currentPage = SettingsPage.ExtensionSettings.name
                 },
                 mcpServerCount = mcpServers.size,
@@ -1027,10 +1032,34 @@ fun SettingsScreen(
                 val selected = extensionSettings.firstOrNull { it.id == selectedExtensionSettingsId }
                 if (selected == null) {
                     currentPage = SettingsPage.Hub.name
+                } else if (selected.categories.isNotEmpty()) {
+                    AetherExtensionSettingsCategoriesPage(
+                        page = selected,
+                        onCategorySelected = { categoryId ->
+                            selectedExtensionSettingsCategoryId = categoryId
+                            currentPage = SettingsPage.ExtensionSettingsCategory.name
+                        },
+                        onBack = { currentPage = SettingsPage.Hub.name },
+                    )
                 } else {
                     AetherExtensionSettingsPage(
                         page = selected,
+                        category = null,
                         onBack = { currentPage = SettingsPage.Hub.name },
+                    )
+                }
+            }
+
+            SettingsPage.ExtensionSettingsCategory -> {
+                val selectedPage = extensionSettings.firstOrNull { it.id == selectedExtensionSettingsId }
+                val selectedCategory = selectedPage?.categories?.firstOrNull { it.id == selectedExtensionSettingsCategoryId }
+                if (selectedPage == null || selectedCategory == null) {
+                    currentPage = SettingsPage.ExtensionSettings.name
+                } else {
+                    AetherExtensionSettingsPage(
+                        page = selectedPage,
+                        category = selectedCategory,
+                        onBack = { currentPage = SettingsPage.ExtensionSettings.name },
                     )
                 }
             }
@@ -3009,12 +3038,38 @@ private fun ReliabilityPage(
 }
 
 @Composable
+private fun AetherExtensionSettingsCategoriesPage(
+    page: com.zhousl.aether.data.AetherAppExtensionSettingsPage,
+    onCategorySelected: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    SubPageScaffold(title = page.title, onBack = onBack, trailingIcon = Icons.Rounded.Check, onTrailingAction = onBack) {
+        if (page.subtitle.isNotBlank()) {
+            Text(page.subtitle, style = MaterialTheme.typography.bodySmall, color = AetherOnSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
+            Spacer(Modifier.height(12.dp))
+        }
+        SettingsCardGroup {
+            page.categories.forEachIndexed { index, category ->
+                SettingsNavRow(
+                    icon = extensionIcon(category.icon),
+                    title = category.title,
+                    subtitle = category.subtitle,
+                ) { onCategorySelected(category.id) }
+                if (index < page.categories.lastIndex) CardDivider()
+            }
+        }
+    }
+}
+
+@Composable
 private fun AetherExtensionSettingsPage(
     page: com.zhousl.aether.data.AetherAppExtensionSettingsPage,
+    category: com.zhousl.aether.data.AetherAppExtensionSettingsCategory?,
     onBack: () -> Unit,
 ) {
     val controller = LocalAetherExtensionUiController.current
     val uriHandler = LocalUriHandler.current
+    val sections = category?.sections ?: page.sections
     fun update(setting: JSONObject, value: Any?) {
         controller?.onAction?.invoke(
             page.extensionId,
@@ -3022,8 +3077,8 @@ private fun AetherExtensionSettingsPage(
             JSONObject().put("setting", setting.optString("id")).put("value", value),
         )
     }
-    SubPageScaffold(title = page.title, onBack = onBack, trailingIcon = Icons.Rounded.Check, onTrailingAction = onBack) {
-        page.sections.forEachIndexed { sectionIndex, section ->
+    SubPageScaffold(title = category?.title ?: page.title, onBack = onBack, trailingIcon = Icons.Rounded.Check, onTrailingAction = onBack) {
+        sections.forEachIndexed { sectionIndex, section ->
             val sectionTitle = section.optString("title")
             val sectionDescription = section.optString("description")
             if (sectionIndex > 0) Spacer(Modifier.height(16.dp))

@@ -127,6 +127,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.zhousl.aether.BuildConfig
 
 import com.zhousl.aether.R
@@ -628,7 +630,7 @@ fun SettingsScreen(
         lastObservedRootSetupIssue = rootSetupState.issue
     }
 
-    fun persistAndExit() {
+    fun persistSettings() {
         onSave(
             systemPromptValue.text,
             tavilyApiKeyValue.text,
@@ -653,63 +655,25 @@ fun SettingsScreen(
             defaultNamingModelKeyValue,
             defaultCompactingModelKeyValue,
         )
+    }
+
+    fun persistAndExit() {
+        persistSettings()
         onBack()
     }
 
     fun persistAndReplayOnboarding() {
-        onSave(
-            systemPromptValue.text,
-            tavilyApiKeyValue.text,
-            normalizeTavilyBaseUrl(tavilyBaseUrlValue.text),
-            normalizeLlmInactivityReconnectTimeoutSeconds(
-                llmInactivityReconnectTimeoutValue.text.trim().toIntOrNull()
-            ),
-            keepTasksRunningInBackgroundValue,
-            notifyOnTaskCompletionValue,
-            agentWorkspaceModeValue,
-            autoCleanOldCommandHistoryValue,
-            normalizeOldCommandHistoryRetentionHours(
-                oldCommandHistoryRetentionHoursValue.text.trim().toIntOrNull()
-            ),
-            termuxEnvironmentVariablesValue,
-            agentModeAuthorizationEnabledValue,
-            agentModeAuthorizationMethodValue,
-            languageValue,
-            themeModeValue,
-            defaultChatModelKeyValue,
-            defaultTitleModelKeyValue,
-            defaultNamingModelKeyValue,
-            defaultCompactingModelKeyValue,
-        )
+        persistSettings()
         onReplayOnboarding()
     }
 
     fun persistAndReplayFollowUpOnboarding() {
-        onSave(
-            systemPromptValue.text,
-            tavilyApiKeyValue.text,
-            normalizeTavilyBaseUrl(tavilyBaseUrlValue.text),
-            normalizeLlmInactivityReconnectTimeoutSeconds(
-                llmInactivityReconnectTimeoutValue.text.trim().toIntOrNull()
-            ),
-            keepTasksRunningInBackgroundValue,
-            notifyOnTaskCompletionValue,
-            agentWorkspaceModeValue,
-            autoCleanOldCommandHistoryValue,
-            normalizeOldCommandHistoryRetentionHours(
-                oldCommandHistoryRetentionHoursValue.text.trim().toIntOrNull()
-            ),
-            termuxEnvironmentVariablesValue,
-            agentModeAuthorizationEnabledValue,
-            agentModeAuthorizationMethodValue,
-            languageValue,
-            themeModeValue,
-            defaultChatModelKeyValue,
-            defaultTitleModelKeyValue,
-            defaultNamingModelKeyValue,
-            defaultCompactingModelKeyValue,
-        )
+        persistSettings()
         onReplayFollowUpOnboarding()
+    }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        persistSettings()
     }
 
     // Local page navigation
@@ -913,7 +877,10 @@ fun SettingsScreen(
                 )?.fullLabel?.let { stringResource(R.string.settings_automatic_model_with_name, it) }
                     ?: stringResource(R.string.settings_automatic_model),
                 automaticSubtitle = stringResource(R.string.settings_prioritize_sota_models),
-                onSelected = { defaultChatModelKeyValue = it },
+                onSelected = {
+                    defaultChatModelKeyValue = it
+                    persistSettings()
+                },
                 onBack = { currentPage = SettingsPage.DefaultModels.name },
             )
 
@@ -929,7 +896,10 @@ fun SettingsScreen(
                 )?.fullLabel?.let { stringResource(R.string.settings_automatic_model_with_name, it) }
                     ?: stringResource(R.string.settings_automatic_model),
                 automaticSubtitle = stringResource(R.string.settings_prioritize_sota_models),
-                onSelected = { defaultTitleModelKeyValue = it },
+                onSelected = {
+                    defaultTitleModelKeyValue = it
+                    persistSettings()
+                },
                 onBack = { currentPage = SettingsPage.DefaultModels.name },
             )
 
@@ -945,7 +915,10 @@ fun SettingsScreen(
                 )?.fullLabel?.let { stringResource(R.string.settings_automatic_model_with_name, it) }
                     ?: stringResource(R.string.settings_automatic_model),
                 automaticSubtitle = stringResource(R.string.settings_prioritize_sota_models),
-                onSelected = { defaultNamingModelKeyValue = it },
+                onSelected = {
+                    defaultNamingModelKeyValue = it
+                    persistSettings()
+                },
                 onBack = { currentPage = SettingsPage.DefaultModels.name },
             )
 
@@ -961,7 +934,10 @@ fun SettingsScreen(
                 )?.fullLabel?.let { stringResource(R.string.settings_automatic_model_with_name, it) }
                     ?: stringResource(R.string.settings_automatic_model),
                 automaticSubtitle = stringResource(R.string.settings_prioritize_efficient_summary_models),
-                onSelected = { defaultCompactingModelKeyValue = it },
+                onSelected = {
+                    defaultCompactingModelKeyValue = it
+                    persistSettings()
+                },
                 onBack = { currentPage = SettingsPage.DefaultModels.name },
             )
 

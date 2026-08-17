@@ -353,6 +353,30 @@ aether.registerSettings({
 });
 ```
 
+The Aether Agent can inspect these native Settings Pages with
+`aether_config_get({ categories: ["extensions"] })`. It can update value
+controls through the same registered settings actions used by the native UI:
+
+```json
+{
+  "category": "extensions",
+  "settings": {
+    "extension_id": "my-extension",
+    "settings_id": "preferences",
+    "values": {
+      "enabled": true,
+      "mode": "quality"
+    }
+  }
+}
+```
+
+Pass that payload to `aether_config_set`. Text, password, textarea, number,
+toggle, selection, tab, and slider values are writable. Buttons, links, labels,
+dividers, and spacers are not treated as setting values. This interface only
+covers Settings Pages registered through `aether.extensions`; compatible Pi
+Extension configuration files remain regular files managed by the Agent.
+
 Extensions have exactly one native page registration API: `registerSettings`.
 There is no `registerPage`, `registerSettingsPage`, drawer-page, or full-screen
 page API. Extensions cannot create pages outside the native Settings flow.

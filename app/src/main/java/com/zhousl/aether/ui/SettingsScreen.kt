@@ -3172,18 +3172,36 @@ private fun AetherExtensionSettingsSections(
                                     )
                                 }
                             }
-                            "button" -> SettingsActionButton(
-                                label = label,
-                                onClick = {
+                            "button" -> {
+                                val buttonIcon = setting.optString("icon")
+                                    .takeIf(String::isNotBlank)
+                                    ?.let(::extensionIcon)
+                                val buttonModifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                                val onClick: () -> Unit = {
                                     controller?.onAction?.invoke(
                                         page.extensionId,
                                         action,
                                         setting.optJSONObject("args") ?: JSONObject(),
                                     )
-                                },
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                                enabled = setting.optBoolean("enabled", true),
-                            )
+                                    Unit
+                                }
+                                when (setting.optString("tone").lowercase()) {
+                                    "neutral", "secondary", "danger", "error" -> SettingsSubtleActionButton(
+                                        label = label,
+                                        onClick = onClick,
+                                        modifier = buttonModifier,
+                                        enabled = setting.optBoolean("enabled", true),
+                                        icon = buttonIcon,
+                                    )
+                                    else -> SettingsActionButton(
+                                        label = label,
+                                        onClick = onClick,
+                                        modifier = buttonModifier,
+                                        enabled = setting.optBoolean("enabled", true),
+                                        icon = buttonIcon,
+                                    )
+                                }
+                            }
                             "link" -> SettingsNavRow(
                                 icon = Icons.Rounded.Link,
                                 title = label,
@@ -3205,16 +3223,18 @@ private fun AetherExtensionSettingsSections(
                             "spacer" -> Spacer(Modifier.height(setting.optInt("size", 8).coerceAtLeast(1).dp))
                             "label" -> Text(label, color = AetherOnSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                             else -> {
-                                var value by remember(id, setting.optString("value")) { mutableStateOf(setting.optString("value")) }
+                                var value by rememberSaveable(id, stateSaver = TextFieldValue.Saver) {
+                                    mutableStateOf(TextFieldValue(setting.optString("value")))
+                                }
                                 ChatGptTextField(
                                     label = label,
-                                    value = TextFieldValue(value),
+                                    value = value,
                                     minLines = if (type == "textarea" || setting.optBoolean("multiline")) 4 else 1,
                                     isSecret = type == "password" || setting.optBoolean("secret"),
                                     placeholder = setting.optString("placeholder").ifBlank { label },
                                     supportingText = description,
                                     keyboardOptions = if (type == "number") KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
-                                    onValueChange = { value = it.text; update(setting, it.text) },
+                                    onValueChange = { value = it; update(setting, it.text) },
                                 )
                             }
                         }

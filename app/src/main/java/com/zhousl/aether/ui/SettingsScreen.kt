@@ -3178,12 +3178,14 @@ private fun AetherExtensionSettingsSections(
                                     ?.let(::extensionIcon)
                                 val buttonModifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                                 val onClick: () -> Unit = {
-                                    controller?.onAction?.invoke(
-                                        page.extensionId,
-                                        action,
-                                        setting.optJSONObject("args") ?: JSONObject(),
-                                    )
-                                    Unit
+                                    val invokeAction = controller?.onAction
+                                    if (invokeAction != null) {
+                                        invokeAction(
+                                            page.extensionId,
+                                            action,
+                                            setting.optJSONObject("args") ?: JSONObject(),
+                                        )
+                                    }
                                 }
                                 when (setting.optString("tone").lowercase()) {
                                     "neutral", "secondary", "danger", "error" -> SettingsSubtleActionButton(

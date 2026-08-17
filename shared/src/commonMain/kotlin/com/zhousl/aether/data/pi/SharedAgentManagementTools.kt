@@ -68,7 +68,7 @@ class SharedAgentManagementTools(
             .map(String::lowercase)
             .toSet()
         val categories = requested.ifEmpty {
-            setOf("general", "reliability", "agent_skills", "extensions", "developer")
+            setOf("general", "reliability", "agent_skills", "developer")
         }
         val current = settings()
         return agentToolSuccess("Read ${categories.size} Aether configuration categories.") {
@@ -139,8 +139,8 @@ class SharedAgentManagementTools(
         require(values.isNotEmpty()) { "settings.values must contain at least one setting." }
 
         var snapshot = extensionSettings()
-        values.forEach { (settingId, value) ->
-            val page = snapshot.extensionSettingsPage(extensionId, settingsId)
+        val page = snapshot.extensionSettingsPage(extensionId, settingsId)
+        val validatedValues = values.map { (settingId, value) ->
             val setting = page.setting(settingId)
                 ?: error("Unknown setting '$settingId' in '$extensionId/$settingsId'.")
             val type = setting.string("type").ifBlank { "text" }
@@ -150,6 +150,9 @@ class SharedAgentManagementTools(
             require(value is JsonPrimitive && value.contentOrNull != null) {
                 "Extension setting '$settingId' requires a string, number, or boolean value."
             }
+            settingId to value
+        }
+        validatedValues.forEach { (settingId, value) ->
             snapshot = updateExtensionSetting(extensionId, settingsId, settingId, value)
         }
 

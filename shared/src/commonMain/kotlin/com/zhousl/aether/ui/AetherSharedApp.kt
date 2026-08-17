@@ -8144,14 +8144,27 @@ private fun SharedSettingsScreen(
                 val page = registeredExtensionSettings.firstOrNull { it.id == selected.extensionSettingsId }
                 val category = page?.categories?.firstOrNull { it.id == selected.extensionSettingsCategoryId }
                 if (page != null && category != null) {
-                    SharedAetherExtensionSettingsDetail(page = page, category = category, onBack = {
-                        destination = SettingsDestination(
-                            title = page.title,
-                            subtitle = page.subtitle,
-                            kind = SharedSettingsKind.ExtensionSettings,
-                            extensionSettingsId = page.id,
-                        )
-                    })
+                    SharedAetherExtensionSettingsDetail(
+                        page = page,
+                        category = category,
+                        onCategorySelected = { categoryId ->
+                            destination = SettingsDestination(
+                                title = page.title,
+                                subtitle = page.subtitle,
+                                kind = SharedSettingsKind.ExtensionSettingsCategory,
+                                extensionSettingsId = page.id,
+                                extensionSettingsCategoryId = categoryId,
+                            )
+                        },
+                        onBack = {
+                            destination = SettingsDestination(
+                                title = page.title,
+                                subtitle = page.subtitle,
+                                kind = SharedSettingsKind.ExtensionSettings,
+                                extensionSettingsId = page.id,
+                            )
+                        },
+                    )
                 }
             }
             SharedSettingsKind.Skills -> SharedSkillsSettingsDetail(

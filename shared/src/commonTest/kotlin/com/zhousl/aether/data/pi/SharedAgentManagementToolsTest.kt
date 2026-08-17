@@ -161,7 +161,10 @@ class SharedAgentManagementToolsTest {
                 put("settings", buildJsonObject {
                     put("extension_id", "demo")
                     put("settings_id", "preferences")
-                    put("values", buildJsonObject { put("reset", "now") })
+                    put("values", buildJsonObject {
+                        put("enabled", false)
+                        put("reset", "now")
+                    })
                 })
             },
         )

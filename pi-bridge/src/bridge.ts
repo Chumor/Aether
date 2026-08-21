@@ -2869,6 +2869,10 @@ async function reloadAllExtensionSessions(
   payload: JsonObject = {},
 ): Promise<JsonObject> {
   const loadOptions = nativeExtensionLoadOptionsFromPayload(payload);
+  // Preinstalled packages can provide both Pi and Aether entrypoints. Resolve
+  // their npm dependencies before reloading native Pi sessions so both loaders
+  // observe the same ready package tree.
+  const aetherReload = await loadAetherAppExtensions(process.cwd(), loadOptions);
   const results: JsonObject[] = [];
   for (const state of agentSessions.values()) {
     const scheduled = !state.session.isIdle;
@@ -2881,12 +2885,17 @@ async function reloadAllExtensionSessions(
       errors: state.resourceLoader.getExtensions().errors,
     });
   }
-  const aetherReload = await loadAetherAppExtensions(process.cwd(), loadOptions);
+  // ResourceLoader keeps healthy extensions active while reporting broken ones as
+  // diagnostics. A diagnostic must not make an unrelated import/enable operation
+  // fail; an actual reload exception is already propagated above.
   const sessionReloadSucceeded = results.every((result) =>
-    Array.isArray(result.errors) && result.errors.length === 0
+    result.reloaded === true || result.scheduled === true
   );
   return {
-    succeeded: sessionReloadSucceeded && aetherReload.reloaded,
+    // Aether Script extensions are reloaded independently. Keep the session
+    // operation usable when one unrelated Aether extension remains broken; its
+    // details are still returned in aether_reload.errors for diagnostics.
+    succeeded: sessionReloadSucceeded,
     session_count: results.length,
     sessions: results,
     aether_reload: aetherReload,

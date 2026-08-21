@@ -873,6 +873,10 @@ private suspend fun replaceSharedImportedPath(
         )
         check(moveResult.exitCode == 0) { moveResult.stderr.ifBlank { "Unable to store the extension." } }
         reload()
+        val marker = sharedRemovedPreinstalledExtensionMarker(runtime, destination)
+        if (marker != null && runtime.fileSystem.exists(marker)) {
+            runtime.fileSystem.remove(marker)
+        }
         if (hadExisting) runtime.fileSystem.remove(backup, recursive = true)
     } catch (error: Throwable) {
         withContext(NonCancellable) {
@@ -911,6 +915,20 @@ internal suspend fun removeSharedImportedExtension(
     }
     require(runtime.fileSystem.exists(installedPath)) { "The imported extension no longer exists." }
     runtime.fileSystem.remove(installedPath, recursive = true)
+    sharedRemovedPreinstalledExtensionMarker(runtime, installedPath)?.let { marker ->
+        runtime.fileSystem.createDirectories(marker.substringBeforeLast('/'))
+        runtime.fileSystem.write(marker, "removed\n".encodeToByteArray())
+    }
+}
+
+private fun sharedRemovedPreinstalledExtensionMarker(
+    runtime: MultiplatformLocalRuntime,
+    installedPath: String,
+): String? {
+    val root = sharedExtensionImportRoot(runtime).trimEnd('/')
+    val name = installedPath.removePrefix("$root/")
+    if (name.isBlank() || '/' in name || installedPath != "$root/$name") return null
+    return runtime.homeDirectory.trimEnd('/') + "/.aether/.removed-preinstalled-extensions/$name"
 }
 
 private fun sharedExtensionImportRoot(runtime: MultiplatformLocalRuntime): String =
@@ -1136,15 +1154,9 @@ internal fun SharedExtensionsSettingsDetail(
     }
 
     suspend fun refreshExtensionRuntime(reload: Boolean, reloadAgentSessions: Boolean = false) {
-        val sessionErrors = if (reloadAgentSessions) {
-            bridgeClient.reloadAllExtensions().sharedSessionReloadErrors()
-        } else {
-            emptyList()
-        }
+        if (reloadAgentSessions) bridgeClient.reloadAllExtensions()
         val refreshed = if (reload) extensionManager.reload() else extensionManager.refresh()
         publishSnapshot(refreshed)
-        val errors = mergeSharedExtensionErrors(sessionErrors, extensionManager.error)
-        check(errors.isEmpty()) { errors.take(3).joinToString("; ") }
     }
 
     fun userFacingError(error: Throwable): String =
@@ -1182,20 +1194,16 @@ internal fun SharedExtensionsSettingsDetail(
 
     fun installPackage(source: String) {
         runOperation(source, { updatedMessage }) {
-            val response = bridgeClient.installExtensionPackage(source)
+            bridgeClient.installExtensionPackage(source)
             refreshExtensionRuntime(reload = true)
-            val errors = (response["reload"] as? JsonObject)?.sharedSessionReloadErrors().orEmpty()
-            check(errors.isEmpty()) { errors.take(3).joinToString("; ") }
             true
         }
     }
 
     fun updatePackage(extension: SharedInstalledExtension) {
         runOperation(extension.source, { updatedMessage }) {
-            val response = bridgeClient.updateExtensionPackage(extension.source)
+            bridgeClient.updateExtensionPackage(extension.source)
             refreshExtensionRuntime(reload = true)
-            val errors = (response["reload"] as? JsonObject)?.sharedSessionReloadErrors().orEmpty()
-            check(errors.isEmpty()) { errors.take(3).joinToString("; ") }
             true
         }
     }

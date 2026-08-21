@@ -574,8 +574,13 @@ class PiExtensionManager(
             aetherEntryCount == 0 &&
             nativeEntrypointCount == 0
         ) return null
+        val guestRoot = if (scope == "pi") {
+            PiUserExtensionGuestDirectory
+        } else {
+            AetherExtensionGuestDirectory
+        }
         return InstalledPiExtension(
-            id = "import:$scope:${file.canonicalPath}",
+            id = "import:$scope:$guestRoot/${file.name}",
             name = manifest?.optString("name").orEmpty().ifBlank { file.nameWithoutExtension },
             source = if (scope == "pi") "Pi user directory" else "Imported",
             version = manifest?.optString("version").orEmpty(),

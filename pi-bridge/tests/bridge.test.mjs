@@ -1225,6 +1225,57 @@ export default function (pi: ExtensionAPI) {
   assert.equal(invoked.invoked, true);
 });
 
+test("recreates existing sessions after disabling a Pi extension", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "aether-pi-disable-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  const extensionDirectory = join(workspace, ".pi", "extensions");
+  await mkdir(extensionDirectory, { recursive: true });
+  await writeFile(
+    join(extensionDirectory, "disable-me.ts"),
+    `
+export default function (pi) {
+  pi.registerCommand("disable-me", { description: "Disable me", async handler() {} });
+}
+`,
+    "utf8",
+  );
+
+  const client = new BridgeClient();
+  await client.request(
+    "disable-create",
+    "run_turn",
+    {
+      ...turnPayload("session-disable", [userMessage("start")]),
+      workspace_directory: workspace,
+    },
+  );
+  const before = await client.request("disable-list-before", "list_extensions", {
+    session_id: "session-disable",
+  });
+  assert.ok(before.commands.some((command) => command.name === "disable-me"));
+
+  const reload = await client.request("disable-reload", "reload_all_extensions", {
+    disabled_extension_paths: [extensionDirectory],
+    disabled_package_sources: [],
+  });
+  assert.equal(reload.sessions[0].recreated_on_next_use, true);
+
+  await client.request(
+    "disable-recreate",
+    "run_turn",
+    {
+      ...turnPayload("session-disable", [userMessage("continue")]),
+      workspace_directory: workspace,
+      disabled_extension_paths: [extensionDirectory],
+      disabled_package_sources: [],
+    },
+  );
+  const after = await client.request("disable-list-after", "list_extensions", {
+    session_id: "session-disable",
+  });
+  assert.ok(after.commands.every((command) => command.name !== "disable-me"));
+});
+
 test("recreates a reused session when a new Pi extension becomes discoverable", async (t) => {
   const workspace = await mkdtemp(join(tmpdir(), "aether-pi-extension-discovery-"));
   t.after(() => rm(workspace, { recursive: true, force: true }));

@@ -1110,6 +1110,7 @@ internal fun SharedExtensionsSettingsDetail(
     var detailsError by remember { mutableStateOf("") }
     var detailsReloadToken by remember { mutableIntStateOf(0) }
     var importedExtensionName by remember { mutableStateOf("") }
+    var installedLoadGeneration by remember { mutableStateOf(0L) }
 
     val updatedMessage = stringResource(Res.string.message_pi_extension_updated)
     val importedNamePlaceholder = "{extension_name}"
@@ -1131,19 +1132,24 @@ internal fun SharedExtensionsSettingsDetail(
     }
 
     suspend fun loadInstalledState() {
+        val generation = ++installedLoadGeneration
         coroutineScope {
             val packageRequest = async { bridgeClient.listExtensionPackages() }
             val importedRequest = async { listSharedImportedExtensions(runtime) }
             val optionsRequest = async { extensionStateStore.load() }
             val options = optionsRequest.await()
-            installedPackages = parseSharedInstalledPackages(packageRequest.await()).map { extension ->
+            val loadedPackages = parseSharedInstalledPackages(packageRequest.await()).map { extension ->
                 extension.copy(isEnabled = extension.source !in options.disabledPackageSources)
             }
-            importedExtensions = importedRequest.await().map { extension ->
+            val loadedImports = importedRequest.await().map { extension ->
                 val baseName = extension.installedPath.substringAfterLast('/')
                 val isExplicitlyDisabled = extension.installedPath in options.disabledExtensionPaths ||
                     options.disabledExtensionPaths.any { it.substringAfterLast('/') == baseName }
                 extension.copy(isEnabled = !isExplicitlyDisabled)
+            }
+            if (generation == installedLoadGeneration) {
+                installedPackages = loadedPackages
+                importedExtensions = loadedImports
             }
         }
     }
@@ -1233,6 +1239,19 @@ internal fun SharedExtensionsSettingsDetail(
     }
 
     fun setExtensionEnabled(extension: SharedInstalledExtension, enabled: Boolean) {
+        installedLoadGeneration += 1
+        when (extension.kind) {
+            SharedExtensionInstallKind.Package -> {
+                installedPackages = installedPackages.map { installed ->
+                    if (installed.id == extension.id) installed.copy(isEnabled = enabled) else installed
+                }
+            }
+            SharedExtensionInstallKind.Imported -> {
+                importedExtensions = importedExtensions.map { installed ->
+                    if (installed.id == extension.id) installed.copy(isEnabled = enabled) else installed
+                }
+            }
+        }
         runOperation(extension.id, { updatedMessage }) {
             when (extension.kind) {
                 SharedExtensionInstallKind.Package ->

@@ -33,12 +33,14 @@ class ProviderModelCatalogClientTest {
             """{"providers":{"moonshotai":{"models":{"kimi-k3":{"id":"kimi-k3","reasoning":true,"reasoning_options":[{"type":"toggle"},{"type":"effort","values":["low","high","max"]}]}}}}}""",
         )
 
+        val result = publicCatalogThinkingResult(catalog, listOf(option))
+        val key = thinkingCatalogKey("openai-compatible", "kimi-k3")
+
         assertEquals(
             listOf("off", "low", "high", "max"),
-            publicCatalogThinkingLevels(catalog, listOf(option))[
-                thinkingCatalogKey("openai-compatible", "kimi-k3")
-            ],
+            result.levelsByProviderModel[key],
         )
+        assertEquals(mapOf("off" to "none"), result.levelMapsByProviderModel[key])
     }
 
     @Test

@@ -633,6 +633,7 @@ class SessionExecutionManager(
                 onToolProgress = emitToolEvent,
                 onAssistantReasoningDelta = { delta ->
                     if (handle.pauseRequested) return@runTurn
+                    if (request.settings.reasoningEffort == "off") return@runTurn
                     if (delta.isEmpty()) return@runTurn
                     handle.finishDirectReasoningSummaryChunk()
                     appendReasoningDelta(
@@ -642,6 +643,7 @@ class SessionExecutionManager(
                 },
                 onAssistantReasoningSummaryDelta = { delta ->
                     if (handle.pauseRequested) return@runTurn
+                    if (request.settings.reasoningEffort == "off") return@runTurn
                     if (delta.isEmpty()) return@runTurn
                     appendDirectReasoningSummaryDelta(
                         handle = handle,
@@ -2342,6 +2344,10 @@ class SessionExecutionManager(
         if (!titleSettings.isProviderSetupValid()) {
             return null
         }
+        val modelKey = thinkingCatalogKey(titleSettings.piProviderId, titleSettings.modelId)
+        val thinkingLevelMap = settingsRepository.loadThinkingLevelMapsCache()[modelKey].orEmpty()
+        val isReasoningModel = settingsRepository.loadThinkingCatalogCache()[modelKey]
+            .orEmpty().isNotEmpty()
         val prompt = buildString {
             appendLine("Summarize this assistant reasoning excerpt for a user-visible thinking timeline.")
             appendLine("Return exactly two short paragraphs: first a concise title, then one detail paragraph.")
@@ -2368,6 +2374,8 @@ class SessionExecutionManager(
                 )
             ),
             disableReasoning = true,
+            thinkingLevelMap = thinkingLevelMap,
+            isReasoningModel = isReasoningModel,
         )?.getOrNull()?.assistantText?.trim().orEmpty()
         return parseReasoningSummary(result)
     }

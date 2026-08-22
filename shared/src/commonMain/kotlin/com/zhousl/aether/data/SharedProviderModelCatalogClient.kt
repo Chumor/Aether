@@ -142,7 +142,7 @@ class SharedProviderModelCatalogClient(engine: HttpClientEngine? = null) {
                         if (isEmpty()) addAll(listOf("off", "medium"))
                     }
                     val levelMap = buildMap<String, String> {
-                        if (hasNone) put("off", "none")
+                        if (hasToggle || hasNone) put("off", "none")
                     }
                     levelsMap[key] = levels
                     if (levelMap.isNotEmpty()) levelMapsMap[key] = levelMap

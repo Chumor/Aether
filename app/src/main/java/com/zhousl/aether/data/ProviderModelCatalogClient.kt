@@ -92,7 +92,7 @@ internal fun publicCatalogThinkingResult(
                 if (isEmpty()) addAll(listOf("off", "medium"))
             }
             val levelMap = buildMap<String, String> {
-                if (hasNone) put("off", "none")
+                if (hasToggle || hasNone) put("off", "none")
             }
             val key = thinkingCatalogKey(option.piProviderId, option.modelId)
             levelsMap[key] = levels

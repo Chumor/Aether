@@ -164,12 +164,14 @@ class SharedProviderModelCatalogClientTest {
         )
         val option = listOf(config).availableModelOptions().single()
 
-        val levels = SharedProviderModelCatalogClient(engine).fetchThinkingLevels(listOf(option))
+        val catalog = SharedProviderModelCatalogClient(engine).fetchThinkingCatalog(listOf(option))
+        val key = sharedThinkingCatalogKey("openai-compatible", "kimi-k3")
 
         assertEquals(
             listOf("off", "low", "high", "max"),
-            levels[sharedThinkingCatalogKey("openai-compatible", "kimi-k3")],
+            catalog.levelsByProviderModel[key],
         )
+        assertEquals(mapOf("off" to "none"), catalog.levelMapsByProviderModel[key])
     }
 
     @Test

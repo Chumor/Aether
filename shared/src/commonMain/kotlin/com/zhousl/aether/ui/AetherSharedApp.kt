@@ -1048,7 +1048,14 @@ fun AetherSharedApp(
         val historyStore = remember(chatHistoryDatabase) {
             chatHistoryDatabase?.let(::SharedChatHistoryStore)
         }
-        val appDataManager = remember(settingsStore, historyStore, skillManager, runtime, bridgeClient) {
+        val appDataManager = remember(
+            settingsStore,
+            historyStore,
+            skillManager,
+            runtime,
+            bridgeClient,
+            mcpManager,
+        ) {
             if (settingsStore != null && historyStore != null) {
                 SharedAppDataManager(
                     settingsStore = settingsStore,
@@ -1056,6 +1063,8 @@ fun AetherSharedApp(
                     skillManager = skillManager,
                     runtime = runtime,
                     bridgeClient = bridgeClient,
+                    extensionStateStore = extensionStateStore,
+                    mcpManager = mcpManager,
                 )
             } else {
                 null
@@ -1528,6 +1537,13 @@ fun AetherSharedApp(
                 fallbackKey = fallbackModelKey,
             ) ?: fallbackConfig
             if (!titleConfig.isSharedProviderSetupValid()) return
+            val titleThinkingKey = sharedThinkingCatalogKey(
+                titleConfig.piProviderId,
+                titleConfig.modelId,
+            )
+            val titleThinkingLevelMap = thinkingLevelClampsByProviderModel[titleThinkingKey].orEmpty()
+            val titleIsReasoningModel = thinkingLevelsByProviderModel[titleThinkingKey]
+                .orEmpty().isNotEmpty()
             appScope.launch {
                 val result = runSharedAppCatching {
                     completionClient.completeOnce(
@@ -1537,6 +1553,8 @@ fun AetherSharedApp(
                         reasoning = "off",
                         timeoutMillis = sharedAppSettings.llmInactivityReconnectTimeoutSeconds
                             .coerceIn(30, 3_600) * 1_000,
+                        thinkingLevelMap = titleThinkingLevelMap,
+                        isReasoningModel = titleIsReasoningModel,
                     )
                 }.getOrNull() ?: return@launch
                 val title = result.assistantText.sanitizeSharedSessionTitle()
@@ -1588,6 +1606,14 @@ fun AetherSharedApp(
                 preferredKey = titleModelKey,
                 fallbackKey = fallbackModelKey,
             ) ?: fallbackConfig
+            val summaryThinkingKey = sharedThinkingCatalogKey(
+                summaryConfig.piProviderId,
+                summaryConfig.modelId,
+            )
+            val summaryThinkingLevelMap = thinkingLevelClampsByProviderModel[summaryThinkingKey]
+                .orEmpty()
+            val summaryIsReasoningModel = thinkingLevelsByProviderModel[summaryThinkingKey]
+                .orEmpty().isNotEmpty()
             appScope.launch {
                 try {
                     if (sessionStates[target.id] !== target) return@launch
@@ -1605,6 +1631,8 @@ fun AetherSharedApp(
                                 reasoning = "off",
                                 timeoutMillis = sharedAppSettings.llmInactivityReconnectTimeoutSeconds
                                     .coerceIn(30, 3_600) * 1_000,
+                                thinkingLevelMap = summaryThinkingLevelMap,
+                                isReasoningModel = summaryIsReasoningModel,
                             )
                             if (result.errorMessage.isBlank()) {
                                 parseSharedReasoningSummary(result.assistantText)
@@ -1856,7 +1884,7 @@ fun AetherSharedApp(
                 val thinkingLevelMap = thinkingLevelClampsByProviderModel[modelKey].orEmpty()
                 val isReasoningModel = thinkingLevelsByProviderModel[modelKey].orEmpty().isNotEmpty()
                 val reasoningEffort = sharedAppSettings.reasoningEffort
-                val reasoningEnabled = isReasoningModel && (reasoningEffort != "off" || thinkingLevelMap["off"] == "none")
+                val reasoningEnabled = isReasoningModel
                 if (mappedPiEntryId != null || shouldResetPiBranch) {
                     runSharedAppCatching {
                         bridgeClient.navigateSession(
@@ -1931,6 +1959,7 @@ fun AetherSharedApp(
                         timeoutMillis = sharedAppSettings.llmInactivityReconnectTimeoutSeconds
                             .coerceIn(30, 3_600) * 1_000,
                         thinkingLevelMap = thinkingLevelMap,
+                        isReasoningModel = isReasoningModel,
                         onAssistantTextDelta = { delta ->
                             backgroundLeases[target.id]?.update("Writing response")
                             reasoningTracker.finishDirectSummaryChunk()
@@ -1956,6 +1985,7 @@ fun AetherSharedApp(
                             target.streamingStatus = ""
                         },
                         onAssistantReasoningDelta = { delta ->
+                            if (sharedAppSettings.reasoningEffort == "off") return@runTurn
                             backgroundLeases[target.id]?.update("Reasoning")
                             reasoningTracker.finishDirectSummaryChunk()
                             val now = platformCurrentTimeMillis()
@@ -1974,6 +2004,7 @@ fun AetherSharedApp(
                             )
                         },
                         onAssistantReasoningSummaryDelta = { delta ->
+                            if (sharedAppSettings.reasoningEffort == "off") return@runTurn
                             backgroundLeases[target.id]?.update("Reasoning")
                             val now = platformCurrentTimeMillis()
                             target.messages.updateMessage(assistantId) { current ->
@@ -2141,7 +2172,11 @@ fun AetherSharedApp(
                                         block is SharedAssistantResponseBlock.ToolGroup
                                 }
                             finalized.copy(
-                                reasoningText = current.reasoningText.ifBlank { result.reasoningText },
+                                reasoningText = if (sharedAppSettings.reasoningEffort == "off") {
+                                    ""
+                                } else {
+                                    current.reasoningText.ifBlank { result.reasoningText }
+                                },
                                 isError = false,
                                 isStreaming = false,
                                 status = "",
@@ -2790,6 +2825,8 @@ fun AetherSharedApp(
                     providerConfig = persisted.activeProviderConfig
                     installedSkills.clear()
                     installedSkills.addAll(restored.installedSkills)
+                    mcpServers.clear()
+                    mcpServers.addAll(restored.mcpServers)
                     sessionStates.clear()
                     sessions.clear()
                     restored.sessions.forEach { persistedSession ->
@@ -2813,6 +2850,19 @@ fun AetherSharedApp(
                     }
                     currentSession = restoredCurrent
                     sessionId = restoredCurrent.id
+                    runSharedAppCatching { extensionManager.refresh(extensionContext()) }
+                        .onSuccess { refreshed ->
+                            extensionSnapshot = refreshed
+                            extensionSnapshotResolved = true
+                        }
+                    runSharedAppCatching {
+                        mcpManager.refreshBindings(
+                            restored.mcpServers.filter { server ->
+                                server.enabled && server.id in restoredCurrent.activeMcpServerIds
+                            },
+                            sessionId = restoredCurrent.id,
+                        )
+                    }.onFailure(::reportMcpRefreshFailure)
                     if (restoredCurrent.isDraft) {
                         historyStore?.setCurrentSession(SharedDraftSessionId)
                     }

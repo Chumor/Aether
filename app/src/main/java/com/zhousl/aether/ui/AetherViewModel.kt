@@ -428,11 +428,14 @@ class AetherViewModel(
                 .filterKeys(thinkingCacheKeys::contains)
             val cachedThinkingLevelMaps = settingsRepository.loadThinkingLevelMapsCache()
                 .filterKeys(thinkingCacheKeys::contains)
+            val cachedReasoningModels = settingsRepository.loadReasoningModelsCache()
+                .filterTo(mutableSetOf(), thinkingCacheKeys::contains)
             if (cachedThinkingLevels.isNotEmpty() && requestKey == lastModelCatalogRequestKey) {
                 _uiState.update { current ->
                     current.copy(
                         thinkingLevelsByProviderModel = current.thinkingLevelsByProviderModel + cachedThinkingLevels,
                         thinkingLevelClampsByProviderModel = current.thinkingLevelClampsByProviderModel + cachedThinkingLevelMaps,
+                        reasoningModels = current.reasoningModels + cachedReasoningModels,
                     )
                 }
             }
@@ -452,6 +455,7 @@ class AetherViewModel(
                 settingsRepository.saveThinkingCatalogCache(
                     catalogResult.levelsByProviderModel,
                     catalogResult.levelMapsByProviderModel,
+                    catalogResult.reasoningModels,
                 )
                 if (requestKey == lastModelCatalogRequestKey) {
                     _uiState.update { state ->
@@ -459,7 +463,12 @@ class AetherViewModel(
                             thinkingLevelsByProviderModel =
                                 state.thinkingLevelsByProviderModel + catalogResult.levelsByProviderModel,
                             thinkingLevelClampsByProviderModel =
-                                state.thinkingLevelClampsByProviderModel + catalogResult.levelMapsByProviderModel,
+                                (state.thinkingLevelClampsByProviderModel -
+                                    catalogResult.levelsByProviderModel.keys) +
+                                    catalogResult.levelMapsByProviderModel,
+                            reasoningModels =
+                                (state.reasoningModels - catalogResult.levelsByProviderModel.keys) +
+                                    catalogResult.reasoningModels,
                         )
                     }
                 }
@@ -2389,7 +2398,7 @@ class AetherViewModel(
                     put("workspace_trusted", true)
                     val modelKey = thinkingCatalogKey(settings.piProviderId, settings.modelId)
                     val thinkingLevelMap = _uiState.value.thinkingLevelClampsByProviderModel[modelKey].orEmpty()
-                    val isReasoningModel = _uiState.value.thinkingLevelsByProviderModel[modelKey].orEmpty().isNotEmpty()
+                    val isReasoningModel = modelKey in _uiState.value.reasoningModels
                     put("model_config", settings.toPiModelConfig(thinkingLevelMap, isReasoningModel).toJson())
                     put("system_prompt", "")
                     put("host_tools", JSONArray())
@@ -2622,19 +2631,28 @@ class AetherViewModel(
             return
         }
         viewModelScope.launch {
-            val publicThinkingLevels = ProviderModelCatalogClient.fetchPublicThinkingLevels(listOf(option))
-            if (publicThinkingLevels.isNotEmpty()) {
-                settingsRepository.saveThinkingCatalogCache(publicThinkingLevels)
+            val catalogResult = ProviderModelCatalogClient.fetchPublicThinkingCatalog(listOf(option))
+            if (catalogResult.levelsByProviderModel.isNotEmpty()) {
+                settingsRepository.saveThinkingCatalogCache(
+                    catalogResult.levelsByProviderModel,
+                    catalogResult.levelMapsByProviderModel,
+                    catalogResult.reasoningModels,
+                )
                 _uiState.update { state ->
                     state.copy(
                         thinkingLevelsByProviderModel =
-                            state.thinkingLevelsByProviderModel + publicThinkingLevels,
+                            state.thinkingLevelsByProviderModel + catalogResult.levelsByProviderModel,
                         thinkingLevelClampsByProviderModel =
-                            state.thinkingLevelClampsByProviderModel - publicThinkingLevels.keys,
+                            (state.thinkingLevelClampsByProviderModel -
+                                catalogResult.levelsByProviderModel.keys) +
+                                catalogResult.levelMapsByProviderModel,
+                        reasoningModels =
+                            (state.reasoningModels - catalogResult.levelsByProviderModel.keys) +
+                                catalogResult.reasoningModels,
                     )
                 }
             }
-            onResolved(publicThinkingLevels[cacheKey].orEmpty().isNotEmpty())
+            onResolved(catalogResult.levelsByProviderModel[cacheKey].orEmpty().isNotEmpty())
         }
     }
 
@@ -2650,15 +2668,24 @@ class AetherViewModel(
             .firstOrNull { it.key == selectedModelKey }
             ?: return
         viewModelScope.launch {
-            val publicThinkingLevels = ProviderModelCatalogClient.fetchPublicThinkingLevels(listOf(option))
-            if (publicThinkingLevels.isEmpty()) return@launch
-            settingsRepository.saveThinkingCatalogCache(publicThinkingLevels)
+            val catalogResult = ProviderModelCatalogClient.fetchPublicThinkingCatalog(listOf(option))
+            if (catalogResult.levelsByProviderModel.isEmpty()) return@launch
+            settingsRepository.saveThinkingCatalogCache(
+                catalogResult.levelsByProviderModel,
+                catalogResult.levelMapsByProviderModel,
+                catalogResult.reasoningModels,
+            )
             _uiState.update { state ->
                 state.copy(
                     thinkingLevelsByProviderModel =
-                        state.thinkingLevelsByProviderModel + publicThinkingLevels,
+                        state.thinkingLevelsByProviderModel + catalogResult.levelsByProviderModel,
                     thinkingLevelClampsByProviderModel =
-                        state.thinkingLevelClampsByProviderModel - publicThinkingLevels.keys,
+                        (state.thinkingLevelClampsByProviderModel -
+                            catalogResult.levelsByProviderModel.keys) +
+                            catalogResult.levelMapsByProviderModel,
+                    reasoningModels =
+                        (state.reasoningModels - catalogResult.levelsByProviderModel.keys) +
+                            catalogResult.reasoningModels,
                 )
             }
         }
@@ -5483,8 +5510,7 @@ class AetherViewModel(
             )
             val modelKey = thinkingCatalogKey(titleSettings.piProviderId, titleSettings.modelId)
             val thinkingLevelMap = _uiState.value.thinkingLevelClampsByProviderModel[modelKey].orEmpty()
-            val isReasoningModel = _uiState.value.thinkingLevelsByProviderModel[modelKey]
-                .orEmpty().isNotEmpty()
+            val isReasoningModel = modelKey in _uiState.value.reasoningModels
             val title = piCompletionClient.completeOnce(
                 settings = titleSettings,
                 systemPrompt = SessionTitleSystemPrompt,
@@ -5599,7 +5625,7 @@ class AetherViewModel(
                         put("platform", "android")
                         val modelKey = thinkingCatalogKey(settings.piProviderId, settings.modelId)
                         val thinkingLevelMap = _uiState.value.thinkingLevelClampsByProviderModel[modelKey].orEmpty()
-                        val isReasoningModel = _uiState.value.thinkingLevelsByProviderModel[modelKey].orEmpty().isNotEmpty()
+                        val isReasoningModel = modelKey in _uiState.value.reasoningModels
                         put("model_config", settings.toPiModelConfig(thinkingLevelMap, isReasoningModel).toJson())
                         put("system_prompt", "")
                         put("host_tools", JSONArray())

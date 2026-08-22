@@ -1002,24 +1002,34 @@ fun AetherSharedApp(
         var thinkingLevelClampsByProviderModel by remember {
             mutableStateOf<Map<String, Map<String, String>>>(emptyMap())
         }
+        var reasoningModels by remember { mutableStateOf<Set<String>>(emptySet()) }
         val thinkingCatalogRefreshMutex = remember { Mutex() }
         LaunchedEffect(modelCatalogRequestKey) {
             if (modelOptions.isNotEmpty()) {
                 // Restore the persisted effort catalog as soon as provider/model
                 // options exist. This is independent of the slower network
                 // refresh and keeps the picker usable while offline.
-                val cachedThinkingLevels = withContext(Dispatchers.Default) {
+                val cachedThinkingCatalog = withContext(Dispatchers.Default) {
                     settingsStore?.load()?.thinkingCatalogCache
                         ?.takeIf { it.source == ModelsDevThinkingCatalogSource }
-                        ?.levelsByProviderModel
-                        .orEmpty()
                 }
                 val validKeys = modelOptions.mapTo(mutableSetOf()) { option ->
                     sharedThinkingCatalogKey(option.piProviderId, option.modelId)
                 }
-                val restored = cachedThinkingLevels.filterKeys(validKeys::contains)
-                if (restored.isNotEmpty()) {
-                    thinkingLevelsByProviderModel = thinkingLevelsByProviderModel + restored
+                val restoredLevels = cachedThinkingCatalog?.levelsByProviderModel
+                    .orEmpty()
+                    .filterKeys(validKeys::contains)
+                val restoredClamps = cachedThinkingCatalog?.clampsByProviderModel
+                    .orEmpty()
+                    .filterKeys(validKeys::contains)
+                val restoredReasoningModels = cachedThinkingCatalog?.reasoningModels
+                    .orEmpty()
+                    .filterTo(mutableSetOf(), validKeys::contains)
+                if (restoredLevels.isNotEmpty()) {
+                    thinkingLevelsByProviderModel = thinkingLevelsByProviderModel + restoredLevels
+                    thinkingLevelClampsByProviderModel =
+                        thinkingLevelClampsByProviderModel + restoredClamps
+                    reasoningModels += restoredReasoningModels
                 }
             }
             val fetched = modelCatalogClient.fetchModelInfo(modelOptions)
@@ -1331,7 +1341,16 @@ fun AetherSharedApp(
                     ?.levelsByProviderModel
                     .orEmpty()
                     .filterKeys(persistedThinkingKeys::contains)
-                thinkingLevelClampsByProviderModel = emptyMap()
+                thinkingLevelClampsByProviderModel = persisted.thinkingCatalogCache
+                    .takeIf { it.source == ModelsDevThinkingCatalogSource }
+                    ?.clampsByProviderModel
+                    .orEmpty()
+                    .filterKeys(persistedThinkingKeys::contains)
+                reasoningModels = persisted.thinkingCatalogCache
+                    .takeIf { it.source == ModelsDevThinkingCatalogSource }
+                    ?.reasoningModels
+                    .orEmpty()
+                    .filterTo(mutableSetOf(), persistedThinkingKeys::contains)
                 if (currentSession.isDraft) {
                     currentSession.selectedModelKey = resolveSharedConversationModelKey(
                         selectedModelKey = currentSession.selectedModelKey,
@@ -1432,6 +1451,9 @@ fun AetherSharedApp(
             val cache = SharedThinkingCatalogCache(
                 source = ModelsDevThinkingCatalogSource,
                 levelsByProviderModel = thinkingLevelsByProviderModel.filterKeys(validKeys::contains),
+                clampsByProviderModel =
+                    thinkingLevelClampsByProviderModel.filterKeys(validKeys::contains),
+                reasoningModels = reasoningModels.filterTo(mutableSetOf(), validKeys::contains),
             )
             withContext(Dispatchers.Default) {
                 settingsStore?.saveThinkingCatalogCache(cache)
@@ -1445,7 +1467,11 @@ fun AetherSharedApp(
                 val result = modelCatalogClient.fetchThinkingCatalog(options)
                 if (result.levelsByProviderModel.isNotEmpty()) {
                     thinkingLevelsByProviderModel = thinkingLevelsByProviderModel + result.levelsByProviderModel
-                    thinkingLevelClampsByProviderModel = result.levelMapsByProviderModel
+                    thinkingLevelClampsByProviderModel =
+                        (thinkingLevelClampsByProviderModel - result.levelsByProviderModel.keys) +
+                            result.levelMapsByProviderModel
+                    reasoningModels = (reasoningModels - result.levelsByProviderModel.keys) +
+                        result.reasoningModels
                     persistThinkingCatalogCache()
                 }
                 true
@@ -1542,8 +1568,7 @@ fun AetherSharedApp(
                 titleConfig.modelId,
             )
             val titleThinkingLevelMap = thinkingLevelClampsByProviderModel[titleThinkingKey].orEmpty()
-            val titleIsReasoningModel = thinkingLevelsByProviderModel[titleThinkingKey]
-                .orEmpty().isNotEmpty()
+            val titleIsReasoningModel = titleThinkingKey in reasoningModels
             appScope.launch {
                 val result = runSharedAppCatching {
                     completionClient.completeOnce(
@@ -1612,8 +1637,7 @@ fun AetherSharedApp(
             )
             val summaryThinkingLevelMap = thinkingLevelClampsByProviderModel[summaryThinkingKey]
                 .orEmpty()
-            val summaryIsReasoningModel = thinkingLevelsByProviderModel[summaryThinkingKey]
-                .orEmpty().isNotEmpty()
+            val summaryIsReasoningModel = summaryThinkingKey in reasoningModels
             appScope.launch {
                 try {
                     if (sessionStates[target.id] !== target) return@launch
@@ -1882,7 +1906,7 @@ fun AetherSharedApp(
                 }
                 val modelKey = sharedThinkingCatalogKey(config.piProviderId, config.modelId)
                 val thinkingLevelMap = thinkingLevelClampsByProviderModel[modelKey].orEmpty()
-                val isReasoningModel = thinkingLevelsByProviderModel[modelKey].orEmpty().isNotEmpty()
+                val isReasoningModel = modelKey in reasoningModels
                 val reasoningEffort = sharedAppSettings.reasoningEffort
                 val reasoningEnabled = isReasoningModel
                 if (mappedPiEntryId != null || shouldResetPiBranch) {
@@ -1955,7 +1979,7 @@ fun AetherSharedApp(
                             availableSkills = skillSelection.availableSkills,
                             activeSkills = skillSelection.activeSkills,
                         ),
-                        reasoning = sharedAppSettings.reasoningEffort,
+                        reasoning = reasoningEffort,
                         timeoutMillis = sharedAppSettings.llmInactivityReconnectTimeoutSeconds
                             .coerceIn(30, 3_600) * 1_000,
                         thinkingLevelMap = thinkingLevelMap,
@@ -1985,7 +2009,7 @@ fun AetherSharedApp(
                             target.streamingStatus = ""
                         },
                         onAssistantReasoningDelta = { delta ->
-                            if (sharedAppSettings.reasoningEffort == "off") return@runTurn
+                            if (reasoningEffort == "off") return@runTurn
                             backgroundLeases[target.id]?.update("Reasoning")
                             reasoningTracker.finishDirectSummaryChunk()
                             val now = platformCurrentTimeMillis()
@@ -2004,7 +2028,7 @@ fun AetherSharedApp(
                             )
                         },
                         onAssistantReasoningSummaryDelta = { delta ->
-                            if (sharedAppSettings.reasoningEffort == "off") return@runTurn
+                            if (reasoningEffort == "off") return@runTurn
                             backgroundLeases[target.id]?.update("Reasoning")
                             val now = platformCurrentTimeMillis()
                             target.messages.updateMessage(assistantId) { current ->
@@ -2150,7 +2174,7 @@ fun AetherSharedApp(
                         val completedAt = platformCurrentTimeMillis()
                         val resolvedUsage = if (result.usageAvailable) result.usage else estimatedUsage
                         target.messages.updateMessage(assistantId) { current ->
-                            current.withAssistantResultFallback(result)
+                            if (reasoningEffort == "off") current else current.withAssistantResultFallback(result)
                         }
                         enqueueReasoningSummary(
                             target = target,
@@ -2166,13 +2190,18 @@ fun AetherSharedApp(
                             } else {
                                 completed.withAssistantTextResultFallback(result)
                             }
-                            val hasAgentWork = current.reasoningText.isNotBlank() ||
-                                current.responseBlocks.any { block ->
-                                    block is SharedAssistantResponseBlock.Reasoning ||
-                                        block is SharedAssistantResponseBlock.ToolGroup
-                                }
-                            finalized.copy(
-                                reasoningText = if (sharedAppSettings.reasoningEffort == "off") {
+                            val visibleFinalized = if (reasoningEffort == "off") {
+                                finalized.withoutSharedAssistantReasoning()
+                            } else {
+                                finalized
+                            }
+                            val responseBlocks = visibleFinalized.responseBlocks
+                            val hasAgentWork = responseBlocks.any {
+                                it is SharedAssistantResponseBlock.Reasoning ||
+                                    it is SharedAssistantResponseBlock.ToolGroup
+                            }
+                            visibleFinalized.copy(
+                                reasoningText = if (reasoningEffort == "off") {
                                     ""
                                 } else {
                                     current.reasoningText.ifBlank { result.reasoningText }
@@ -7463,13 +7492,50 @@ internal fun sharedReasoningToolStatus(tool: SharedChatToolInvocation): String {
     }
 }
 
-private fun SharedChatMessage.withAssistantResultFallback(
+internal fun SharedChatMessage.withAssistantResultFallback(
     result: com.zhousl.aether.data.pi.SharedPiTurnResult,
 ): SharedChatMessage {
-    return if (reasoningText.isBlank() && result.reasoningText.isNotBlank()) {
-        appendAssistantReasoningDelta(result.reasoningText)
+    if (reasoningText.isNotBlank() || result.reasoningText.isBlank()) return this
+    val blockId = platformRandomUuid()
+    val reasoningBlock = SharedAssistantResponseBlock.Reasoning(
+        id = blockId,
+        trace = SharedReasoningTrace(
+            id = blockId,
+            rawText = result.reasoningText,
+            startedAtMillis = platformCurrentTimeMillis(),
+        ),
+    )
+    val firstTextIndex = responseBlocks.indexOfFirst { it is SharedAssistantResponseBlock.Text }
+    val blocks = if (firstTextIndex >= 0) {
+        responseBlocks.toMutableList().apply { add(firstTextIndex, reasoningBlock) }
+    } else {
+        responseBlocks + reasoningBlock
+    }
+    return copy(reasoningText = result.reasoningText, responseBlocks = blocks)
+}
+
+internal fun SharedChatMessage.withoutSharedAssistantReasoning(): SharedChatMessage = copy(
+    reasoningText = "",
+    responseBlocks = responseBlocks.filterNot { it is SharedAssistantResponseBlock.Reasoning },
+)
+
+internal fun List<SharedAssistantResponseBlock>.normalizeSharedFinalReasoningOrder(): List<SharedAssistantResponseBlock> =
+    if (size == 2 && this[0] is SharedAssistantResponseBlock.Text &&
+        this[1] is SharedAssistantResponseBlock.Reasoning
+    ) {
+        listOf(this[1], this[0])
     } else {
         this
+    }
+
+internal fun List<SharedAssistantResponseBlock>.removeLeakedSharedReasoning(
+    persistedReasoningText: String,
+): List<SharedAssistantResponseBlock> {
+    if (persistedReasoningText.isNotBlank()) return this
+    return filterNot { block ->
+        block is SharedAssistantResponseBlock.Reasoning &&
+            block.trace.rawText.isNotBlank() &&
+            block.trace.toolInvocations.isEmpty()
     }
 }
 
@@ -7834,7 +7900,9 @@ internal fun PersistedChatMessage.toSharedChatMessage(): SharedChatMessage {
                 detail = block.statusDetail,
             )
         }
-    }.ifEmpty {
+    }.removeLeakedSharedReasoning(reasoningText)
+        .normalizeSharedFinalReasoningOrder()
+        .ifEmpty {
         buildList {
             reasoningText.takeIf(String::isNotBlank)?.let {
                 add(
@@ -7922,7 +7990,12 @@ internal fun PersistedChatMessage.toSharedChatMessage(): SharedChatMessage {
         providerPayloadJson = providerPayloadJson,
         customType = customType,
         customPayloadJson = customPayloadJson,
-    thoughtDurationMillis = thoughtDurationMillis,
+    thoughtDurationMillis = thoughtDurationMillis.takeIf {
+        restoredBlocks.any { block ->
+            block is SharedAssistantResponseBlock.Reasoning ||
+                block is SharedAssistantResponseBlock.ToolGroup
+        }
+    } ?: 0L,
     responseDurationMillis = responseDurationMillis,
     firstTokenLatencyMillis = firstTokenLatencyMillis,
         tokenUsageSource = tokenUsageSource,

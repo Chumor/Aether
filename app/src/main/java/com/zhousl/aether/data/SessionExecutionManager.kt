@@ -607,10 +607,10 @@ class SessionExecutionManager(
                 ),
             )
             val modelKey = thinkingCatalogKey(request.settings.piProviderId, request.settings.modelId)
-            val cachedThinkingLevels = settingsRepository.loadThinkingCatalogCache()
             val cachedThinkingLevelMaps = settingsRepository.loadThinkingLevelMapsCache()
+            val cachedReasoningModels = settingsRepository.loadReasoningModelsCache()
             val thinkingLevelMap = cachedThinkingLevelMaps[modelKey].orEmpty()
-            val isReasoningModel = cachedThinkingLevels[modelKey].orEmpty().isNotEmpty()
+            val isReasoningModel = modelKey in cachedReasoningModels
             val result = piAgentRunner.runTurn(
                 settings = request.settings,
                 messages = buildRequestMessages(
@@ -785,6 +785,17 @@ class SessionExecutionManager(
                         outputTokens = estimatedOutputTokens,
                         totalTokens = (estimatedTokenUsage.totalTokens ?: 0L) + estimatedOutputTokens,
                     )
+                    val responseBlocks = currentAssistantResponseBlocks(handle.sessionId).let { blocks ->
+                        if (request.settings.reasoningEffort == "off") {
+                            blocks.filterNot { it is AssistantResponseBlock.Reasoning }
+                        } else {
+                            blocks
+                        }
+                    }
+                    val visibleThoughtDurationMillis = thoughtDurationMillis.takeIf {
+                        request.settings.reasoningEffort != "off" ||
+                            responseBlocks.any { it is AssistantResponseBlock.ToolGroup }
+                    }
                     diagnosticLogger.event(
                         category = "session",
                         event = "turn_model_success",
@@ -798,10 +809,10 @@ class SessionExecutionManager(
                     appendAgentMessage(
                         sessionId = handle.sessionId,
                         blocks = ensureAssistantResponseFinalText(
-                            blocks = currentAssistantResponseBlocks(handle.sessionId),
+                            blocks = responseBlocks,
                             finalText = turnResult.assistantText,
                         ) { handle.nextPendingBlockId("agent-text") },
-                        thoughtDurationMillis = thoughtDurationMillis,
+                        thoughtDurationMillis = visibleThoughtDurationMillis,
                         outcome = SessionTurnOutcome.Success,
                         tokenUsage = resolvedTokenUsage,
                         tokenUsageSource = if (turnResult.tokenUsage != null) "api" else "estimated",
@@ -820,6 +831,17 @@ class SessionExecutionManager(
                     )
                 },
                 onFailure = { throwable ->
+                    val responseBlocks = currentAssistantResponseBlocks(handle.sessionId).let { blocks ->
+                        if (request.settings.reasoningEffort == "off") {
+                            blocks.filterNot { it is AssistantResponseBlock.Reasoning }
+                        } else {
+                            blocks
+                        }
+                    }
+                    val visibleThoughtDurationMillis = thoughtDurationMillis.takeIf {
+                        request.settings.reasoningEffort != "off" ||
+                            responseBlocks.any { it is AssistantResponseBlock.ToolGroup }
+                    }
                     diagnosticLogger.exception(
                         category = "session",
                         event = "turn_model_failed",
@@ -831,15 +853,15 @@ class SessionExecutionManager(
                     appendAgentMessage(
                         sessionId = handle.sessionId,
                         blocks = appendAssistantResponseText(
-                            blocks = currentAssistantResponseBlocks(handle.sessionId),
+                            blocks = responseBlocks,
                             delta = buildString {
-                                if (currentAssistantResponseBlocks(handle.sessionId).lastOrNull() is AssistantResponseBlock.Text) {
+                                if (responseBlocks.lastOrNull() is AssistantResponseBlock.Text) {
                                     append("\n\n")
                                 }
                                 append("Request failed: ${formatFailureMessage(throwable)}")
                             },
                         ) { handle.nextPendingBlockId("agent-text") },
-                        thoughtDurationMillis = thoughtDurationMillis,
+                        thoughtDurationMillis = visibleThoughtDurationMillis,
                         outcome = SessionTurnOutcome.Failure,
                         tokenUsage = estimatedTokenUsage,
                         tokenUsageSource = "estimated",

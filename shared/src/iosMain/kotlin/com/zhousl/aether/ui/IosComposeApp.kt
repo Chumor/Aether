@@ -289,6 +289,8 @@ import com.zhousl.aether.ui.theme.AetherSurfaceHigh
 import com.zhousl.aether.ui.theme.AetherSurfaceHigher
 import com.zhousl.aether.ui.theme.AetherTertiary
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
@@ -317,24 +319,7 @@ import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import kotlin.math.roundToInt
 
-internal enum class SharedRoute { Onboarding, Chat, Settings }
-
-internal data class SharedNavigationPresentation(
-    val route: SharedRoute,
-    val tabletSettingsVisible: Boolean,
-)
-
-internal fun resolveSharedNavigationPresentation(
-    route: SharedRoute,
-    tabletSettingsVisible: Boolean,
-    useTabletLayout: Boolean,
-): SharedNavigationPresentation = when {
-    useTabletLayout && (route == SharedRoute.Settings || tabletSettingsVisible) ->
-        SharedNavigationPresentation(SharedRoute.Chat, tabletSettingsVisible = true)
-    !useTabletLayout && tabletSettingsVisible ->
-        SharedNavigationPresentation(SharedRoute.Settings, tabletSettingsVisible = false)
-    else -> SharedNavigationPresentation(route, tabletSettingsVisible = false)
-}
+internal enum class SharedRoute { Onboarding, Chat }
 
 private enum class OnboardingStage { Landing, Runtime, Provider, Search }
 private const val SharedScreenTransitionDuration = 320
@@ -353,7 +338,6 @@ private const val SharedReasoningSummarySystemPrompt =
 private fun SharedRoute.depth(): Int = when (this) {
     SharedRoute.Onboarding -> 0
     SharedRoute.Chat -> 1
-    SharedRoute.Settings -> 2
 }
 
 private data class SharedReasoningSummary(
@@ -787,75 +771,6 @@ internal fun buildSharedAssistantRetryPlan(
     return SharedAssistantRetryPlan(retained, user)
 }
 
-private enum class SharedSettingsKind {
-    Generic,
-    General,
-    Providers,
-    Personalization,
-    WebTools,
-    Reliability,
-    ExtensionSettings,
-    ExtensionSettingsCategory,
-    Skills,
-    Extensions,
-    Mcp,
-    Alpine,
-    Terminal,
-    FileManager,
-    Chrome,
-    Statistics,
-    Developer,
-    About,
-}
-private data class SettingsDestination(
-    val title: String,
-    val subtitle: String,
-    val kind: SharedSettingsKind = SharedSettingsKind.Generic,
-    val extensionSettingsId: String = "",
-    val extensionSettingsCategoryId: String = "",
-)
-
-private val SharedSettingsDestinationSaver = Saver<SettingsDestination?, String>(
-    save = { destination -> encodeSettingsDestination(destination) },
-    restore = ::decodeSettingsDestination,
-)
-
-private fun encodeSettingsDestination(destination: SettingsDestination?): String =
-    destination?.let { it.kind.name + "\n" + it.extensionSettingsId + "\n" + it.extensionSettingsCategoryId }.orEmpty()
-
-private fun decodeSettingsDestination(encoded: String): SettingsDestination? =
-    encoded.takeIf(String::isNotBlank)?.let {
-        runCatching {
-            SettingsDestination(
-                title = "",
-                subtitle = "",
-                kind = SharedSettingsKind.valueOf(it.substringBefore('\n')),
-                extensionSettingsId = it.substringAfter('\n', "").substringBefore('\n'),
-                extensionSettingsCategoryId = it.substringAfter('\n', "").substringAfter('\n', ""),
-            )
-        }.getOrNull()
-    }
-
-internal fun shouldReturnToSettingsHubForMissingExtension(
-    encodedDestination: String,
-    registeredExtensionSettingsIds: Set<String>,
-    extensionSnapshotResolved: Boolean,
-): Boolean {
-    if (!extensionSnapshotResolved) return false
-    val destination = decodeSettingsDestination(encodedDestination) ?: return false
-    return destination.kind in setOf(SharedSettingsKind.ExtensionSettings, SharedSettingsKind.ExtensionSettingsCategory) &&
-        destination.extensionSettingsId !in registeredExtensionSettingsIds
-}
-
-private fun SettingsDestination?.depth(): Int = when (this?.kind) {
-    null -> 0
-    SharedSettingsKind.Terminal,
-    SharedSettingsKind.FileManager,
-    SharedSettingsKind.Chrome -> 2
-    SharedSettingsKind.ExtensionSettingsCategory -> 2
-    else -> 1
-}
-
 internal fun resolveSharedProviderForModel(
     providerConfigs: List<LlmProviderConfig>,
     baseConfig: LlmProviderConfig?,
@@ -874,6 +789,14 @@ internal fun resolveSharedProviderForModel(
     } ?: baseConfig
 }
 
+internal fun resolveSharedActiveProviderConfigId(
+    providerConfigs: List<LlmProviderConfig>,
+    preferredActiveConfigId: String,
+): String = preferredActiveConfigId.takeIf { configId ->
+    providerConfigs.any { it.id == configId && it.isEnabled }
+} ?: providerConfigs.firstOrNull { it.isEnabled }?.id
+    ?: providerConfigs.firstOrNull()?.id.orEmpty()
+
 internal fun resolveSharedConversationModelKey(
     selectedModelKey: String,
     defaultChatModelKey: String,
@@ -883,8 +806,6 @@ internal fun resolveSharedConversationModelKey(
     ?: options.resolveAutomaticModelKey(AutomaticModelPurpose.Chat)
 
 private val TopFadeHeight = 42.dp
-private val SettingsTopFadeHeight = 40.dp
-private val SettingsBottomFadeHeight = 96.dp
 private const val FollowUpTourAutoOpenDelayMillis = 2_500L
 private const val TransientMessageDurationMillis = 2_000L
 private const val RuntimeSetupProgressTickMillis = 450L
@@ -915,7 +836,7 @@ private const val SharedSessionTitleSystemPrompt =
     "Generate a concise chat title for this conversation. Return only the title, in the user's language when possible, with no quotes, no emoji, and at most 6 words."
 
 @Composable
-fun AetherSharedApp(
+fun IosComposeApp(
     runtime: MultiplatformLocalRuntime,
     capabilities: PlatformCapabilities,
     settingsStore: AetherSettingsStore? = null,
@@ -959,10 +880,21 @@ fun AetherSharedApp(
                 extensionLoadOptionsProvider = extensionStateStore::load,
             )
         }
+        val extensionBridgeClient = remember(runtime, extensionStateStore) {
+            SharedPiBridgeClient(
+                transport = RuntimePiBridgeTransport(
+                    runtime = runtime,
+                    bridgePath = "/root/.aether/pi-bridge/extension-bridge.mjs",
+                ),
+                extensionLoadOptionsProvider = extensionStateStore::load,
+            )
+        }
         val mcpManager = remember(runtime) { SharedMcpManager(runtime) }
         val chromeManager = remember(runtime) { SharedChromeManager(runtime) }
         val runtimeTools = remember(runtime) { RuntimeHostToolExecutor(runtime) }
-        val skillManager = remember(runtime, bridgeClient) { SharedSkillManager(runtime, bridgeClient) }
+        val skillManager = remember(runtime, extensionBridgeClient) {
+            SharedSkillManager(runtime, extensionBridgeClient)
+        }
         val providerConfigs = remember { mutableStateListOf<LlmProviderConfig>() }
         var providerConfig by remember { mutableStateOf<LlmProviderConfig?>(null) }
         val persistOAuthCredential: suspend (String, String) -> Unit = remember(settingsStore) {
@@ -1055,15 +987,22 @@ fun AetherSharedApp(
         val installedSkills = remember { mutableStateListOf<SharedInstalledSkill>() }
         val mcpServers = remember { mutableStateListOf<SharedMcpServerConfig>() }
         var chromeEnabled by rememberSaveable { mutableStateOf(false) }
-        DisposableEffect(bridgeClient) {
-            onDispose { bridgeClient.dispose() }
+        DisposableEffect(bridgeClient, extensionBridgeClient) {
+            onDispose {
+                bridgeClient.dispose()
+                extensionBridgeClient.dispose()
+            }
         }
         var route by rememberSaveable { mutableStateOf(SharedRoute.Onboarding) }
-        var restoredSettingsDestination by rememberSaveable { mutableStateOf("") }
-        var tabletSettingsVisible by rememberSaveable { mutableStateOf(false) }
-        var tabletSettingsFullScreen by remember { mutableStateOf(false) }
-        var tabletSettingsDismissRequest by remember { mutableIntStateOf(0) }
         var startupResolved by remember { mutableStateOf(false) }
+        var extensionRuntimeReady by remember(runtime) { mutableStateOf(false) }
+        LaunchedEffect(runtime, capabilities.scriptExtensions) {
+            if (capabilities.scriptExtensions) {
+                // Start restoring an existing iOS runtime while app state is loading.
+                extensionRuntimeReady = runSharedAppCatching { runtime.isReady() }
+                    .getOrDefault(false)
+            }
+        }
         val historyStore = remember(chatHistoryDatabase) {
             chatHistoryDatabase?.let(::SharedChatHistoryStore)
         }
@@ -1340,9 +1279,7 @@ fun AetherSharedApp(
         }
 
         fun openSettings() {
-            if (nativeSettingsHost?.openSettings() != true) {
-                route = SharedRoute.Settings
-            }
+            nativeSettingsHost?.openSettings()
         }
 
         fun endBackgroundExecution(target: SharedSessionUiState) {
@@ -1420,15 +1357,8 @@ fun AetherSharedApp(
                     )
                 }
                 if (shouldRestoreSharedChat(persisted.appSettings.onboardingSeenVersion)) {
-                    val restoredRoute = runCatching { SharedRoute.valueOf(persisted.uiState.route) }
+                    route = runCatching { SharedRoute.valueOf(persisted.uiState.route) }
                         .getOrDefault(SharedRoute.Chat)
-                    route = if (restoredRoute == SharedRoute.Settings && nativeSettingsHost != null) {
-                        nativeSettingsHost.openSettings()
-                        SharedRoute.Chat
-                    } else {
-                        restoredRoute
-                    }
-                    restoredSettingsDestination = persisted.uiState.settingsDestination
                 }
             }
             val persistedSessions = historyStore?.loadAll().orEmpty()
@@ -1462,12 +1392,11 @@ fun AetherSharedApp(
             startupResolved = true
         }
 
-        LaunchedEffect(route, tabletSettingsVisible) {
+        LaunchedEffect(route) {
             if (startupResolved) {
-                val persistedRoute = if (tabletSettingsVisible) SharedRoute.Settings else route
-                settingsStore?.saveUiState(persistedRoute.name, restoredSettingsDestination)
+                settingsStore?.saveUiState(route.name)
             }
-            if (route == SharedRoute.Chat || route == SharedRoute.Settings) {
+            if (route == SharedRoute.Chat) {
                 val runtimeReady = runSharedAppCatching { runtime.isReady() }
                     .getOrDefault(false)
                 if (!runtimeReady) return@LaunchedEffect
@@ -2676,10 +2605,11 @@ fun AetherSharedApp(
                     else -> error("Unsupported Aether extension host method on this platform: " + method)
                 }
 
-        val extensionManager = remember(bridgeClient) {
-            SharedAetherExtensionManager(bridgeClient, ::handleSharedExtensionHostCall)
+        val extensionManager = remember(extensionBridgeClient) {
+            SharedAetherExtensionManager(extensionBridgeClient, ::handleSharedExtensionHostCall)
         }
         val nativePiExtensionsController = remember(
+            extensionBridgeClient,
             bridgeClient,
             extensionManager,
             extensionStateStore,
@@ -2687,7 +2617,8 @@ fun AetherSharedApp(
             platformServices,
         ) {
             NativePiExtensionsController(
-                bridgeClient = bridgeClient,
+                extensionBridgeClient = extensionBridgeClient,
+                agentBridgeClient = bridgeClient,
                 extensionManager = extensionManager,
                 extensionStateStore = extensionStateStore,
                 runtime = runtime,
@@ -2695,6 +2626,7 @@ fun AetherSharedApp(
             )
         }
         var nativePiExtensionsState by remember { mutableStateOf(NativePiExtensionsState()) }
+        var extensionStartupFinished by remember(extensionManager) { mutableStateOf(false) }
         agentExtensionSettingsAccess.readHandler = {
             val current = withContext(Dispatchers.Main) {
                 extensionSnapshot.takeIf { extensionSnapshotResolved }
@@ -2746,11 +2678,15 @@ fun AetherSharedApp(
             extensionManagerRef = extensionManager
         }
 
-        LaunchedEffect(extensionManager, capabilities.scriptExtensions, route) {
-            if (!capabilities.scriptExtensions || route == SharedRoute.Onboarding) return@LaunchedEffect
-            // Do not start the persistent subscription until the local runtime
-            // has been activated. This avoids a retry storm during app startup.
-            if (!runSharedAppCatching { runtime.isReady() }.getOrDefault(false)) {
+        LaunchedEffect(
+            extensionManager,
+            capabilities.scriptExtensions,
+            route,
+            extensionStartupFinished,
+        ) {
+            if (!capabilities.scriptExtensions || route == SharedRoute.Onboarding ||
+                !extensionStartupFinished
+            ) {
                 return@LaunchedEffect
             }
             while (true) {
@@ -2777,16 +2713,45 @@ fun AetherSharedApp(
             }
         }
 
-        LaunchedEffect(extensionManager, capabilities.scriptExtensions, route) {
-            if (capabilities.scriptExtensions && route != SharedRoute.Onboarding &&
-                runSharedAppCatching { runtime.isReady() }.getOrDefault(false)
-            ) {
-                runSharedAppCatching { extensionManager.reload(extensionContext()) }
-                    .onSuccess {
-                        extensionSnapshot = it
-                        extensionSnapshotResolved = true
-                    }
+        LaunchedEffect(
+            startupResolved,
+            extensionManager,
+            nativePiExtensionsController,
+            capabilities.scriptExtensions,
+            route,
+        ) {
+            if (!startupResolved || !capabilities.scriptExtensions || route == SharedRoute.Onboarding) {
+                return@LaunchedEffect
             }
+            if (!extensionRuntimeReady &&
+                !runSharedAppCatching { runtime.isReady() }.getOrDefault(false)
+            ) {
+                return@LaunchedEffect
+            }
+
+            // Settings summaries and app-extension registrations share this app-level startup.
+            // Neither should depend on visiting the Pi Extensions settings screen.
+            val context = extensionContext()
+            coroutineScope {
+                val installedRequest = async {
+                    nativePiExtensionsController.refreshInstalled(nativePiExtensionsState)
+                }
+                val registrationRequest = async {
+                    runSharedAppCatching { extensionManager.reload(context) }
+                }
+                nativePiExtensionsState = installedRequest.await()
+                registrationRequest.await().onSuccess {
+                    extensionSnapshot = it
+                    extensionSnapshotResolved = true
+                }
+            }
+            extensionStartupFinished = true
+        }
+
+        LaunchedEffect(extensionStartupFinished, bridgeClient) {
+            if (!extensionStartupFinished) return@LaunchedEffect
+            kotlinx.coroutines.delay(250)
+            runSharedAppCatching { bridgeClient.ping() }
         }
 
         LaunchedEffect(extensionManager) {
@@ -2802,8 +2767,11 @@ fun AetherSharedApp(
             currentSession.selectedModelKey,
             currentSession.messages.size,
             capabilities.scriptExtensions,
+            extensionStartupFinished,
         ) {
-            if (capabilities.scriptExtensions && route != SharedRoute.Onboarding) {
+            if (capabilities.scriptExtensions && route != SharedRoute.Onboarding &&
+                extensionStartupFinished
+            ) {
                 runSharedAppCatching { extensionManager.refresh(extensionContext()) }
                     .onSuccess {
                         extensionSnapshot = it
@@ -3192,6 +3160,15 @@ fun AetherSharedApp(
                             extensionSnapshot = extensionManager.snapshot
                             extensionSnapshotResolved = true
                         }
+                        "pi_extensions_discover" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "catalog",
+                                catalogError = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.refreshCatalog(
+                                nativePiExtensionsState,
+                            )
+                        }
                         "pi_extension_details" -> appScope.launch {
                             nativePiExtensionsState = nativePiExtensionsState.copy(
                                 operation = "details",
@@ -3469,203 +3446,8 @@ fun AetherSharedApp(
             supportsTabletLayout = capabilities.supportsTabletLayout,
             availableWidthDp = maxWidth.value,
         )
-        val navigationPresentation = resolveSharedNavigationPresentation(
-            route = route,
-            tabletSettingsVisible = tabletSettingsVisible,
-            useTabletLayout = useTabletLayout,
-        )
-        LaunchedEffect(navigationPresentation) {
-            route = navigationPresentation.route
-            tabletSettingsVisible = navigationPresentation.tabletSettingsVisible
-        }
-        val settingsContent: @Composable () -> Unit = {
-            SharedAetherExtensionComponentHost(
-                target = SharedExtensionComponentSettingsScreen,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-            SharedSettingsScreen(
-                capabilities = capabilities,
-                runtime = runtime,
-                platformServices = platformServices,
-                providerConfigs = providerConfigs,
-                appSettings = sharedAppSettings,
-                loadStatistics = {
-                    if (historyStore != null) {
-                        withContext(Dispatchers.Default) {
-                            historyStore.loadUsageStatistics()
-                        }
-                    } else {
-                        val persistedSessions =
-                            sessionStates.values.map(SharedSessionUiState::toPersistedSession)
-                        withContext(Dispatchers.Default) {
-                            com.zhousl.aether.data.buildSharedUsageStatisticsReport(
-                                persistedSessions,
-                            )
-                        }
-                    }
-                },
-                bridgeClient = bridgeClient,
-                extensionManager = extensionManager,
-                extensionStateStore = extensionStateStore,
-                onExtensionSnapshotChanged = {
-                    extensionSnapshot = it
-                    extensionSnapshotResolved = true
-                },
-                extensionSnapshotResolved = extensionSnapshotResolved,
-                skillManager = skillManager,
-                installedSkills = installedSkills,
-                extensionCount = extensionSnapshot.extensions.size,
-                mcpManager = mcpManager,
-                mcpServers = mcpServers,
-                activeMcpServerIds = activeMcpServerIds.toSet(),
-                onMcpServersChanged = { servers ->
-                    mcpServers.clear()
-                    mcpServers.addAll(servers)
-                    retainEnabledMcpSelections(
-                        servers.filter(SharedMcpServerConfig::enabled)
-                            .map(SharedMcpServerConfig::id)
-                            .toSet(),
-                    )
-                },
-                chromeManager = chromeManager,
-                onSkillsChanged = { skills ->
-                    installedSkills.clear()
-                    installedSkills.addAll(skills)
-                    retainEnabledSkillSelections(
-                        skills.filter(SharedInstalledSkill::isEnabled)
-                            .map(SharedInstalledSkill::id)
-                            .toSet(),
-                    )
-                },
-                onReloadSessions = {
-                    sessionStates.values
-                        .filterNot(SharedSessionUiState::isDraft)
-                        .forEach { state -> bridgeClient.reloadSession(state.id) }
-                },
-                onProviderSaved = ::upsertProviderConfig,
-                onProviderEnabledChanged = ::setProviderEnabled,
-                onProviderRemoved = ::removeProviderConfig,
-                onGeneralSettingsSaved = ::persistResolvedAppSettings,
-                onAlpineResetSettingsSaved = { updated ->
-                    sharedAppSettings = updated
-                    settingsStore?.saveGeneralSettings(updated)
-                },
-                onExportAppData = { pendingSettings ->
-                    val manager = checkNotNull(appDataManager) { "App data storage is unavailable." }
-                    settingsStore?.saveGeneralSettings(pendingSettings)
-                    settingsStore?.saveProviders(providerConfigs.toList(), providerConfig?.id.orEmpty())
-                    persistSession()
-                    historyStore?.setCurrentSession(sessionId)
-                    manager.exportJson()
-                },
-                onImportAppData = { value ->
-                    val manager = checkNotNull(appDataManager) { "App data storage is unavailable." }
-                    val restored = manager.restoreJson(value)
-                    val persisted = restored.persistedSettings
-                    sharedAppSettings = persisted.appSettings
-                    providerConfigs.clear()
-                    providerConfigs.addAll(persisted.providerConfigs)
-                    providerConfig = persisted.activeProviderConfig
-                    installedSkills.clear()
-                    installedSkills.addAll(restored.installedSkills)
-                    mcpServers.clear()
-                    mcpServers.addAll(restored.mcpServers)
-                    sessionStates.clear()
-                    sessions.clear()
-                    restored.sessions.forEach { persistedSession ->
-                        val state = persistedSession.toSharedSessionUiState()
-                        sessionStates[state.id] = state
-                        sessions += SharedConversationSummary(state.id, state.title)
-                    }
-                    val restoredCurrent = if (restored.currentSessionId == SharedDraftSessionId) {
-                        SharedSessionUiState(
-                            id = SharedDraftSessionId,
-                            isDraft = true,
-                            selectedModelKey = persisted.appSettings.defaultChatModelKey,
-                        )
-                    } else {
-                        restored.currentSessionId?.let(sessionStates::get)
-                            ?: SharedSessionUiState(
-                                id = SharedDraftSessionId,
-                                isDraft = true,
-                                selectedModelKey = persisted.appSettings.defaultChatModelKey,
-                            )
-                    }
-                    currentSession = restoredCurrent
-                    sessionId = restoredCurrent.id
-                    runSharedAppCatching { extensionManager.refresh(extensionContext()) }
-                        .onSuccess { refreshed ->
-                            extensionSnapshot = refreshed
-                            extensionSnapshotResolved = true
-                        }
-                    runSharedAppCatching {
-                        mcpManager.refreshBindings(
-                            restored.mcpServers.filter { server ->
-                                server.enabled && server.id in restoredCurrent.activeMcpServerIds
-                            },
-                            sessionId = restoredCurrent.id,
-                        )
-                    }.onFailure(::reportMcpRefreshFailure)
-                    if (restoredCurrent.isDraft) {
-                        historyStore?.setCurrentSession(SharedDraftSessionId)
-                    }
-                    chromeEnabled = false
-                    chromeManager.enabled = false
-                    restored
-                },
-                onBack = {
-                    tabletSettingsVisible = false
-                    route = SharedRoute.Chat
-                },
-                onReplayOnboarding = {
-                    tabletSettingsVisible = false
-                    onboardingReplayMode = true
-                    onboardingEntryStage = OnboardingStage.Landing
-                    route = SharedRoute.Onboarding
-                },
-                onReplayFollowUpOnboarding = {
-                    tabletSettingsVisible = false
-                    onboardingReplayMode = true
-                    onboardingEntryStage = OnboardingStage.Runtime
-                    route = SharedRoute.Onboarding
-                },
-                onReplayAlpineSetupPreview = {
-                    alpineSetupPreviewVisible = true
-                },
-                onExportLogs = {
-                    SharedDiagnosticLogger.event(
-                        category = "export",
-                        event = "diagnostic_export_start",
-                        details = mapOf(
-                            "screen" to if (tabletSettingsVisible) "Settings" else route.name,
-                            "session_count" to sessionStates.size,
-                        ),
-                    )
-                    buildSharedDiagnosticLogText(
-                        appVersion = platformAppVersion(),
-                        route = if (tabletSettingsVisible) SharedRoute.Settings else route,
-                        currentSession = currentSession,
-                        sessionStates = sessionStates.values,
-                        providerConfigs = providerConfigs,
-                        installedSkillCount = installedSkills.size,
-                        mcpServers = mcpServers,
-                        settings = sharedAppSettings,
-                    )
-                },
-                onTransientMessage = { transientMessage = it },
-                dismissRequestToken = tabletSettingsDismissRequest,
-                restoredDestination = restoredSettingsDestination,
-                onDestinationChanged = { encoded ->
-                    restoredSettingsDestination = encoded
-                    val persistedRoute = if (tabletSettingsVisible) SharedRoute.Settings else route
-                    appScope.launch { settingsStore?.saveUiState(persistedRoute.name, encoded) }
-                },
-                onFullScreenChange = { tabletSettingsFullScreen = it },
-            )
-            }
-        }
         AnimatedContent(
-            targetState = navigationPresentation.route,
+            targetState = route,
             transitionSpec = {
                 if (reduceMotion) {
                     return@AnimatedContent fadeIn(tween(80)) togetherWith fadeOut(tween(60))
@@ -4068,12 +3850,7 @@ fun AetherSharedApp(
                         }
                     },
                     onExportSession = ::exportSession,
-                    onOpenSettings = {
-                        if (nativeSettingsHost?.openSettings() != true) {
-                            if (useTabletLayout) tabletSettingsVisible = true
-                            else route = SharedRoute.Settings
-                        }
-                    },
+                    onOpenSettings = ::openSettings,
                     onDrawerOpened = {
                         appScope.launch {
                             runSharedAppCatching {
@@ -4087,18 +3864,8 @@ fun AetherSharedApp(
                     drawerOpenedEventRegistered = "drawer.opened" in extensionSnapshot.eventNames,
                     useTabletLayout = useTabletLayout,
                 )
-                    if (useTabletLayout) {
-                        SharedTabletSettingsOverlay(
-                            visible = navigationPresentation.tabletSettingsVisible,
-                            fullScreen = tabletSettingsFullScreen,
-                            onDismiss = { tabletSettingsDismissRequest += 1 },
-                        ) {
-                            settingsContent()
-                        }
-                    }
                 }
                 }
-                SharedRoute.Settings -> settingsContent()
             }
         }
         }
@@ -4292,115 +4059,6 @@ private fun SharedPiExtensionUiDialog(
             }
         },
     )
-}
-
-@Composable
-private fun SharedTabletSettingsOverlay(
-    visible: Boolean,
-    fullScreen: Boolean,
-    onDismiss: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    val reduceMotion = LocalReduceMotion.current
-    Box(modifier = Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = fadeIn(tween(if (reduceMotion) 80 else 280, easing = SharedConversationMotionEasing)),
-            exit = fadeOut(tween(if (reduceMotion) 60 else 240, easing = SharedConversationMotionEasing)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(AetherScrim.copy(alpha = 0.38f))
-                    .pointerInput(visible, onDismiss) {
-                        if (visible) detectTapGestures { onDismiss() }
-                    },
-            )
-        }
-        AnimatedVisibility(
-            visible = visible,
-            enter = if (reduceMotion) fadeIn(tween(80)) else fadeIn(tween(260, easing = SharedConversationMotionEasing)) +
-                slideInVertically(
-                    animationSpec = tween(320, easing = SharedConversationMotionEasing),
-                    initialOffsetY = { it / 42 },
-                ),
-            exit = if (reduceMotion) fadeOut(tween(60)) else fadeOut(tween(240, easing = SharedConversationMotionEasing)) +
-                slideOutVertically(
-                    animationSpec = tween(280, easing = SharedConversationMotionEasing),
-                    targetOffsetY = { it / 48 },
-                ),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(
-                        horizontal = if (fullScreen) 0.dp else 56.dp,
-                        vertical = if (fullScreen) 0.dp else 44.dp,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Surface(
-                    modifier = (if (fullScreen) {
-                        Modifier.fillMaxSize()
-                    } else {
-                        Modifier.widthIn(max = 720.dp).heightIn(max = 860.dp).fillMaxSize()
-                    })
-                        .pointerInput(Unit) { detectTapGestures {} }
-                        .then(
-                            if (fullScreen) {
-                                Modifier
-                            } else {
-                                Modifier.shadow(
-                                    18.dp,
-                                    RoundedCornerShape(24.dp),
-                                    ambientColor = AetherScrim,
-                                    spotColor = AetherScrim,
-                                )
-                            },
-                        ),
-                    shape = RoundedCornerShape(if (fullScreen) 0.dp else 24.dp),
-                    color = AetherSettingsBackground,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (fullScreen) {
-                                    Modifier
-                                } else {
-                                    Modifier.consumeWindowInsets(WindowInsets.navigationBars)
-                                },
-                            )
-                            .drawWithContent {
-                                drawContent()
-                                if (!fullScreen) {
-                                    val fadeHeight = SettingsBottomFadeHeight.toPx()
-                                    val fadeTop = size.height - fadeHeight
-                                    drawRect(
-                                        brush = Brush.verticalGradient(
-                                            colorStops = arrayOf(
-                                                0.0f to Color.Transparent,
-                                                0.24f to AetherSettingsBackground.copy(alpha = 0.04f),
-                                                0.48f to AetherSettingsBackground.copy(alpha = 0.12f),
-                                                0.70f to AetherSettingsBackground.copy(alpha = 0.28f),
-                                                0.88f to AetherSettingsBackground.copy(alpha = 0.58f),
-                                                1.0f to AetherSettingsBackground,
-                                            ),
-                                            startY = fadeTop,
-                                            endY = size.height,
-                                        ),
-                                        topLeft = Offset(0f, fadeTop),
-                                        size = Size(size.width, fadeHeight),
-                                    )
-                                }
-                            },
-                    ) {
-                        content()
-                    }
-                }
-            }
-        }
-    }
 }
 
 @Composable
@@ -9193,878 +8851,3 @@ private fun JsonObject.nativeStringMap(name: String): Map<String, String> =
     (get(name) as? JsonObject).orEmpty().mapNotNull { (key, element) ->
         (element as? JsonPrimitive)?.contentOrNull?.let { key to it }
     }.toMap()
-
-@Composable
-private fun SharedSettingsScreen(
-    capabilities: PlatformCapabilities,
-    runtime: MultiplatformLocalRuntime,
-    platformServices: PlatformServices,
-    providerConfigs: List<LlmProviderConfig>,
-    appSettings: AppSettings,
-    loadStatistics: suspend () -> com.zhousl.aether.data.SharedUsageStatisticsReport,
-    bridgeClient: SharedPiBridgeClient,
-    extensionManager: SharedAetherExtensionManager,
-    extensionStateStore: SharedExtensionStateStore,
-    onExtensionSnapshotChanged: (SharedAetherExtensionSnapshot) -> Unit,
-    extensionSnapshotResolved: Boolean,
-    skillManager: SharedSkillManager,
-    installedSkills: List<SharedInstalledSkill>,
-    extensionCount: Int,
-    onSkillsChanged: (List<SharedInstalledSkill>) -> Unit,
-    onReloadSessions: suspend () -> Unit,
-    mcpManager: SharedMcpManager,
-    mcpServers: List<SharedMcpServerConfig>,
-    activeMcpServerIds: Set<String>,
-    onMcpServersChanged: (List<SharedMcpServerConfig>) -> Unit,
-    chromeManager: SharedChromeManager,
-    onProviderSaved: (LlmProviderConfig) -> Unit,
-    onProviderEnabledChanged: (String, Boolean) -> Unit,
-    onProviderRemoved: (String) -> Unit,
-    onGeneralSettingsSaved: (AppSettings) -> Unit,
-    onAlpineResetSettingsSaved: suspend (AppSettings) -> Unit,
-    onImportAppData: suspend (String) -> SharedAppDataRestoreResult,
-    onExportAppData: suspend (AppSettings) -> String,
-    onBack: () -> Unit,
-    onReplayOnboarding: () -> Unit,
-    onReplayFollowUpOnboarding: () -> Unit,
-    onReplayAlpineSetupPreview: () -> Unit,
-    onExportLogs: suspend () -> String,
-    onTransientMessage: (String) -> Unit,
-    dismissRequestToken: Int = 0,
-    restoredDestination: String = "",
-    onDestinationChanged: (String) -> Unit = {},
-    onFullScreenChange: (Boolean) -> Unit = {},
-) {
-    val registeredExtensionSettings = LocalSharedAetherExtensionUiController.current
-        ?.snapshot
-        ?.settings
-        .orEmpty()
-    val terminalTitle = stringResource(Res.string.terminal_title)
-    val terminalSubtitle = stringResource(Res.string.terminal_subtitle)
-    val fileManagerTitle = stringResource(Res.string.file_manager_title)
-    val alpineTitle = stringResource(Res.string.alpine_title)
-    val alpineSubtitle = stringResource(Res.string.alpine_subtitle)
-    // Restore only when this settings navigation state is first created. Using the persisted
-    // value as a remember key would recreate AnimatedContent during every push and pop.
-    var destination by rememberSaveable(stateSaver = SharedSettingsDestinationSaver) {
-        mutableStateOf(decodeSettingsDestination(restoredDestination))
-    }
-    val missingExtensionDestination = shouldReturnToSettingsHubForMissingExtension(
-        encodedDestination = encodeSettingsDestination(destination),
-        registeredExtensionSettingsIds = registeredExtensionSettings.mapTo(mutableSetOf()) { it.id },
-        extensionSnapshotResolved = extensionSnapshotResolved,
-    )
-    val renderedDestination = destination.takeUnless { missingExtensionDestination }
-    var statisticsReport by remember {
-        mutableStateOf<com.zhousl.aether.data.SharedUsageStatisticsReport?>(null)
-    }
-    var alpineReady by remember(appSettings.alpineSetupCompleted) {
-        mutableStateOf(appSettings.alpineSetupCompleted)
-    }
-    var pendingSettings by remember { mutableStateOf(appSettings) }
-
-    LaunchedEffect(destination) {
-        onDestinationChanged(encodeSettingsDestination(destination))
-    }
-
-    LaunchedEffect(missingExtensionDestination) {
-        if (missingExtensionDestination) destination = null
-    }
-
-    LaunchedEffect(destination?.kind) {
-        onFullScreenChange(destination?.kind == SharedSettingsKind.Terminal)
-    }
-    DisposableEffect(Unit) {
-        onDispose { onFullScreenChange(false) }
-    }
-
-    fun updatePendingSettings(updated: AppSettings) {
-        pendingSettings = updated
-        onGeneralSettingsSaved(updated)
-    }
-
-    fun persistAlpineSettings(updated: AppSettings) {
-        // Alpine installs are completed from a nested screen. Keep the draft in
-        // sync before persisting so leaving Settings cannot restore an old draft.
-        pendingSettings = updated
-        onGeneralSettingsSaved(updated)
-    }
-
-    fun commitPendingSettings() {
-        val updated = appSettings.withSharedSettingsDraft(pendingSettings)
-        pendingSettings = updated
-        if (updated != appSettings) onGeneralSettingsSaved(updated)
-    }
-
-    LaunchedEffect(Unit) {
-        SharedApplicationLifecycle.backgrounded.collect { backgrounded ->
-            if (backgrounded) commitPendingSettings()
-        }
-    }
-
-    fun persistAndExit() {
-        commitPendingSettings()
-        onBack()
-    }
-
-    fun persistAndReplayOnboarding() {
-        commitPendingSettings()
-        onReplayOnboarding()
-    }
-
-    fun persistAndReplayFollowUpOnboarding() {
-        commitPendingSettings()
-        onReplayFollowUpOnboarding()
-    }
-
-    val dismissGuard = remember { SharedSettingsDismissGuard() }
-    var handledDismissRequestToken by remember { mutableIntStateOf(dismissRequestToken) }
-    LaunchedEffect(dismissRequestToken) {
-        if (dismissRequestToken != handledDismissRequestToken) {
-            handledDismissRequestToken = dismissRequestToken
-            if (dismissGuard.hasUnsavedChanges) dismissGuard.rejectDismiss()
-            else persistAndExit()
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(SharedScreenTransitionDuration.toLong())
-        runSharedAppCatching { loadStatistics() }.onSuccess { statisticsReport = it }
-    }
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(SharedScreenTransitionDuration.toLong())
-        runSharedAppCatching {
-            withContext(Dispatchers.Default) { runtime.isReady() }
-        }.onSuccess { alpineReady = it }
-    }
-    val detailContent: @Composable (SettingsDestination) -> Unit = { selected ->
-        when (selected.kind) {
-            SharedSettingsKind.General -> SharedGeneralSettingsDetail(
-                settings = appSettings,
-                onSave = { updated ->
-                    onGeneralSettingsSaved(
-                        appSettings.copy(
-                            language = updated.language,
-                            themeMode = updated.themeMode,
-                        ),
-                    )
-                },
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Providers -> SharedProviderSettingsDetail(
-                providerConfigs = providerConfigs,
-                appSettings = pendingSettings,
-                bridgeClient = bridgeClient,
-                onUpsertProvider = onProviderSaved,
-                onSetProviderEnabled = onProviderEnabledChanged,
-                onRemoveProvider = onProviderRemoved,
-                onSettingsSaved = ::updatePendingSettings,
-                onTransientMessage = onTransientMessage,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Personalization -> SharedPersonalizationSettingsDetail(
-                settings = pendingSettings,
-                onSave = ::updatePendingSettings,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.WebTools -> SharedWebToolsSettingsDetail(
-                settings = pendingSettings,
-                onSave = ::updatePendingSettings,
-                onBack = { destination = null },
-            )
-    SharedSettingsKind.Reliability -> SharedReliabilitySettingsDetail(
-                settings = pendingSettings,
-                capabilities = capabilities,
-                onSave = ::updatePendingSettings,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.ExtensionSettings -> {
-                val page = registeredExtensionSettings.firstOrNull { it.id == selected.extensionSettingsId }
-                if (page != null) {
-                    SharedAetherExtensionSettingsCategoriesDetail(
-                        page = page,
-                        onCategorySelected = { categoryId ->
-                            destination = SettingsDestination(
-                                title = page.title,
-                                subtitle = page.subtitle,
-                                kind = SharedSettingsKind.ExtensionSettingsCategory,
-                                extensionSettingsId = page.id,
-                                extensionSettingsCategoryId = categoryId,
-                            )
-                        },
-                        onBack = { destination = null },
-                    )
-                }
-            }
-            SharedSettingsKind.ExtensionSettingsCategory -> {
-                val page = registeredExtensionSettings.firstOrNull { it.id == selected.extensionSettingsId }
-                val category = page?.categories?.firstOrNull { it.id == selected.extensionSettingsCategoryId }
-                if (page != null && category != null) {
-                    SharedAetherExtensionSettingsDetail(
-                        page = page,
-                        category = category,
-                        onCategorySelected = { categoryId ->
-                            destination = SettingsDestination(
-                                title = page.title,
-                                subtitle = page.subtitle,
-                                kind = SharedSettingsKind.ExtensionSettingsCategory,
-                                extensionSettingsId = page.id,
-                                extensionSettingsCategoryId = categoryId,
-                            )
-                        },
-                        onBack = {
-                            destination = SettingsDestination(
-                                title = page.title,
-                                subtitle = page.subtitle,
-                                kind = SharedSettingsKind.ExtensionSettings,
-                                extensionSettingsId = page.id,
-                            )
-                        },
-                    )
-                }
-            }
-            SharedSettingsKind.Skills -> SharedSkillsSettingsDetail(
-                skillManager = skillManager,
-                runtime = runtime,
-                platformServices = platformServices,
-                installedSkills = installedSkills,
-                onSkillsChanged = onSkillsChanged,
-                onReloadSessions = onReloadSessions,
-                onTransientMessage = onTransientMessage,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Mcp -> SharedMcpSettingsDetail(
-                manager = mcpManager,
-                servers = mcpServers,
-                activeServerIds = activeMcpServerIds,
-                onServersChanged = onMcpServersChanged,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Alpine -> SharedAlpineSettingsDetail(
-                runtime = runtime,
-                settings = pendingSettings,
-                onSettingsSaved = ::persistAlpineSettings,
-                onResetSettingsSaved = { updated ->
-                    pendingSettings = updated
-                    onAlpineResetSettingsSaved(updated)
-                },
-                onTransientMessage = onTransientMessage,
-                onOpenTerminal = {
-                    destination = SettingsDestination(
-                        title = terminalTitle,
-                        subtitle = terminalSubtitle,
-                        kind = SharedSettingsKind.Terminal,
-                    )
-                },
-                onOpenFiles = {
-                    if (!platformServices.openAlpineFileManager()) {
-                        destination = SettingsDestination(
-                            title = fileManagerTitle,
-                            subtitle = fileManagerTitle,
-                            kind = SharedSettingsKind.FileManager,
-                        )
-                    }
-                },
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Extensions -> SharedExtensionsSettingsDetail(
-                bridgeClient = bridgeClient,
-                extensionManager = extensionManager,
-                extensionStateStore = extensionStateStore,
-                runtime = runtime,
-                platformServices = platformServices,
-                onSnapshotChanged = onExtensionSnapshotChanged,
-                onTransientMessage = onTransientMessage,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Terminal -> SharedTerminalScreen(
-                runtime = runtime,
-                onBack = {
-                    destination = SettingsDestination(
-                        title = alpineTitle,
-                        subtitle = alpineSubtitle,
-                        kind = SharedSettingsKind.Alpine,
-                    )
-                },
-            )
-            SharedSettingsKind.FileManager -> SharedFileManagerScreen(
-                runtime = runtime,
-                onBack = {
-                    destination = SettingsDestination(
-                        title = alpineTitle,
-                        subtitle = alpineSubtitle,
-                        kind = SharedSettingsKind.Alpine,
-                    )
-                },
-            )
-            SharedSettingsKind.Chrome -> SharedChromeScreen(
-                manager = chromeManager,
-                onBack = {
-                    destination = SettingsDestination(
-                        title = alpineTitle,
-                        subtitle = alpineSubtitle,
-                        kind = SharedSettingsKind.Alpine,
-                    )
-                },
-            )
-            SharedSettingsKind.Statistics -> SharedStatisticsSettingsDetail(
-                report = statisticsReport
-                    ?: com.zhousl.aether.data.SharedUsageStatisticsReport(),
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Developer -> SharedDeveloperSettingsDetail(
-                settings = pendingSettings,
-                platformServices = platformServices,
-                onSave = ::updatePendingSettings,
-                onImportAppData = { value ->
-                    onImportAppData(value).also { restored ->
-                        pendingSettings = restored.persistedSettings.appSettings
-                    }
-                },
-                onExportAppData = { onExportAppData(appSettings) },
-                onReplayOnboarding = onReplayOnboarding,
-                onReplayFollowUpOnboarding = ::persistAndReplayFollowUpOnboarding,
-                onReplayAlpineSetupPreview = onReplayAlpineSetupPreview,
-                onExportLogs = onExportLogs,
-                onTransientMessage = onTransientMessage,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.About -> SharedAboutSettingsDetail(
-                platformServices = platformServices,
-                onTransientMessage = onTransientMessage,
-                onBack = { destination = null },
-            )
-            SharedSettingsKind.Generic -> SettingsDetail(
-                selected = selected,
-                onBack = { destination = null },
-            )
-        }
-    }
-
-    fun open(title: String, subtitle: String) {
-        destination = SettingsDestination(title, subtitle)
-    }
-
-    val general = SettingsDestination(
-        stringResource(Res.string.settings_general),
-        stringResource(
-            Res.string.settings_general_summary,
-            stringResource(
-                when (appSettings.language) {
-                    com.zhousl.aether.data.AppLanguage.English -> Res.string.language_english
-                    com.zhousl.aether.data.AppLanguage.SimplifiedChinese ->
-                        Res.string.language_simplified_chinese
-                    com.zhousl.aether.data.AppLanguage.Persian ->
-                        Res.string.language_persian
-                },
-            ),
-            stringResource(
-                when (appSettings.themeMode) {
-                    com.zhousl.aether.data.AppThemeMode.System -> Res.string.theme_system
-                    com.zhousl.aether.data.AppThemeMode.Light -> Res.string.theme_light
-                    com.zhousl.aether.data.AppThemeMode.Dark -> Res.string.theme_dark
-                },
-            ),
-        ),
-        SharedSettingsKind.General,
-    )
-    val providers = SettingsDestination(
-        stringResource(Res.string.settings_model_providers),
-        providerConfigs.count(LlmProviderConfig::isEnabled).let { enabledCount ->
-            when {
-                enabledCount > 1 -> stringResource(
-                    Res.string.settings_enabled_providers_count,
-                    enabledCount,
-                )
-                enabledCount == 1 -> providerConfigs.firstOrNull { it.isEnabled }?.name.orEmpty()
-                else -> stringResource(Res.string.settings_no_providers_configured)
-            }
-        },
-        SharedSettingsKind.Providers,
-    )
-    val personalization = SettingsDestination(
-        stringResource(Res.string.settings_personalization),
-        pendingSettings.systemPrompt.trim().take(60)
-            .ifBlank { stringResource(Res.string.settings_custom_instructions) },
-        SharedSettingsKind.Personalization,
-    )
-    val webTools = SettingsDestination(
-        stringResource(Res.string.settings_web_tools),
-        stringResource(
-            if (pendingSettings.tavilyApiKey.isNotBlank()) {
-                Res.string.settings_tavily_configured
-            } else {
-                Res.string.settings_tavily_not_configured
-            },
-        ),
-        SharedSettingsKind.WebTools,
-    )
-    val reliability = SettingsDestination(
-        stringResource(Res.string.settings_reliability),
-        buildString {
-            append(
-                stringResource(
-                    Res.string.settings_reconnect_after_seconds,
-                    pendingSettings.llmInactivityReconnectTimeoutSeconds,
-                ),
-            )
-            if (capabilities.persistentBackground) {
-                append(" · ")
-                append(
-                    stringResource(
-                        if (pendingSettings.keepTasksRunningInBackground) {
-                            Res.string.settings_background_runs_on
-                        } else {
-                            Res.string.settings_background_runs_off
-                        },
-                    ),
-                )
-            }
-        },
-        SharedSettingsKind.Reliability,
-    )
-    val skills = SettingsDestination(
-        stringResource(Res.string.settings_agent_skills),
-        stringResource(Res.string.settings_skills_count_configured, installedSkills.size),
-        SharedSettingsKind.Skills,
-    )
-    val extensions = SettingsDestination(
-        stringResource(Res.string.settings_pi_extensions),
-        stringResource(Res.string.settings_pi_extensions_count_configured, extensionCount),
-        SharedSettingsKind.Extensions,
-    )
-    val mcp = SettingsDestination(
-        stringResource(Res.string.settings_mcp_servers),
-        stringResource(Res.string.settings_mcp_server_count_summary, mcpServers.size),
-        SharedSettingsKind.Mcp,
-    )
-    val alpine = SettingsDestination(
-        "Alpine",
-        stringResource(
-            if (alpineReady) {
-                Res.string.settings_alpine_subtitle_ready
-            } else {
-                Res.string.settings_alpine_subtitle_setup
-            },
-        ),
-        SharedSettingsKind.Alpine,
-    )
-    val statistics = SettingsDestination(
-        stringResource(Res.string.statistics_title),
-        statisticsReport?.takeIf { it.turnCount > 0 }?.let { report ->
-            stringResource(
-                Res.string.settings_statistics_summary,
-                formatSharedTokenCount(report.totalTokens),
-                report.turnCount,
-            )
-        } ?: stringResource(Res.string.settings_statistics_empty),
-        SharedSettingsKind.Statistics,
-    )
-    val developer = SettingsDestination(
-        stringResource(Res.string.settings_developer),
-        stringResource(Res.string.settings_developer_subtitle),
-        SharedSettingsKind.Developer,
-    )
-    val about = SettingsDestination(
-        stringResource(Res.string.about_title),
-        stringResource(Res.string.settings_release_summary, platformAppVersion()),
-        SharedSettingsKind.About,
-    )
-    CompositionLocalProvider(LocalSharedSettingsDismissGuard provides dismissGuard) {
-        SharedSettingsPageTransition(
-            targetState = renderedDestination,
-            depth = { it.depth() },
-            label = "settings_page_transition",
-        ) { selected ->
-        if (selected != null) {
-            detailContent(selected)
-        } else {
-            Scaffold(
-                modifier = Modifier.fillMaxSize(),
-                containerColor = AetherSettingsBackground,
-                contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            ) { innerPadding ->
-                Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-                    val hasSettingsExtensionSurface =
-                        LocalSharedAetherExtensionUiController.current
-                            ?.snapshot
-                            ?.surfacesAt(SharedExtensionSlotSettingsHub)
-                            .orEmpty()
-                            .isNotEmpty()
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().imePadding().navigationBarsPadding(),
-                        contentPadding = PaddingValues(
-                            top = sharedSettingsContentTopPadding(),
-                            start = 20.dp,
-                            end = 20.dp,
-                            bottom = 32.dp,
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        if (hasSettingsExtensionSurface) {
-                            item(key = "settings-extension-slot") {
-                                SharedAetherExtensionSlot(
-                                    SharedExtensionSlotSettingsHub,
-                                    Modifier.fillMaxWidth(),
-                                )
-                            }
-                        }
-                        item(key = "settings-general") {
-                            SettingsCardGroup {
-                                SettingsNavRow(
-                                    Icons.Rounded.AutoAwesome,
-                                    general.title,
-                                    general.subtitle,
-                                ) { destination = general }
-                            }
-                        }
-                        item(key = "settings-providers") {
-                            SettingsCardGroup {
-                                SettingsNavRow(
-                                    Icons.Rounded.Cloud,
-                                    providers.title,
-                                    providers.subtitle,
-                                ) { destination = providers }
-                                CardDivider()
-                                SettingsNavRow(
-                                    Icons.Rounded.Person,
-                                    personalization.title,
-                                    personalization.subtitle,
-                                ) { destination = personalization }
-                                CardDivider()
-                                SettingsNavRow(
-                                    Icons.Rounded.Refresh,
-                                    reliability.title,
-                                    reliability.subtitle,
-                                ) { destination = reliability }
-                            }
-                        }
-                        if (registeredExtensionSettings.isNotEmpty()) {
-                            item(key = "settings-extension-pages") {
-                                SettingsCardGroup {
-                                    registeredExtensionSettings.forEachIndexed { index, page ->
-                                        if (index > 0) CardDivider()
-                                        SettingsNavRow(
-                                            extensionIcon(page.icon),
-                                            page.title,
-                                            page.subtitle.ifBlank { page.extensionName },
-                                        ) {
-                                            destination = SettingsDestination(
-                                                title = page.title,
-                                                subtitle = page.subtitle,
-                                                kind = SharedSettingsKind.ExtensionSettings,
-                                                extensionSettingsId = page.id,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        item(key = "settings-tools") {
-                            SettingsCardGroup {
-                                SettingsNavRow(
-                                    Icons.Rounded.Extension,
-                                    skills.title,
-                                    skills.subtitle,
-                                ) { destination = skills }
-                                CardDivider()
-                                SettingsNavRow(
-                                    painterResource(Res.drawable.pi_logo_on_light),
-                                    extensions.title,
-                                    extensions.subtitle,
-                                ) { destination = extensions }
-                                if (capabilities.scheduledTasks) {
-                                    CardDivider()
-                                    SettingsNavRow(
-                                        Icons.Rounded.Schedule,
-                                        "Scheduled Tasks",
-                                        "Run saved tasks on a schedule",
-                                    ) { }
-                                }
-                                CardDivider()
-                                SettingsNavRow(Icons.Rounded.Code, alpine.title, alpine.subtitle) {
-                                    destination = alpine
-                                }
-                                if (capabilities.termux) {
-                                    CardDivider()
-                                    SettingsNavRow(
-                                        Icons.Rounded.Terminal,
-                                        "Termux",
-                                        "Android terminal integration",
-                                    ) { }
-                                }
-                                if (capabilities.runtimeSelection) {
-                                    CardDivider()
-                                    SettingsNavRow(
-                                        Icons.Rounded.Check,
-                                        "Runtime defaults",
-                                        "Choose the default runtime",
-                                    ) { }
-                                }
-                                if (capabilities.agentMode) {
-                                    CardDivider()
-                                    SettingsNavRow(
-                                        LucideIcons.MousePointer2,
-                                        "Agent Mode",
-                                        "Control the Android device",
-                                    ) { }
-                                }
-                            }
-                        }
-                        item(key = "settings-statistics") {
-                            SettingsCardGroup {
-                                SettingsNavRow(
-                                    LucideIcons.ChartNoAxesColumn,
-                                    statistics.title,
-                                    statistics.subtitle,
-                                ) { destination = statistics }
-                            }
-                        }
-                        item(key = "settings-guides") {
-                            SettingsCardGroup {
-                                SettingsNavRow(
-                                    Icons.Rounded.AutoAwesome,
-                                    stringResource(Res.string.settings_get_started_tour),
-                                    stringResource(Res.string.settings_get_started_tour_subtitle),
-                                    onClick = ::persistAndReplayOnboarding,
-                                )
-                                CardDivider()
-                                SettingsNavRow(
-                                    Icons.Rounded.Code,
-                                    developer.title,
-                                    developer.subtitle,
-                                ) { destination = developer }
-                            }
-                        }
-                        item(key = "settings-about") {
-                            SettingsCardGroup {
-                                SettingsNavRow(Icons.Rounded.Info, about.title, about.subtitle) {
-                                    destination = about
-                                }
-                            }
-                        }
-                    }
-                    SettingsTopBar(
-                        title = stringResource(Res.string.settings_title),
-                        onBack = ::persistAndExit,
-                    )
-                }
-            }
-        }
-        }
-    }
-}
-
-private fun AppSettings.withSharedSettingsDraft(draft: AppSettings): AppSettings = copy(
-    systemPrompt = draft.systemPrompt,
-    tavilyApiKey = draft.tavilyApiKey,
-    tavilyBaseUrl = normalizeTavilyBaseUrl(draft.tavilyBaseUrl),
-    llmInactivityReconnectTimeoutSeconds = normalizeLlmInactivityReconnectTimeoutSeconds(
-        draft.llmInactivityReconnectTimeoutSeconds,
-    ),
-    autoCleanOldCommandHistory = draft.autoCleanOldCommandHistory,
-    oldCommandHistoryRetentionHours = normalizeOldCommandHistoryRetentionHours(
-        draft.oldCommandHistoryRetentionHours,
-    ),
-    defaultChatModelKey = draft.defaultChatModelKey,
-    defaultTitleModelKey = draft.defaultTitleModelKey,
-    defaultNamingModelKey = draft.defaultNamingModelKey,
-    defaultCompactingModelKey = draft.defaultCompactingModelKey,
-)
-
-@Composable
-private fun SharedAlpineSettingsDetail(
-    runtime: MultiplatformLocalRuntime,
-    settings: AppSettings,
-    onSettingsSaved: (AppSettings) -> Unit,
-    onResetSettingsSaved: suspend (AppSettings) -> Unit,
-    onOpenTerminal: () -> Unit,
-    onOpenFiles: () -> Unit,
-    onTransientMessage: (String) -> Unit,
-    onBack: () -> Unit,
-) {
-    SharedAlpineSettingsDetailPage(
-        runtime = runtime,
-        settings = settings,
-        onSettingsSaved = onSettingsSaved,
-        onResetSettingsSaved = onResetSettingsSaved,
-        onOpenTerminal = onOpenTerminal,
-        onOpenFiles = onOpenFiles,
-        onTransientMessage = onTransientMessage,
-        onBack = onBack,
-    )
-}
-
-@Composable
-private fun SettingsDetail(selected: SettingsDestination, onBack: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize().background(AetherSettingsBackground)) {
-        Column(
-            modifier = Modifier.fillMaxSize()
-                .padding(top = sharedSettingsContentTopPadding(), start = 20.dp, end = 20.dp)
-                .navigationBarsPadding(),
-        ) {
-            SettingsCardGroup {
-                Column(modifier = Modifier.fillMaxWidth().padding(18.dp)) {
-                    Text(selected.title, style = MaterialTheme.typography.titleMedium, color = AetherOnSurface)
-                    Spacer(Modifier.height(6.dp))
-                    Text(selected.subtitle, style = MaterialTheme.typography.bodyMedium, color = AetherOnSurfaceVariant)
-                }
-            }
-        }
-        SettingsTopBar(title = selected.title, onBack = onBack)
-    }
-}
-
-@Composable
-internal fun SettingsTopBar(
-    title: String,
-    onBack: () -> Unit,
-    trailingIcon: ImageVector? = null,
-    trailingEnabled: Boolean = true,
-    trailingLoading: Boolean = false,
-    trailingContentDescription: String = "",
-    onTrailingAction: () -> Unit = {},
-    secondaryTrailingIcon: ImageVector? = null,
-    secondaryTrailingEnabled: Boolean = true,
-    secondaryTrailingContentDescription: String = "",
-    onSecondaryTrailingAction: () -> Unit = {},
-) {
-    val dismissGuard = LocalSharedSettingsDismissGuard.current
-    val reduceMotion = LocalReduceMotion.current
-    val saveShakeOffset = remember { Animatable(0f) }
-    val saveShakeRequest = dismissGuard?.saveShakeRequest ?: 0
-    LaunchedEffect(saveShakeRequest) {
-        if (saveShakeRequest > 0 && !reduceMotion) {
-            saveShakeOffset.snapTo(0f)
-            saveShakeOffset.animateTo(
-                targetValue = 0f,
-                animationSpec = keyframes {
-                    durationMillis = 420
-                    -9f at 55
-                    9f at 110
-                    -7f at 165
-                    7f at 220
-                    -4f at 285
-                    4f at 340
-                },
-            )
-        }
-    }
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier.fillMaxWidth().background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0.0f to AetherSettingsBackground.copy(alpha = 0.96f),
-                        0.18f to AetherSettingsBackground.copy(alpha = 0.86f),
-                        0.42f to AetherSettingsBackground.copy(alpha = 0.48f),
-                        0.72f to AetherSettingsBackground.copy(alpha = 0.22f),
-                        1.0f to AetherSettingsBackground.copy(alpha = 0.12f),
-                    ),
-                ),
-            ),
-        ) {
-            Box(
-                modifier = Modifier.fillMaxWidth().statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            ) {
-                SharedSettingsCircleButton(
-                    icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = stringResource(Res.string.common_back),
-                    onClick = onBack,
-                    modifier = Modifier.align(Alignment.CenterStart),
-                )
-                BoxWithConstraints(Modifier.align(Alignment.Center)) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = AetherOnSurface,
-                        modifier = Modifier.offset(x = if (title == "Alpine" && maxWidth < 500.dp) (-22).dp else 0.dp),
-                    )
-                }
-                Row(
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (secondaryTrailingIcon != null) {
-                        SharedSettingsCircleButton(
-                            icon = secondaryTrailingIcon,
-                            contentDescription = secondaryTrailingContentDescription,
-                            onClick = onSecondaryTrailingAction,
-                            enabled = secondaryTrailingEnabled,
-                        )
-                    }
-                    if (trailingLoading) {
-                        Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = AetherPrimary,
-                            )
-                        }
-                    } else if (trailingIcon != null) {
-                        SharedSettingsCircleButton(
-                            icon = trailingIcon,
-                            contentDescription = trailingContentDescription,
-                            onClick = onTrailingAction,
-                            enabled = trailingEnabled,
-                            modifier = Modifier.offset {
-                                IntOffset(saveShakeOffset.value.roundToInt(), 0)
-                            },
-                        )
-                    } else {
-                        Spacer(Modifier.size(44.dp))
-                    }
-                }
-            }
-        }
-        Spacer(
-            modifier = Modifier.fillMaxWidth().height(SettingsTopFadeHeight).background(
-                Brush.verticalGradient(
-                    colorStops = arrayOf(
-                        0.0f to AetherSettingsBackground.copy(alpha = 0.12f),
-                        0.42f to AetherSettingsBackground.copy(alpha = 0.05f),
-                        1.0f to Color.Transparent,
-                    ),
-                )
-            )
-        )
-    }
-}
-
-@Composable
-private fun SharedSettingsCircleButton(
-    icon: ImageVector,
-    contentDescription: String,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .size(44.dp)
-            .shadow(
-                10.dp,
-                RoundedCornerShape(50),
-                ambientColor = AetherScrim,
-                spotColor = AetherScrim,
-            )
-            .clip(RoundedCornerShape(50))
-            .background(if (enabled) AetherSurface else AetherSurface.copy(alpha = 0.55f))
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon,
-            contentDescription = contentDescription,
-            tint = if (enabled) AetherOnSurface else AetherOnSurface.copy(alpha = 0.45f),
-        )
-    }
-}
-
-@Composable
-internal fun sharedSettingsContentTopPadding(): Dp {
-    val density = LocalDensity.current
-    return with(density) { WindowInsets.statusBars.getTop(this).toDp() + 74.dp }
-}

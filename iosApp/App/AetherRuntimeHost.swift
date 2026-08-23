@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
@@ -1383,14 +1384,46 @@ final class AetherRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDele
     }
 
     private func installBridgeAsset() throws {
-        guard let source = Bundle.main.url(forResource: "bridge", withExtension: "mjs") else {
-            throw RuntimeHostError.operationFailed("Bundled Pi Bridge is missing.")
-        }
         try guestCreateDirectories("/root/.aether/pi-bridge")
+        try installBridgeAsset(
+            resource: "bridge",
+            guestName: "bridge.mjs",
+            markerName: ".bridge.sha256"
+        )
+        try installBridgeAsset(
+            resource: "extension-bridge",
+            guestName: "extension-bridge.mjs",
+            markerName: ".extension-bridge.sha256"
+        )
+    }
+
+    private func installBridgeAsset(
+        resource: String,
+        guestName: String,
+        markerName: String
+    ) throws {
+        guard let source = Bundle.main.url(forResource: resource, withExtension: "mjs") else {
+            throw RuntimeHostError.operationFailed("Bundled \(resource) is missing.")
+        }
         let bytes = try Data(contentsOf: source)
+        let fingerprint = SHA256.hash(data: bytes)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let bridgePath = "/root/.aether/pi-bridge/\(guestName)"
+        let markerPath = "/root/.aether/pi-bridge/\(markerName)"
+        if runtime.fileExists(bridgePath),
+           let marker = try? runtime.readFile(markerPath),
+           String(data: marker, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == fingerprint {
+            return
+        }
         try runtime.writeFile(
-            "/root/.aether/pi-bridge/bridge.mjs",
+            bridgePath,
             data: bytes,
+            executable: false
+        )
+        try runtime.writeFile(
+            markerPath,
+            data: Data("\(fingerprint)\n".utf8),
             executable: false
         )
     }

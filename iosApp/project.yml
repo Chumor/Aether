@@ -31,6 +31,7 @@ targets:
       - path: Resources/Assets.xcassets
         buildPhase: resources
       - path: Resources/Runtime/bridge.mjs
+      - path: Resources/Runtime/extension-bridge.mjs
         buildPhase: resources
       - path: Resources/Runtime/root.tar.gz
         buildPhase: resources

@@ -152,7 +152,7 @@ test("lists Pi-discovered project skills without Aether managed copies", async (
     join(managedSkill, "SKILL.md"),
     "---\nname: managed\ndescription: Already managed by Aether\n---\n",
   );
-  const client = new BridgeClient({ HOME: root });
+  const client = new BridgeClient({ HOME: root }, "dist/extension-bridge.mjs");
   try {
     const payload = await client.request("skills-1", "list_discovered_skills", {
       workspace_directory: workspace,
@@ -169,7 +169,10 @@ test("lists Pi-discovered project skills without Aether managed copies", async (
 
 test("lists Pi extension packages from an isolated agent directory", async () => {
   const home = await mkdtemp(join(tmpdir(), "aether-pi-packages-"));
-  const client = new BridgeClient({ HOME: home, USERPROFILE: home });
+  const client = new BridgeClient(
+    { HOME: home, USERPROFILE: home },
+    "dist/extension-bridge.mjs",
+  );
   try {
     const result = await client.request("packages-list", "list_extension_packages");
     assert.deepEqual(result.packages, []);
@@ -367,7 +370,10 @@ export default defineAetherExtension((aether) => {
     "utf8",
   );
 
-  const client = new BridgeClient({ HOME: home, USERPROFILE: home });
+  const client = new BridgeClient(
+    { HOME: home, USERPROFILE: home },
+    "dist/extension-bridge.mjs",
+  );
   try {
     const loaded = await client.request("aether-load", "reload_aether_extensions", {
       context: { draft_input: "hello" },

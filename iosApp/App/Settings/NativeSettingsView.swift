@@ -1297,12 +1297,12 @@ private struct NativeExtensionsOverview: View {
                     }
                 }
             } else {
-                if operation == "refresh" && catalog.isEmpty {
+                if catalog.isEmpty && catalogError.isEmpty {
                     HStack { Spacer(); ProgressView(); Text(model.text("Loading extensions...", "正在加载 Extensions...")); Spacer() }
                 } else if !catalogError.isEmpty && catalog.isEmpty {
                     Section {
                         Text(catalogError).foregroundStyle(.secondary)
-                        Button(model.text("Retry", "重试")) { model.perform("pi_extensions_refresh") }
+                        Button(model.text("Retry", "重试")) { model.perform("pi_extensions_discover") }
                     }
                 } else if filteredCatalog.isEmpty {
                     ContentUnavailableView(model.text("No extensions found", "未找到 Extension"), systemImage: "magnifyingglass")
@@ -1333,7 +1333,11 @@ private struct NativeExtensionsOverview: View {
                     .accessibilityLabel(model.text("Refresh", "刷新"))
             }
         }
-        .task { if installed.isEmpty && catalog.isEmpty { model.perform("pi_extensions_refresh") } }
+        .task(id: tab) {
+            if tab == 1 && catalog.isEmpty && operation.isEmpty {
+                model.perform("pi_extensions_discover")
+            }
+        }
         .onReceive(model.$snapshot) { snapshot in
             let state = snapshot["piExtensions"] as? [String: Any] ?? [:]
             if model.string(state, "operation").isEmpty {
@@ -2211,7 +2215,8 @@ private struct NativeExtensionSettingsPage: View {
                     model: model,
                     page: page,
                     sections: page["sections"] as? [[String: Any]] ?? [],
-                    categories: categories
+                    categories: categories,
+                    showsCategoryNavigation: true
                 )
             } else {
                 List(visibleCategories, id: \.nativeID) { category in
@@ -2299,6 +2304,7 @@ private struct NativeExtensionForm: View {
     let page: [String: Any]
     let sections: [[String: Any]]
     let categories: [[String: Any]]
+    var showsCategoryNavigation = false
 
     var body: some View {
         Form {
@@ -2316,6 +2322,23 @@ private struct NativeExtensionForm: View {
                     Text(model.string(section, "title"))
                 } footer: {
                     Text(model.string(section, "description"))
+                }
+            }
+            if showsCategoryNavigation {
+                Section {
+                    ForEach(categories.filter { !model.bool($0, "hidden") }, id: \.nativeID) { category in
+                        NavigationLink {
+                            NativeExtensionCategoryPage(model: model, page: page, category: category)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(model.string(category, "title"))
+                                let subtitle = model.string(category, "subtitle")
+                                if !subtitle.isEmpty {
+                                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

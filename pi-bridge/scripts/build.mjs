@@ -1,5 +1,18 @@
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+
+const deduplicateDependencies = {
+  name: "deduplicate-dependencies",
+  setup(context) {
+    context.onResolve(
+      {
+        filter: /^(?:@earendil-works\/pi-agent-core|@earendil-works\/pi-ai|@earendil-works\/pi-tui|jiti)(?:\/.*)?$/,
+      },
+      ({ path }) => ({ path: fileURLToPath(import.meta.resolve(path)) }),
+    );
+  },
+};
 
 const nodeBundleSourcePatches = {
   name: "node-bundle-source-patches",
@@ -38,15 +51,28 @@ const nodeBundleSourcePatches = {
   },
 };
 
-await build({
-  entryPoints: ["src/bridge.ts"],
+const commonOptions = {
   bundle: true,
   platform: "node",
   format: "esm",
   target: "node22.19",
+  minify: true,
+  legalComments: "none",
   banner: {
     js: "import { createRequire as __aetherCreateRequire } from 'node:module';const require = __aetherCreateRequire(import.meta.url);",
   },
-  outfile: "dist/bridge.mjs",
-  plugins: [nodeBundleSourcePatches],
-});
+};
+
+await Promise.all([
+  build({
+    ...commonOptions,
+    entryPoints: ["src/bridge.ts"],
+    outfile: "dist/bridge.mjs",
+    plugins: [deduplicateDependencies, nodeBundleSourcePatches],
+  }),
+  build({
+    ...commonOptions,
+    entryPoints: ["src/extension-bridge.ts"],
+    outfile: "dist/extension-bridge.mjs",
+  }),
+]);

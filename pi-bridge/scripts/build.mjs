@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { build } from "esbuild";
 
-const nodeBundleExtensionModules = {
-  name: "node-bundle-extension-modules",
+const nodeBundleSourcePatches = {
+  name: "node-bundle-source-patches",
   setup(context) {
     context.onLoad(
       { filter: /@earendil-works\/pi-coding-agent\/dist\/core\/extensions\/loader\.js$/ },
@@ -12,6 +12,22 @@ const nodeBundleExtensionModules = {
         const replacement = "...(true\n            ? { virtualModules: VIRTUAL_MODULES, tryNative: false }";
         if (!source.includes(original)) {
           throw new Error("Pi extension loader structure changed; update the Node bundle patch.");
+        }
+        return {
+          contents: source.replace(original, replacement),
+          loader: "js",
+        };
+      },
+    );
+    context.onLoad(
+      { filter: /@earendil-works\/pi-ai\/dist\/api\/openai-completions\.js$/ },
+      async ({ path }) => {
+        const source = await readFile(path, "utf8");
+        const original = "reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,";
+        const replacement =
+          "reasoning: rawUsage.completion_tokens_details?.reasoning_tokens ?? rawUsage.reasoning_tokens,";
+        if (!source.includes(original)) {
+          throw new Error("Pi OpenAI completion usage structure changed; update the reasoning token patch.");
         }
         return {
           contents: source.replace(original, replacement),
@@ -32,5 +48,5 @@ await build({
     js: "import { createRequire as __aetherCreateRequire } from 'node:module';const require = __aetherCreateRequire(import.meta.url);",
   },
   outfile: "dist/bridge.mjs",
-  plugins: [nodeBundleExtensionModules],
+  plugins: [nodeBundleSourcePatches],
 });

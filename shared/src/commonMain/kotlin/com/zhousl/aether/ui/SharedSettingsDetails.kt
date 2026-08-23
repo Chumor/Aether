@@ -80,6 +80,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zhousl.aether.data.AetherAppStoreFallbackUrl
+import com.zhousl.aether.data.AetherGitHubUrl
 import com.zhousl.aether.data.AetherPrivacyPolicyUrl
 import com.zhousl.aether.data.AetherWebsiteUrl
 import com.zhousl.aether.data.AppSettings
@@ -885,13 +886,19 @@ internal fun SharedAboutSettingsDetail(
             SettingsNavRow(
                 icon = Icons.Rounded.Link,
                 title = stringResource(Res.string.settings_website),
-                subtitle = AetherWebsiteUrl.removePrefix("https://"),
+                subtitle = "",
             ) { openUrl(AetherWebsiteUrl) }
             CardDivider()
             SettingsNavRow(
                 icon = Icons.Rounded.Link,
+                title = stringResource(Res.string.settings_github),
+                subtitle = "",
+            ) { openUrl(AetherGitHubUrl) }
+            CardDivider()
+            SettingsNavRow(
+                icon = Icons.Rounded.Link,
                 title = stringResource(Res.string.settings_privacy_policy),
-                subtitle = AetherPrivacyPolicyUrl.removePrefix("https://"),
+                subtitle = "",
             ) { openUrl(AetherPrivacyPolicyUrl) }
         }
         if (update?.isUpdateAvailable == true) {

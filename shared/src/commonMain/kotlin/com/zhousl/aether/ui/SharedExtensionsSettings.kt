@@ -116,12 +116,12 @@ private const val SharedExtensionEntryLimit = 4096
 private val SharedExtensionFileSuffixes = setOf("js", "ts", "mjs", "mts", "cjs", "cts")
 private val SharedExtensionIndexNames = SharedExtensionFileSuffixes.map { "index.$it" }
 
-private enum class SharedExtensionInstallKind {
+internal enum class SharedExtensionInstallKind {
     Package,
     Imported,
 }
 
-private data class SharedInstalledExtension(
+internal data class SharedInstalledExtension(
     val id: String,
     val source: String,
     val name: String,
@@ -137,14 +137,14 @@ private data class SharedInstalledExtension(
     val kind: SharedExtensionInstallKind,
 )
 
-private enum class SharedPiCompatibilityIssue {
+internal enum class SharedPiCompatibilityIssue {
     InteractiveUi,
     Theme,
     Prompt,
     Platform,
 }
 
-private data class SharedPiCatalogEntry(
+internal data class SharedPiCatalogEntry(
     val name: String,
     val source: String,
     val description: String,
@@ -157,7 +157,7 @@ private data class SharedPiCatalogEntry(
     val compatibilityIssue: SharedPiCompatibilityIssue?,
 )
 
-private data class SharedPiPackageDetails(
+internal data class SharedPiPackageDetails(
     val source: String,
     val name: String,
     val description: String,
@@ -176,7 +176,7 @@ private data class SharedPiPackageDetails(
     val compatibilityIssue: SharedPiCompatibilityIssue?,
 )
 
-private class SharedPiExtensionCatalogClient {
+internal class SharedPiExtensionCatalogClient {
     private val client = HttpClient {
         install(HttpTimeout) {
             connectTimeoutMillis = 15_000
@@ -235,7 +235,7 @@ private class SharedPiExtensionCatalogClient {
     }
 }
 
-private fun parseSharedPiPackageCatalog(html: String): List<SharedPiCatalogEntry> =
+internal fun parseSharedPiPackageCatalog(html: String): List<SharedPiCatalogEntry> =
     Regex(
         """<article\b(?=[^>]*\bdata-package-card\b)([^>]*)>(.*?)</article>""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
@@ -584,7 +584,7 @@ private fun String.sharedDecodeHtmlEntities(): String =
         .replace("&gt;", ">")
         .replace("&nbsp;", " ")
 
-private fun parseSharedInstalledPackages(payload: JsonObject): List<SharedInstalledExtension> =
+internal fun parseSharedInstalledPackages(payload: JsonObject): List<SharedInstalledExtension> =
     (payload["packages"] as? JsonArray).orEmpty().mapNotNull { element ->
         val item = element as? JsonObject ?: return@mapNotNull null
         val source = item.sharedString("source").trim()
@@ -1080,6 +1080,208 @@ private fun List<ByteArray>.sharedFlattenBytes(): ByteArray {
 }
 
 private fun String.sharedShellQuote(): String = "'" + replace("'", "'\"'\"'") + "'"
+
+internal data class NativePiExtensionsState(
+    val installed: List<SharedInstalledExtension> = emptyList(),
+    val catalog: List<SharedPiCatalogEntry> = emptyList(),
+    val details: SharedPiPackageDetails? = null,
+    val operation: String = "",
+    val message: String = "",
+    val error: String = "",
+    val installedError: String = "",
+    val catalogError: String = "",
+)
+
+internal class NativePiExtensionsController(
+    private val bridgeClient: SharedPiBridgeClient,
+    private val extensionManager: SharedAetherExtensionManager,
+    private val extensionStateStore: SharedExtensionStateStore,
+    private val runtime: MultiplatformLocalRuntime,
+    private val platformServices: PlatformServices,
+) {
+    private val catalogClient = SharedPiExtensionCatalogClient()
+
+    suspend fun refresh(previous: NativePiExtensionsState): NativePiExtensionsState {
+        var state = previous.copy(
+            message = "",
+            error = "",
+            installedError = "",
+            catalogError = "",
+        )
+        try {
+            state = state.copy(installed = loadInstalled())
+            extensionManager.refresh()
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            state = state.copy(installedError = failure.sharedExtensionMessage())
+        }
+        try {
+            val catalog = catalogClient.fetchCatalog()
+            check(catalog.isNotEmpty()) {
+                "Pi package catalog did not contain any installable extensions."
+            }
+            state = state.copy(catalog = catalog)
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            state = state.copy(catalogError = failure.sharedExtensionMessage())
+        }
+        return state.copy(operation = "")
+    }
+
+    suspend fun fetchDetails(
+        previous: NativePiExtensionsState,
+        source: String,
+    ): NativePiExtensionsState {
+        val entry = previous.catalog.firstOrNull { it.source == source }
+            ?: return previous.copy(operation = "", error = "Package was not found in the catalog.")
+        return try {
+            previous.copy(
+                details = catalogClient.fetchDetails(entry),
+                operation = "",
+                error = "",
+            )
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            previous.copy(operation = "", error = failure.sharedExtensionMessage())
+        }
+    }
+
+    suspend fun install(
+        previous: NativePiExtensionsState,
+        source: String,
+    ): NativePiExtensionsState = operate(previous, "Extension installed.") {
+        bridgeClient.installExtensionPackage(source)
+        extensionManager.reload()
+    }
+
+    suspend fun update(
+        previous: NativePiExtensionsState,
+        id: String,
+    ): NativePiExtensionsState {
+        val extension = previous.installed.firstOrNull { it.id == id }
+            ?: return previous.copy(operation = "", error = "Installed extension was not found.")
+        return operate(previous, "Extension updated.") {
+            require(extension.kind == SharedExtensionInstallKind.Package) {
+                "Imported extensions must be replaced by importing them again."
+            }
+            bridgeClient.updateExtensionPackage(extension.source)
+            extensionManager.reload()
+        }
+    }
+
+    suspend fun remove(
+        previous: NativePiExtensionsState,
+        id: String,
+    ): NativePiExtensionsState {
+        val extension = previous.installed.firstOrNull { it.id == id }
+            ?: return previous.copy(operation = "", error = "Installed extension was not found.")
+        return operate(previous, "Extension removed.") {
+            when (extension.kind) {
+                SharedExtensionInstallKind.Package -> {
+                    val response = bridgeClient.removeExtensionPackage(extension.source)
+                    check(response["removed"]?.jsonPrimitive?.booleanOrNull == true) {
+                        "No installed extension matched ${extension.source}."
+                    }
+                    extensionStateStore.removePackage(extension.source)
+                }
+                SharedExtensionInstallKind.Imported -> {
+                    removeSharedImportedExtension(runtime, extension.installedPath)
+                    extensionStateStore.removeImportedExtension(extension.installedPath)
+                }
+            }
+            bridgeClient.reloadAllExtensions()
+            extensionManager.refresh()
+        }
+    }
+
+    suspend fun setEnabled(
+        previous: NativePiExtensionsState,
+        id: String,
+        enabled: Boolean,
+    ): NativePiExtensionsState {
+        val extension = previous.installed.firstOrNull { it.id == id }
+            ?: return previous.copy(operation = "", error = "Installed extension was not found.")
+        return operate(previous, "Extension settings updated.") {
+            when (extension.kind) {
+                SharedExtensionInstallKind.Package ->
+                    extensionStateStore.setPackageEnabled(extension.source, enabled)
+                SharedExtensionInstallKind.Imported ->
+                    extensionStateStore.setImportedExtensionEnabled(extension.installedPath, enabled)
+            }
+            bridgeClient.reloadAllExtensions()
+            extensionManager.reload()
+        }
+    }
+
+    suspend fun import(previous: NativePiExtensionsState): NativePiExtensionsState {
+        val picked = platformServices.pickFile(imagesOnly = false)
+            ?: return previous.copy(operation = "")
+        var deferred: Triple<String, JsonObject, Boolean>? = null
+        return operate(previous, "Extension imported.") {
+            importSharedExtension(
+                runtime = runtime,
+                picked = picked,
+                reload = { reloadSessions ->
+                    if (reloadSessions) bridgeClient.reloadAllExtensions()
+                    extensionManager.reload()
+                },
+                onDeferredDependencyInstall = { path, manifest, containsPi ->
+                    deferred = Triple(path, manifest, containsPi)
+                },
+            )
+            deferred?.let { (path, manifest, containsPi) ->
+                installSharedExtensionDependencies(runtime, path, manifest)
+                if (containsPi) bridgeClient.reloadAllExtensions()
+                extensionManager.reload()
+            }
+        }
+    }
+
+    private suspend fun operate(
+        previous: NativePiExtensionsState,
+        successMessage: String,
+        operation: suspend () -> Unit,
+    ): NativePiExtensionsState = try {
+        operation()
+        previous.copy(
+            installed = loadInstalled(),
+            operation = "",
+            message = successMessage,
+            error = "",
+        )
+    } catch (failure: CancellationException) {
+        throw failure
+    } catch (failure: Throwable) {
+        previous.copy(operation = "", message = "", error = failure.sharedExtensionMessage())
+    }
+
+    private suspend fun loadInstalled(): List<SharedInstalledExtension> = coroutineScope {
+        val packagesRequest = async { bridgeClient.listExtensionPackages() }
+        val importsRequest = async { listSharedImportedExtensions(runtime) }
+        val optionsRequest = async { extensionStateStore.load() }
+        val options = optionsRequest.await()
+        val packages = parseSharedInstalledPackages(packagesRequest.await())
+            .map { extension ->
+                extension.copy(isEnabled = extension.source !in options.disabledPackageSources)
+            }
+        val imports = importsRequest.await()
+            .filter { it.extensionCount > 0 }
+            .map { extension ->
+                val baseName = extension.installedPath.substringAfterLast('/')
+                val disabled = extension.installedPath in options.disabledExtensionPaths ||
+                    options.disabledExtensionPaths.any { it.substringAfterLast('/') == baseName }
+                extension.copy(isEnabled = !disabled)
+            }
+        (packages + imports).sortedBy { it.name.lowercase() }
+    }
+}
+
+private fun Throwable.sharedExtensionMessage(): String =
+    message?.trim().takeUnless { it.isNullOrBlank() }
+        ?: this::class.simpleName.orEmpty().ifBlank { "Extension operation failed." }
 
 @Composable
 internal fun SharedExtensionsSettingsDetail(

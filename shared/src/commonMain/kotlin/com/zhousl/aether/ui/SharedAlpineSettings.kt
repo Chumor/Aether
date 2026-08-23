@@ -180,13 +180,13 @@ private suspend fun readSharedAlpineReceivedBytes(runtime: MultiplatformLocalRun
 
 private suspend fun verifySharedAlpineProfile(
     runtime: MultiplatformLocalRuntime,
-    profile: SharedAlpineProfileDefinition,
+    verificationCommand: String,
 ): Boolean = withTimeoutOrNull(30_000L) {
     coroutineScope {
         val process = runtime.startProcess(
             RuntimeProcessSpec(
                 executable = "/bin/sh",
-                arguments = listOf("-lc", profile.verificationCommand),
+                arguments = listOf("-lc", verificationCommand),
                 environment = mapOf("HOME" to runtime.homeDirectory),
                 workingDirectory = runtime.homeDirectory,
                 redirectErrorStream = true,
@@ -238,6 +238,210 @@ private fun formatSharedAlpineTransferRate(bytesPerSecond: Long): String {
         rate >= 1_048_576.0 -> "${formatSharedDecimal(rate / 1_048_576.0)} MB/s"
         rate >= 1_024.0 -> "${(rate / 1_024.0).roundToLong()} KB/s"
         else -> "${rate.roundToLong()} B/s"
+    }
+}
+
+internal data class NativeAlpineProfile(
+    val id: String,
+    val packages: String,
+    val verificationCommand: String,
+)
+
+internal data class NativeAlpineSettingsState(
+    val ready: Boolean = false,
+    val issue: String = "not_installed",
+    val detail: String = "",
+    val operation: String = "",
+    val progress: String = "",
+)
+
+internal data class NativeAlpineResult(
+    val state: NativeAlpineSettingsState,
+    val settings: AppSettings,
+)
+
+internal class NativeAlpineSettingsController(
+    private val runtime: MultiplatformLocalRuntime,
+) {
+    val profiles = listOf(
+        NativeAlpineProfile("python", "python3 py3-pip py3-virtualenv", "python3 --version && pip3 --version && virtualenv --version"),
+        NativeAlpineProfile("node", "nodejs npm", "node --version && npm --version"),
+        NativeAlpineProfile("git_search", "git ripgrep", "git --version && rg --version"),
+        NativeAlpineProfile("ssh", "openssh-client", "ssh -V"),
+    )
+
+    suspend fun refresh(settings: AppSettings): NativeAlpineResult = try {
+        val ready = runtime.isReady()
+        val verifiedProfiles = if (ready) {
+            settings.alpinePackageProfiles.mapValues { (id, state) ->
+                val profile = profiles.firstOrNull { it.id == id }
+                if (state.installed && profile != null &&
+                    !verifySharedAlpineProfile(runtime, profile.verificationCommand)
+                ) {
+                    state.copy(installed = false, installedAtMillis = 0L, lastError = "")
+                } else {
+                    state
+                }
+            }
+        } else {
+            settings.alpinePackageProfiles
+        }
+        val updated = settings.copy(
+            alpineSetupCompleted = ready,
+            alpinePackageProfiles = verifiedProfiles,
+            enabledRuntimeIds = if (ready) {
+                settings.enabledRuntimeIds + LocalRuntimeId.Alpine
+            } else {
+                settings.enabledRuntimeIds - LocalRuntimeId.Alpine
+            },
+            defaultRuntimeId = if (!ready && settings.defaultRuntimeId == LocalRuntimeId.Alpine) {
+                null
+            } else {
+                settings.defaultRuntimeId
+            },
+        )
+        NativeAlpineResult(
+            state = NativeAlpineSettingsState(
+                ready = ready,
+                issue = if (ready) "ready" else "not_installed",
+                detail = if (ready) "" else "The Alpine root filesystem is not initialized.",
+            ),
+            settings = updated,
+        )
+    } catch (failure: CancellationException) {
+        throw failure
+    } catch (failure: Throwable) {
+        NativeAlpineResult(
+            state = NativeAlpineSettingsState(
+                issue = "failed",
+                detail = failure.message.orEmpty().ifBlank { "Unable to inspect Alpine." },
+            ),
+            settings = settings,
+        )
+    }
+
+    suspend fun initialize(settings: AppSettings): NativeAlpineResult = try {
+        runtime.initialize()
+        val updated = settings.copy(
+            alpineSetupCompleted = true,
+            enabledRuntimeIds = settings.enabledRuntimeIds + LocalRuntimeId.Alpine,
+            defaultRuntimeId = settings.defaultRuntimeId ?: LocalRuntimeId.Alpine,
+        )
+        NativeAlpineResult(NativeAlpineSettingsState(ready = true, issue = "ready"), updated)
+    } catch (failure: CancellationException) {
+        throw failure
+    } catch (failure: Throwable) {
+        NativeAlpineResult(
+            NativeAlpineSettingsState(
+                issue = "failed",
+                detail = failure.message.orEmpty().ifBlank { "Failed to initialize Alpine." },
+            ),
+            settings,
+        )
+    }
+
+    suspend fun reset(settings: AppSettings): NativeAlpineResult = try {
+        runtime.reset()
+        val remaining = settings.enabledRuntimeIds - LocalRuntimeId.Alpine
+        val updated = settings.copy(
+            alpineSetupCompleted = false,
+            alpinePackageProfiles = emptyMap(),
+            enabledRuntimeIds = remaining,
+            defaultRuntimeId = if (settings.defaultRuntimeId == LocalRuntimeId.Alpine) {
+                remaining.firstOrNull()
+            } else {
+                settings.defaultRuntimeId
+            },
+        )
+        NativeAlpineResult(NativeAlpineSettingsState(), updated)
+    } catch (failure: CancellationException) {
+        throw failure
+    } catch (failure: Throwable) {
+        NativeAlpineResult(
+            NativeAlpineSettingsState(
+                ready = settings.alpineSetupCompleted,
+                issue = "failed",
+                detail = failure.message.orEmpty().ifBlank { "Failed to reset Alpine." },
+            ),
+            settings,
+        )
+    }
+
+    suspend fun installProfile(
+        settings: AppSettings,
+        profileId: String,
+        onProgress: (String) -> Unit,
+    ): NativeAlpineResult {
+        val profile = profiles.firstOrNull { it.id == profileId }
+            ?: return NativeAlpineResult(
+                NativeAlpineSettingsState(true, "failed", "Unknown Alpine environment profile."),
+                settings,
+            )
+        return try {
+            check(runtime.isReady()) { "Initialize Alpine before installing an environment." }
+            withTimeout(10 * 60 * 1_000L) {
+                coroutineScope {
+                    val output = StringBuilder()
+                    val process = runtime.startProcess(
+                        RuntimeProcessSpec(
+                            executable = "/bin/sh",
+                            arguments = listOf("-lc", "apk add --no-cache --no-chown ${profile.packages}"),
+                            environment = mapOf("HOME" to runtime.homeDirectory),
+                            workingDirectory = runtime.homeDirectory,
+                            redirectErrorStream = true,
+                        )
+                    )
+                    var exited = false
+                    try {
+                        process.closeStdin()
+                        val stdout = async {
+                            process.stdout.collect { bytes ->
+                                val text = bytes.decodeToString()
+                                output.append(text)
+                                text.lineSequence().lastOrNull { it.isNotBlank() }
+                                    ?.takeLast(160)?.let(onProgress)
+                            }
+                        }
+                        val exit = process.awaitExit()
+                        exited = true
+                        stdout.await()
+                        check(exit.exitCode == 0 ||
+                            verifySharedAlpineProfile(runtime, profile.verificationCommand)
+                        ) {
+                            output.toString().trim().takeLast(1_000).ifBlank {
+                                "Alpine package installation exited with ${exit.exitCode}."
+                            }
+                        }
+                    } finally {
+                        if (!exited) withContext(NonCancellable) {
+                            runCatching { process.signal(RuntimeProcessSignal.Kill) }
+                        }
+                    }
+                }
+            }
+            val updatedProfiles = settings.alpinePackageProfiles + (
+                profile.id to PackageProfileState(
+                    profileId = profile.id,
+                    installed = true,
+                    installedAtMillis = com.zhousl.aether.data.platformCurrentTimeMillis(),
+                )
+            )
+            NativeAlpineResult(
+                NativeAlpineSettingsState(ready = true, issue = "ready"),
+                settings.copy(alpinePackageProfiles = updatedProfiles),
+            )
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            val message = failure.message.orEmpty().ifBlank { "Failed to install Alpine environment." }
+            val updatedProfiles = settings.alpinePackageProfiles + (
+                profile.id to PackageProfileState(profile.id, lastError = message)
+            )
+            NativeAlpineResult(
+                NativeAlpineSettingsState(ready = true, issue = "ready", detail = message),
+                settings.copy(alpinePackageProfiles = updatedProfiles),
+            )
+        }
     }
 }
 
@@ -352,7 +556,7 @@ internal fun SharedAlpineSettingsDetailPage(
                 if (installed) {
                     profiles.forEach { profile ->
                         val state = current.alpinePackageProfiles[profile.id] ?: return@forEach
-                        if (state.installed && !verifySharedAlpineProfile(runtime, profile)) {
+                        if (state.installed && !verifySharedAlpineProfile(runtime, profile.verificationCommand)) {
                             profileStateCache[profile.id] = state.copy(
                                 installed = false,
                                 installedAtMillis = 0L,
@@ -439,7 +643,7 @@ internal fun SharedAlpineSettingsDetailPage(
                         processExited = true
                         rateSampler.cancelAndJoin()
                         stdout.await()
-                        check(exit.exitCode == 0 || verifySharedAlpineProfile(runtime, profile)) {
+                        check(exit.exitCode == 0 || verifySharedAlpineProfile(runtime, profile.verificationCommand)) {
                             output.toString().trim().takeLast(1_000).ifBlank {
                                 "Alpine package installation exited with ${exit.exitCode}."
                             }

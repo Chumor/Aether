@@ -8,6 +8,7 @@ import com.zhousl.aether.ui.AetherSharedApp
 import com.zhousl.aether.data.createIosAetherSettingsStore
 import com.zhousl.aether.data.createIosAetherChatHistoryDatabase
 import com.zhousl.aether.platform.IosPlatformServices
+import com.zhousl.aether.platform.IosNativeSettingsHost
 
 fun MainViewController(runtimeHost: NativeRuntimeHost): platform.UIKit.UIViewController {
     val runtime = IosAlpineRuntime(runtimeHost)
@@ -21,6 +22,7 @@ fun MainViewController(runtimeHost: NativeRuntimeHost): platform.UIKit.UIViewCon
         settingsStore = settingsStore,
         chatHistoryDatabase = chatHistoryDatabase,
         platformServices = platformServices,
+        nativeSettingsHost = IosNativeSettingsHost,
         )
     }
 }

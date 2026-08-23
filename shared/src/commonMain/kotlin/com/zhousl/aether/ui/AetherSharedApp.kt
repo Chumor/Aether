@@ -124,6 +124,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.snapshotFlow
@@ -182,7 +183,10 @@ import com.zhousl.aether.platform.SharedApplicationLifecycle
 import com.zhousl.aether.platform.createBackgroundExecutionManager
 import com.zhousl.aether.platform.applyPlatformAppLanguage
 import com.zhousl.aether.platform.LocalReduceMotion
+import com.zhousl.aether.platform.NativeSettingsCommandHandler
+import com.zhousl.aether.platform.NativeSettingsHost
 import com.zhousl.aether.data.LlmProviderConfig
+import com.zhousl.aether.data.LocalRuntimeId
 import com.zhousl.aether.data.ProviderModelOption
 import com.zhousl.aether.data.AetherSettingsStore
 import com.zhousl.aether.data.AppSettings
@@ -196,6 +200,7 @@ import com.zhousl.aether.data.SharedDiagnosticRedactor
 import com.zhousl.aether.data.SharedActiveSkillContext
 import com.zhousl.aether.data.SharedSkillManager
 import com.zhousl.aether.data.SharedInstalledSkill
+import com.zhousl.aether.data.SharedSkillDirectoryEntry
 import com.zhousl.aether.data.generateSharedQuickActionLabel
 import com.zhousl.aether.data.SharedAetherExtensionManager
 import com.zhousl.aether.data.SharedAetherExtensionSnapshot
@@ -225,6 +230,9 @@ import com.zhousl.aether.data.loadUsageStatistics
 import com.zhousl.aether.data.normalizeLlmInactivityReconnectTimeoutSeconds
 import com.zhousl.aether.data.normalizeOldCommandHistoryRetentionHours
 import com.zhousl.aether.data.normalizeTavilyBaseUrl
+import com.zhousl.aether.data.parseProviderConfigs
+import com.zhousl.aether.data.serializeAppSettings
+import com.zhousl.aether.data.serializeProviderConfigs
 import com.zhousl.aether.data.pi.PiProviderAuthState
 import com.zhousl.aether.data.pi.SharedPiChatClient
 import com.zhousl.aether.data.pi.SharedPiChatMessage
@@ -913,6 +921,7 @@ fun AetherSharedApp(
     settingsStore: AetherSettingsStore? = null,
     chatHistoryDatabase: ChatHistoryDatabase? = null,
     platformServices: PlatformServices = NoOpPlatformServices,
+    nativeSettingsHost: NativeSettingsHost? = null,
 ) {
     CompositionLocalProvider(LocalPlatformServices provides platformServices) {
     var sharedAppSettings by remember { mutableStateOf(AppSettings()) }
@@ -1094,6 +1103,35 @@ fun AetherSharedApp(
         val backgroundLeases = remember { mutableMapOf<String, BackgroundExecutionLease>() }
         var extensionSnapshot by remember { mutableStateOf(SharedAetherExtensionSnapshot()) }
         var extensionSnapshotResolved by remember { mutableStateOf(false) }
+        var nativeStatisticsReport by remember {
+            mutableStateOf(com.zhousl.aether.data.SharedUsageStatisticsReport())
+        }
+        val nativeAlpineController = remember(runtime) { NativeAlpineSettingsController(runtime) }
+        var nativeAlpineState by remember {
+            mutableStateOf(
+                NativeAlpineSettingsState(
+                    ready = sharedAppSettings.alpineSetupCompleted,
+                    issue = if (sharedAppSettings.alpineSetupCompleted) "ready" else "not_installed",
+                )
+            )
+        }
+        LaunchedEffect(sharedAppSettings.alpineSetupCompleted) {
+            if (nativeAlpineState.operation.isBlank()) {
+                nativeAlpineState = nativeAlpineState.copy(
+                    ready = sharedAppSettings.alpineSetupCompleted,
+                    issue = if (sharedAppSettings.alpineSetupCompleted) "ready" else "not_installed",
+                    detail = "",
+                )
+            }
+        }
+        var nativeProviderModels by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+        var nativeProviderOperation by remember { mutableStateOf("") }
+        var nativeProviderError by remember { mutableStateOf("") }
+        var nativeProviderAuthState by remember { mutableStateOf(PiProviderAuthState()) }
+        var nativeAuthenticationCallback by remember { mutableStateOf("") }
+        var nativeOperationMessage by remember { mutableStateOf("") }
+        var nativeOperationError by remember { mutableStateOf("") }
+        var nativeOperation by remember { mutableStateOf("") }
         var transientMessage by remember { mutableStateOf("") }
         var onboardingReplayMode by remember { mutableStateOf(false) }
         var onboardingEntryStage by remember { mutableStateOf(OnboardingStage.Landing) }
@@ -1120,6 +1158,23 @@ fun AetherSharedApp(
             if (transientMessage.isNotBlank()) {
                 kotlinx.coroutines.delay(TransientMessageDurationMillis)
                 transientMessage = ""
+            }
+        }
+        LaunchedEffect(nativeAuthenticationCallback, nativeProviderAuthState.prompt?.id) {
+            val callback = nativeAuthenticationCallback.takeIf(String::isNotBlank)
+                ?: return@LaunchedEffect
+            val prompt = nativeProviderAuthState.prompt
+                ?.takeIf { it.type == "manual_code" }
+                ?: return@LaunchedEffect
+            nativeAuthenticationCallback = ""
+            runSharedAppCatching {
+                bridgeClient.submitAuthPrompt(prompt.id, callback, false)
+            }.onSuccess {
+                nativeProviderAuthState = nativeProviderAuthState.copy(prompt = null)
+            }.onFailure { failure ->
+                nativeProviderAuthState = nativeProviderAuthState.copy(
+                    errorMessage = failure.sharedUserFacingMessage(),
+                )
             }
         }
 
@@ -1284,6 +1339,12 @@ fun AetherSharedApp(
             appScope.launch { settingsStore?.saveGeneralSettings(resolved) }
         }
 
+        fun openSettings() {
+            if (nativeSettingsHost?.openSettings() != true) {
+                route = SharedRoute.Settings
+            }
+        }
+
         fun endBackgroundExecution(target: SharedSessionUiState) {
             backgroundLeases.remove(target.id)?.end()
         }
@@ -1359,8 +1420,14 @@ fun AetherSharedApp(
                     )
                 }
                 if (shouldRestoreSharedChat(persisted.appSettings.onboardingSeenVersion)) {
-                    route = runCatching { SharedRoute.valueOf(persisted.uiState.route) }
+                    val restoredRoute = runCatching { SharedRoute.valueOf(persisted.uiState.route) }
                         .getOrDefault(SharedRoute.Chat)
+                    route = if (restoredRoute == SharedRoute.Settings && nativeSettingsHost != null) {
+                        nativeSettingsHost.openSettings()
+                        SharedRoute.Chat
+                    } else {
+                        restoredRoute
+                    }
                     restoredSettingsDestination = persisted.uiState.settingsDestination
                 }
             }
@@ -2216,7 +2283,9 @@ fun AetherSharedApp(
                                 providerId = result.provider.ifBlank { config.id },
                                 modelId = result.model.ifBlank { config.modelId },
                                 providerPayloadJson = result.providerPayloadJson,
-                                thoughtDurationMillis = if (hasAgentWork) {
+                                thoughtDurationMillis = if (reasoningEffort == "off") {
+                                    0L
+                                } else if (hasAgentWork) {
                                     ((responseStartedAt.takeIf { it > 0L } ?: completedAt) - turnStartedAt)
                                         .coerceAtLeast(0L)
                                 } else {
@@ -2537,7 +2606,7 @@ fun AetherSharedApp(
                     }
                     "app.openScreen" -> withContext(Dispatchers.Main) {
                         val screen = args["screen"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                        route = if (screen.equals("settings", true)) SharedRoute.Settings else SharedRoute.Chat
+                        if (screen.equals("settings", true)) openSettings() else route = SharedRoute.Chat
                         buildJsonObject { put("opened", screen) }
                     }
                     "app.notify" -> withContext(Dispatchers.Main) {
@@ -2610,6 +2679,22 @@ fun AetherSharedApp(
         val extensionManager = remember(bridgeClient) {
             SharedAetherExtensionManager(bridgeClient, ::handleSharedExtensionHostCall)
         }
+        val nativePiExtensionsController = remember(
+            bridgeClient,
+            extensionManager,
+            extensionStateStore,
+            runtime,
+            platformServices,
+        ) {
+            NativePiExtensionsController(
+                bridgeClient = bridgeClient,
+                extensionManager = extensionManager,
+                extensionStateStore = extensionStateStore,
+                runtime = runtime,
+                platformServices = platformServices,
+            )
+        }
+        var nativePiExtensionsState by remember { mutableStateOf(NativePiExtensionsState()) }
         agentExtensionSettingsAccess.readHandler = {
             val current = withContext(Dispatchers.Main) {
                 extensionSnapshot.takeIf { extensionSnapshotResolved }
@@ -2741,6 +2826,635 @@ fun AetherSharedApp(
                 }
             },
         )
+        val nativeSettingsSnapshot = buildNativeSettingsSnapshot(
+            settings = sharedAppSettings,
+            providerConfigs = providerConfigs,
+            installedSkills = installedSkills,
+            mcpServers = mcpServers,
+            extensionSnapshot = extensionSnapshot,
+            capabilities = capabilities,
+            statistics = nativeStatisticsReport,
+            providerModels = nativeProviderModels,
+            providerOperation = nativeProviderOperation,
+            providerError = nativeProviderError,
+            providerAuthState = nativeProviderAuthState,
+            operationMessage = nativeOperationMessage,
+            operationError = nativeOperationError,
+            operation = nativeOperation,
+            piExtensions = nativePiExtensionsState,
+            alpine = nativeAlpineState,
+        )
+        SideEffect {
+            nativeSettingsHost?.publishSnapshot(
+                nativeSettingsSnapshot,
+            )
+        }
+        DisposableEffect(nativeSettingsHost, extensionManager, skillManager, mcpManager) {
+            nativeSettingsHost?.setCommandHandler(object : NativeSettingsCommandHandler {
+                override fun handle(command: String, payloadJson: String) {
+                    val payload = runCatching {
+                        Json.parseToJsonElement(payloadJson) as? JsonObject
+                    }.getOrNull() ?: JsonObject(emptyMap())
+                    when (command) {
+                        "update_settings" -> persistResolvedAppSettings(
+                            sharedAppSettings.withNativeSettingsPatch(payload),
+                        )
+                        "provider_upsert" -> parseProviderConfigs("[$payloadJson]")
+                            .firstOrNull()
+                            ?.let(::upsertProviderConfig)
+                        "provider_enabled" -> setProviderEnabled(
+                            payload.nativeString("id"),
+                            payload.nativeBoolean("enabled") ?: false,
+                        )
+                        "provider_remove" -> removeProviderConfig(payload.nativeString("id"))
+                        "provider_fetch_models" -> appScope.launch {
+                            val config = parseProviderConfigs("[$payloadJson]").firstOrNull()
+                                ?: return@launch
+                            nativeProviderOperation = "fetch_models:${config.id}"
+                            nativeProviderError = ""
+                            try {
+                                val result = modelCatalogClient.fetchModels(config)
+                                nativeProviderModels = nativeProviderModels + (config.id to result.models)
+                                nativeProviderError = result.error.orEmpty()
+                            } catch (failure: CancellationException) {
+                                throw failure
+                            } catch (failure: Throwable) {
+                                nativeProviderError = failure.sharedUserFacingMessage()
+                            } finally {
+                                nativeProviderOperation = ""
+                            }
+                        }
+                        "provider_login" -> appScope.launch {
+                            val configId = payload.nativeString("id")
+                            val providerId = payload.nativeString("providerId")
+                            val authMethod = ProviderAuthMethod.fromStorage(
+                                payload.nativeString("authMethod"),
+                            )
+                            if (providerId.isBlank() || authMethod == ProviderAuthMethod.Ambient) {
+                                return@launch
+                            }
+                            nativeProviderAuthState = PiProviderAuthState(
+                                providerId = providerId,
+                                authMethod = authMethod,
+                                isRunning = true,
+                                statusMessage = if (authMethod == ProviderAuthMethod.OAuth) {
+                                    "Waiting for authorization."
+                                } else {
+                                    "Waiting for credentials."
+                                },
+                            )
+                            runSharedAppCatching {
+                                bridgeClient.loginProvider(
+                                    providerConfigId = configId,
+                                    providerId = providerId,
+                                    authMethod = authMethod.storageValue,
+                                    oauthFlow = payload.nativeString("oauthFlow"),
+                                ) { event, eventPayload ->
+                                    nativeProviderAuthState = nativeProviderAuthState.withBridgeAuthEvent(
+                                        event = event,
+                                        payload = eventPayload,
+                                        completeAuthorizationMessage = "Complete authorization in your browser.",
+                                        enterDeviceCodeMessage = "Enter the device code in your browser.",
+                                    )
+                                }
+                            }.fold(
+                                onSuccess = { result ->
+                                    nativeProviderAuthState = nativeProviderAuthState.copy(
+                                        isRunning = false,
+                                        prompt = null,
+                                        apiKey = result.string("api_key"),
+                                        oauthCredentialJson = (result["oauth_credential"] as? JsonObject)
+                                            ?.toString().orEmpty(),
+                                        providerEnvironmentVariables = result.toPiProviderEnvironmentVariables(),
+                                        statusMessage = "Authentication completed.",
+                                        errorMessage = "",
+                                    )
+                                },
+                                onFailure = { failure ->
+                                    if (failure !is CancellationException) {
+                                        nativeProviderAuthState = nativeProviderAuthState.copy(
+                                            isRunning = false,
+                                            prompt = null,
+                                            statusMessage = "",
+                                            errorMessage = failure.sharedUserFacingMessage(),
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        "provider_auth_prompt" -> appScope.launch {
+                            runSharedAppCatching {
+                                bridgeClient.submitAuthPrompt(
+                                    promptId = payload.nativeString("promptId"),
+                                    value = payload.nativeString("value"),
+                                    cancelled = payload.nativeBoolean("cancelled") ?: false,
+                                )
+                            }.onSuccess {
+                                nativeProviderAuthState = nativeProviderAuthState.copy(prompt = null)
+                            }.onFailure { failure ->
+                                nativeProviderAuthState = nativeProviderAuthState.copy(
+                                    errorMessage = failure.sharedUserFacingMessage(),
+                                )
+                            }
+                        }
+                        "provider_open_auth_url" -> {
+                            val url = nativeProviderAuthState.authorizationUrl
+                            if (url.isNotBlank()) {
+                                val opened = platformServices.openAuthenticationUrl(
+                                    url = url,
+                                    onCallback = { callback ->
+                                        appScope.launch { nativeAuthenticationCallback = callback }
+                                    },
+                                    onCancelled = {
+                                        nativeProviderAuthState.prompt?.id
+                                            ?.takeIf(String::isNotBlank)
+                                            ?.let { promptId ->
+                                                appScope.launch {
+                                                    runSharedAppCatching {
+                                                        bridgeClient.submitAuthPrompt(
+                                                            promptId,
+                                                            "",
+                                                            true,
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                    },
+                                )
+                                if (!opened) platformServices.openUrl(url)
+                            }
+                        }
+                        "provider_clear_auth" -> {
+                            nativeProviderAuthState = PiProviderAuthState()
+                        }
+                        "clear_operation_status" -> {
+                            nativeOperationMessage = ""
+                            nativeOperationError = ""
+                        }
+                        "skill_enabled" -> appScope.launch {
+                            nativeOperation = "skill_enabled"
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                skillManager.setEnabled(
+                                    payload.nativeString("id"),
+                                    payload.nativeBoolean("enabled") ?: false,
+                                )
+                                installedSkills.clear()
+                                installedSkills.addAll(skillManager.list())
+                                retainEnabledSkillSelections(
+                                    installedSkills.filter(SharedInstalledSkill::isEnabled)
+                                        .map(SharedInstalledSkill::id)
+                                        .toSet(),
+                                )
+                            }.onFailure { nativeOperationError = it.sharedUserFacingMessage() }
+                            nativeOperation = ""
+                        }
+                        "skill_remove" -> appScope.launch {
+                            nativeOperation = "skill_remove"
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                skillManager.remove(payload.nativeString("id"))
+                                val updated = skillManager.list()
+                                installedSkills.clear()
+                                installedSkills.addAll(updated)
+                                retainEnabledSkillSelections(
+                                    updated.filter(SharedInstalledSkill::isEnabled)
+                                        .map(SharedInstalledSkill::id)
+                                        .toSet(),
+                                )
+                                sessionStates.values.filterNot(SharedSessionUiState::isDraft)
+                                    .forEach { state -> bridgeClient.reloadSession(state.id) }
+                            }.onSuccess { nativeOperationMessage = "Skill removed." }
+                                .onFailure { nativeOperationError = it.sharedUserFacingMessage() }
+                            nativeOperation = ""
+                        }
+                        "skill_install_url" -> appScope.launch {
+                            nativeOperation = "skill_install"
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                skillManager.installRemote(payload.nativeString("url"))
+                                val updated = skillManager.list()
+                                installedSkills.clear()
+                                installedSkills.addAll(updated)
+                                sessionStates.values.filterNot(SharedSessionUiState::isDraft)
+                                    .forEach { state -> bridgeClient.reloadSession(state.id) }
+                            }.onSuccess { nativeOperationMessage = "Skill installed." }
+                                .onFailure { nativeOperationError = it.sharedUserFacingMessage() }
+                            nativeOperation = ""
+                        }
+                        "skill_install_directory" -> appScope.launch {
+                            nativeOperation = "skill_install"
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                val picked = platformServices.pickDirectory() ?: return@runSharedAppCatching
+                                skillManager.installDirectoryEntries(
+                                    sourceLabel = picked.name,
+                                    entries = picked.files.map { file ->
+                                        SharedSkillDirectoryEntry(file.relativePath, file.bytes)
+                                    },
+                                )
+                                val updated = skillManager.list()
+                                installedSkills.clear()
+                                installedSkills.addAll(updated)
+                                sessionStates.values.filterNot(SharedSessionUiState::isDraft)
+                                    .forEach { state -> bridgeClient.reloadSession(state.id) }
+                            }.onSuccess { nativeOperationMessage = "Skill installed." }
+                                .onFailure { nativeOperationError = it.sharedUserFacingMessage() }
+                            nativeOperation = ""
+                        }
+                        "skill_install_zip" -> appScope.launch {
+                            nativeOperation = "skill_install"
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                val picked = platformServices.pickFile(false) ?: return@runSharedAppCatching
+                                val archive = "${runtime.workspaceRoot}/.skill-${platformRandomUuid()}.zip"
+                                runtime.fileSystem.write(archive, picked.bytes)
+                                try {
+                                    skillManager.installArchive(archive, sourceLabel = picked.name)
+                                } finally {
+                                    withContext(NonCancellable) {
+                                        runCatching { runtime.fileSystem.remove(archive) }
+                                    }
+                                }
+                                val updated = skillManager.list()
+                                installedSkills.clear()
+                                installedSkills.addAll(updated)
+                                sessionStates.values.filterNot(SharedSessionUiState::isDraft)
+                                    .forEach { state -> bridgeClient.reloadSession(state.id) }
+                            }.onSuccess { nativeOperationMessage = "Skill installed." }
+                                .onFailure { nativeOperationError = it.sharedUserFacingMessage() }
+                            nativeOperation = ""
+                        }
+                        "mcp_enabled" -> appScope.launch {
+                            val id = payload.nativeString("id")
+                            val enabled = payload.nativeBoolean("enabled") ?: false
+                            val updated = mcpServers.map { server ->
+                                if (server.id == id) server.copy(enabled = enabled) else server
+                            }
+                            mcpManager.saveServers(updated)
+                            mcpServers.clear()
+                            mcpServers.addAll(updated)
+                            retainEnabledMcpSelections(
+                                updated.filter(SharedMcpServerConfig::enabled)
+                                    .map(SharedMcpServerConfig::id)
+                                    .toSet(),
+                            )
+                        }
+                        "mcp_upsert" -> appScope.launch {
+                            val id = payload.nativeString("id")
+                                .ifBlank { "mcp-${platformCurrentTimeMillis()}" }
+                            val existing = mcpServers.firstOrNull { it.id == id }
+                            val now = platformCurrentTimeMillis()
+                            val server = SharedMcpServerConfig(
+                                id = id,
+                                name = payload.nativeString("name").trim(),
+                                actionLabel = payload.nativeString("actionLabel"),
+                                transport = if (payload.nativeString("transport") == "http") {
+                                    SharedMcpTransport.Http
+                                } else {
+                                    SharedMcpTransport.Stdio
+                                },
+                                url = payload.nativeString("url").trim(),
+                                command = payload.nativeString("command").trim(),
+                                arguments = payload.nativeStringList("arguments"),
+                                headers = payload.nativeStringMap("headers"),
+                                workingDirectory = payload.nativeString("workingDirectory").trim(),
+                                environment = payload.nativeStringMap("environment"),
+                                runtimeEnvironment = payload.nativeString("runtimeEnvironment")
+                                    .ifBlank { "default" },
+                                connectTimeoutMillis = payload.nativeLong("connectTimeoutMillis")
+                                    ?.coerceIn(1_000L, 300_000L) ?: 15_000L,
+                                requestTimeoutMillis = payload.nativeLong("requestTimeoutMillis")
+                                    ?.coerceIn(1_000L, 900_000L) ?: 60_000L,
+                                enabled = payload.nativeBoolean("enabled") ?: true,
+                                createdAtMillis = existing?.createdAtMillis
+                                    ?: payload.nativeLong("createdAtMillis") ?: now,
+                                updatedAtMillis = now,
+                            )
+                            if (server.name.isBlank()) return@launch
+                            val updated = mcpServers.filterNot { it.id == id } + server
+                            mcpManager.saveServers(updated)
+                            mcpServers.clear()
+                            mcpServers.addAll(updated)
+                            retainEnabledMcpSelections(
+                                updated.filter(SharedMcpServerConfig::enabled)
+                                    .map(SharedMcpServerConfig::id)
+                                    .toSet(),
+                            )
+                        }
+                        "mcp_remove" -> appScope.launch {
+                            val id = payload.nativeString("id")
+                            val updated = mcpServers.filterNot { it.id == id }
+                            mcpManager.saveServers(updated)
+                            mcpServers.clear()
+                            mcpServers.addAll(updated)
+                            retainEnabledMcpSelections(
+                                updated.filter(SharedMcpServerConfig::enabled)
+                                    .map(SharedMcpServerConfig::id)
+                                    .toSet(),
+                            )
+                        }
+                        "extension_setting" -> appScope.launch {
+                            val value = payload["value"] ?: JsonNull
+                            extensionManager.invokeAction(
+                                extensionId = payload.nativeString("extension_id"),
+                                action = "settings:${payload.nativeString("settings_id")}:${payload.nativeString("setting_id")}",
+                                args = buildJsonObject {
+                                    put("setting", payload.nativeString("setting_id"))
+                                    put("value", value)
+                                },
+                                context = extensionContext(),
+                            ).also { updated ->
+                                extensionSnapshot = updated
+                                extensionSnapshotResolved = true
+                            }
+                        }
+                        "extension_action" -> appScope.launch {
+                            extensionManager.invokeAction(
+                                extensionId = payload.nativeString("extension_id"),
+                                action = payload.nativeString("action"),
+                                args = payload["args"] as? JsonObject ?: JsonObject(emptyMap()),
+                                context = extensionContext(),
+                            ).also { updated ->
+                                extensionSnapshot = updated
+                                extensionSnapshotResolved = true
+                            }
+                        }
+                        "pi_extensions_refresh" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "refresh",
+                                message = "",
+                                error = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.refresh(
+                                nativePiExtensionsState,
+                            )
+                            extensionSnapshot = extensionManager.snapshot
+                            extensionSnapshotResolved = true
+                        }
+                        "pi_extension_details" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "details",
+                                details = null,
+                                error = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.fetchDetails(
+                                nativePiExtensionsState,
+                                payload.nativeString("source"),
+                            )
+                        }
+                        "pi_extension_install" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "install",
+                                message = "",
+                                error = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.install(
+                                nativePiExtensionsState,
+                                payload.nativeString("source"),
+                            )
+                            extensionSnapshot = extensionManager.snapshot
+                            extensionSnapshotResolved = true
+                        }
+                        "pi_extension_update" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "update",
+                                message = "",
+                                error = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.update(
+                                nativePiExtensionsState,
+                                payload.nativeString("id"),
+                            )
+                            extensionSnapshot = extensionManager.snapshot
+                            extensionSnapshotResolved = true
+                        }
+                        "pi_extension_remove" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "remove",
+                                message = "",
+                                error = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.remove(
+                                nativePiExtensionsState,
+                                payload.nativeString("id"),
+                            )
+                            extensionSnapshot = extensionManager.snapshot
+                            extensionSnapshotResolved = true
+                        }
+                        "pi_extension_enabled" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "enabled",
+                                message = "",
+                                error = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.setEnabled(
+                                nativePiExtensionsState,
+                                payload.nativeString("id"),
+                                payload.nativeBoolean("enabled") ?: false,
+                            )
+                            extensionSnapshot = extensionManager.snapshot
+                            extensionSnapshotResolved = true
+                        }
+                        "pi_extension_import" -> appScope.launch {
+                            nativePiExtensionsState = nativePiExtensionsState.copy(
+                                operation = "import",
+                                message = "",
+                                error = "",
+                            )
+                            nativePiExtensionsState = nativePiExtensionsController.import(
+                                nativePiExtensionsState,
+                            )
+                            extensionSnapshot = extensionManager.snapshot
+                            extensionSnapshotResolved = true
+                        }
+                        "alpine_refresh" -> appScope.launch {
+                            nativeAlpineState = nativeAlpineState.copy(operation = "refresh", detail = "")
+                            val result = nativeAlpineController.refresh(sharedAppSettings)
+                            nativeAlpineState = result.state
+                            if (result.settings != sharedAppSettings) persistResolvedAppSettings(result.settings)
+                        }
+                        "alpine_initialize" -> appScope.launch {
+                            nativeAlpineState = nativeAlpineState.copy(operation = "initialize", detail = "")
+                            val result = nativeAlpineController.initialize(sharedAppSettings)
+                            nativeAlpineState = result.state
+                            if (result.settings != sharedAppSettings) persistResolvedAppSettings(result.settings)
+                        }
+                        "alpine_reset" -> appScope.launch {
+                            nativeAlpineState = nativeAlpineState.copy(operation = "reset", detail = "")
+                            val result = nativeAlpineController.reset(sharedAppSettings)
+                            nativeAlpineState = result.state
+                            if (result.settings != sharedAppSettings) persistResolvedAppSettings(result.settings)
+                        }
+                        "alpine_set_default" -> {
+                            persistResolvedAppSettings(
+                                sharedAppSettings.copy(
+                                    defaultRuntimeId = LocalRuntimeId.Alpine,
+                                    enabledRuntimeIds = sharedAppSettings.enabledRuntimeIds + LocalRuntimeId.Alpine,
+                                )
+                            )
+                        }
+                        "alpine_install_profile" -> appScope.launch {
+                            val profileId = payload.nativeString("profileId")
+                            nativeAlpineState = nativeAlpineState.copy(
+                                operation = "install:$profileId",
+                                detail = "",
+                                progress = "Preparing packages...",
+                            )
+                            val result = nativeAlpineController.installProfile(
+                                settings = sharedAppSettings,
+                                profileId = profileId,
+                                onProgress = { progress ->
+                                    nativeAlpineState = nativeAlpineState.copy(progress = progress)
+                                },
+                            )
+                            nativeAlpineState = result.state
+                            if (result.settings != sharedAppSettings) persistResolvedAppSettings(result.settings)
+                        }
+                        "alpine_open_files" -> platformServices.openAlpineFileManager()
+                        "refresh_statistics" -> appScope.launch {
+                            nativeStatisticsReport = if (historyStore != null) {
+                                withContext(Dispatchers.Default) {
+                                    historyStore.loadUsageStatistics()
+                                }
+                            } else {
+                                val persistedSessions =
+                                    sessionStates.values.map(SharedSessionUiState::toPersistedSession)
+                                withContext(Dispatchers.Default) {
+                                    com.zhousl.aether.data.buildSharedUsageStatisticsReport(
+                                        persistedSessions,
+                                    )
+                                }
+                            }
+                        }
+                        "developer_export_data" -> appScope.launch {
+                            nativeOperationMessage = ""
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                val manager = checkNotNull(appDataManager) {
+                                    "App data storage is unavailable."
+                                }
+                                settingsStore?.saveGeneralSettings(sharedAppSettings)
+                                settingsStore?.saveProviders(
+                                    providerConfigs.toList(),
+                                    providerConfig?.id.orEmpty(),
+                                )
+                                persistSession()
+                                historyStore?.setCurrentSession(sessionId)
+                                val data = manager.exportJson().encodeToByteArray()
+                                platformServices.exportFile(
+                                    "aether-backup.json",
+                                    "application/json",
+                                    data,
+                                )
+                            }.onSuccess { exported ->
+                                if (exported == true) nativeOperationMessage = "App data exported."
+                            }.onFailure { failure ->
+                                nativeOperationError = failure.sharedUserFacingMessage()
+                            }
+                        }
+                        "developer_import_data" -> appScope.launch {
+                            nativeOperationMessage = ""
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                val picked = platformServices.pickFile(false)
+                                    ?: return@runSharedAppCatching null
+                                val manager = checkNotNull(appDataManager) {
+                                    "App data storage is unavailable."
+                                }
+                                manager.restoreJson(picked.bytes.decodeToString())
+                            }.onSuccess { restored ->
+                                if (restored != null) {
+                                    val persisted = restored.persistedSettings
+                                    sharedAppSettings = persisted.appSettings
+                                    providerConfigs.clear()
+                                    providerConfigs.addAll(persisted.providerConfigs)
+                                    providerConfig = persisted.activeProviderConfig
+                                    installedSkills.clear()
+                                    installedSkills.addAll(restored.installedSkills)
+                                    mcpServers.clear()
+                                    mcpServers.addAll(restored.mcpServers)
+                                    sessionStates.clear()
+                                    sessions.clear()
+                                    restored.sessions.forEach { persistedSession ->
+                                        val state = persistedSession.toSharedSessionUiState()
+                                        sessionStates[state.id] = state
+                                        sessions += SharedConversationSummary(state.id, state.title)
+                                    }
+                                    val restoredCurrent = restored.currentSessionId
+                                        ?.takeUnless { it == SharedDraftSessionId }
+                                        ?.let(sessionStates::get)
+                                        ?: SharedSessionUiState(
+                                            id = SharedDraftSessionId,
+                                            isDraft = true,
+                                            selectedModelKey = persisted.appSettings.defaultChatModelKey,
+                                        )
+                                    currentSession = restoredCurrent
+                                    sessionId = restoredCurrent.id
+                                    historyStore?.setCurrentSession(restoredCurrent.id)
+                                    chromeEnabled = false
+                                    chromeManager.enabled = false
+                                    appScope.launch {
+                                        runSharedAppCatching {
+                                            extensionManager.refresh(extensionContext())
+                                        }.onSuccess { refreshed ->
+                                            extensionSnapshot = refreshed
+                                            extensionSnapshotResolved = true
+                                        }
+                                        runSharedAppCatching {
+                                            mcpManager.refreshBindings(
+                                                restored.mcpServers.filter { server ->
+                                                    server.enabled &&
+                                                        server.id in restoredCurrent.activeMcpServerIds
+                                                },
+                                                sessionId = restoredCurrent.id,
+                                            )
+                                        }.onFailure(::reportMcpRefreshFailure)
+                                    }
+                                    nativeOperationMessage = "App data imported."
+                                }
+                            }.onFailure { failure ->
+                                nativeOperationError = failure.sharedUserFacingMessage()
+                            }
+                        }
+                        "developer_export_logs" -> appScope.launch {
+                            nativeOperationMessage = ""
+                            nativeOperationError = ""
+                            runSharedAppCatching {
+                                val text = buildSharedDiagnosticLogText(
+                                    appVersion = platformAppVersion(),
+                                    route = route,
+                                    currentSession = currentSession,
+                                    sessionStates = sessionStates.values,
+                                    providerConfigs = providerConfigs,
+                                    installedSkillCount = installedSkills.size,
+                                    mcpServers = mcpServers,
+                                    settings = sharedAppSettings,
+                                )
+                                platformServices.exportFile(
+                                    "aether-diagnostics.txt",
+                                    "text/plain",
+                                    text.encodeToByteArray(),
+                                )
+                            }.onSuccess { exported ->
+                                if (exported == true) nativeOperationMessage = "Diagnostic logs exported."
+                            }.onFailure { failure ->
+                                nativeOperationError = failure.sharedUserFacingMessage()
+                            }
+                        }
+                        "developer_replay_alpine" -> {
+                            alpineSetupPreviewVisible = true
+                        }
+                        "developer_replay_follow_up" -> {
+                            onboardingReplayMode = true
+                            onboardingEntryStage = OnboardingStage.Runtime
+                            route = SharedRoute.Onboarding
+                        }
+                    }
+                }
+            })
+            onDispose { nativeSettingsHost?.setCommandHandler(null) }
+        }
         val pauseBeforeDeletingSessionMessage =
             stringResource(Res.string.message_pause_before_deleting_session)
 
@@ -3001,14 +3715,10 @@ fun AetherSharedApp(
                         route = SharedRoute.Chat
                     },
                     onClose = {
-                        val returnRoute = if (onboardingReplayMode) {
-                            SharedRoute.Settings
-                        } else {
-                            SharedRoute.Chat
-                        }
+                        val returnToSettings = onboardingReplayMode
                         onboardingReplayMode = false
                         onboardingEntryStage = OnboardingStage.Landing
-                        route = returnRoute
+                        if (returnToSettings) openSettings() else route = SharedRoute.Chat
                     },
                     onComplete = { configured ->
                         val enabledConfig = configured.copy(isEnabled = true)
@@ -3042,14 +3752,10 @@ fun AetherSharedApp(
                             sharedAppSettings = sharedAppSettings.copy(tavilyApiKey = apiKey)
                             appScope.launch { settingsStore?.saveGeneralSettings(sharedAppSettings) }
                         }
-                        val returnRoute = if (onboardingReplayMode) {
-                            SharedRoute.Settings
-                        } else {
-                            SharedRoute.Chat
-                        }
+                        val returnToSettings = onboardingReplayMode
                         onboardingReplayMode = false
                         onboardingEntryStage = OnboardingStage.Landing
-                        route = returnRoute
+                        if (returnToSettings) openSettings() else route = SharedRoute.Chat
                     },
                 )
                 SharedRoute.Chat -> SharedAetherExtensionComponentHost(
@@ -3363,8 +4069,10 @@ fun AetherSharedApp(
                     },
                     onExportSession = ::exportSession,
                     onOpenSettings = {
-                        if (useTabletLayout) tabletSettingsVisible = true
-                        else route = SharedRoute.Settings
+                        if (nativeSettingsHost?.openSettings() != true) {
+                            if (useTabletLayout) tabletSettingsVisible = true
+                            else route = SharedRoute.Settings
+                        }
                     },
                     onDrawerOpened = {
                         appScope.launch {
@@ -7514,10 +8222,28 @@ internal fun SharedChatMessage.withAssistantResultFallback(
     return copy(reasoningText = result.reasoningText, responseBlocks = blocks)
 }
 
-internal fun SharedChatMessage.withoutSharedAssistantReasoning(): SharedChatMessage = copy(
-    reasoningText = "",
-    responseBlocks = responseBlocks.filterNot { it is SharedAssistantResponseBlock.Reasoning },
-)
+internal fun SharedChatMessage.withoutSharedAssistantReasoning(): SharedChatMessage {
+    val finalText = responseBlocks.filterIsInstance<SharedAssistantResponseBlock.Text>()
+        .lastOrNull { it.text.isNotBlank() }
+    val workBlocks = responseBlocks.flatMap { block ->
+        when (block) {
+            is SharedAssistantResponseBlock.Text -> emptyList()
+            is SharedAssistantResponseBlock.Reasoning -> block.trace.toolInvocations
+                .takeIf { it.isNotEmpty() }
+                ?.let { tools ->
+                    listOf(SharedAssistantResponseBlock.ToolGroup(block.id, tools))
+                }
+                .orEmpty()
+            is SharedAssistantResponseBlock.Status,
+            is SharedAssistantResponseBlock.ToolGroup -> listOf(block)
+        }
+    }
+    return copy(
+        text = finalText?.text ?: text,
+        reasoningText = "",
+        responseBlocks = workBlocks + listOfNotNull(finalText),
+    )
+}
 
 internal fun List<SharedAssistantResponseBlock>.normalizeSharedFinalReasoningOrder(): List<SharedAssistantResponseBlock> =
     if (size == 2 && this[0] is SharedAssistantResponseBlock.Text &&
@@ -7532,10 +8258,17 @@ internal fun List<SharedAssistantResponseBlock>.removeLeakedSharedReasoning(
     persistedReasoningText: String,
 ): List<SharedAssistantResponseBlock> {
     if (persistedReasoningText.isNotBlank()) return this
-    return filterNot { block ->
-        block is SharedAssistantResponseBlock.Reasoning &&
-            block.trace.rawText.isNotBlank() &&
-            block.trace.toolInvocations.isEmpty()
+    return flatMap { block ->
+        if (block !is SharedAssistantResponseBlock.Reasoning) {
+            listOf(block)
+        } else {
+            block.trace.toolInvocations
+                .takeIf { it.isNotEmpty() }
+                ?.let { tools ->
+                    listOf(SharedAssistantResponseBlock.ToolGroup(block.id, tools))
+                }
+                .orEmpty()
+        }
     }
 }
 
@@ -8071,6 +8804,396 @@ private fun SharedConversationDrawer(
     }
 }
 
+internal fun buildNativeSettingsSnapshot(
+    settings: AppSettings,
+    providerConfigs: List<LlmProviderConfig>,
+    installedSkills: List<SharedInstalledSkill>,
+    mcpServers: List<SharedMcpServerConfig>,
+    extensionSnapshot: SharedAetherExtensionSnapshot,
+    capabilities: PlatformCapabilities,
+    statistics: com.zhousl.aether.data.SharedUsageStatisticsReport =
+        com.zhousl.aether.data.SharedUsageStatisticsReport(),
+    providerModels: Map<String, List<String>> = emptyMap(),
+    providerOperation: String = "",
+    providerError: String = "",
+    providerAuthState: PiProviderAuthState = PiProviderAuthState(),
+    operationMessage: String = "",
+    operationError: String = "",
+    operation: String = "",
+    piExtensions: NativePiExtensionsState = NativePiExtensionsState(),
+    alpine: NativeAlpineSettingsState = NativeAlpineSettingsState(
+        ready = settings.alpineSetupCompleted,
+        issue = if (settings.alpineSetupCompleted) "ready" else "not_installed",
+    ),
+): String = buildJsonObject {
+    val serializedSettings = Json.parseToJsonElement(serializeAppSettings(settings)) as JsonObject
+    put("settings", JsonObject(serializedSettings + mapOf(
+        "language" to JsonPrimitive(settings.language.storageValue),
+        "themeMode" to JsonPrimitive(settings.themeMode.storageValue),
+    )))
+    put("providers", Json.parseToJsonElement(serializeProviderConfigs(providerConfigs)))
+    put("providerCatalog", buildJsonArray {
+        PiProviderCatalog.providers.forEach { definition ->
+            add(buildJsonObject {
+                put("id", definition.id)
+                put("displayName", definition.displayName)
+                put("defaultBaseUrl", definition.defaultBaseUrl)
+                put("defaultModelId", definition.defaultModelId)
+                put("supportsApiKey", definition.supportsApiKey)
+                put("supportsInteractiveApiKey", definition.supportsInteractiveApiKey)
+                put("supportsOAuth", definition.supportsOAuth)
+                put("supportsAmbientAuth", definition.supportsAmbientAuth)
+                put("requiresBaseUrl", definition.requiresBaseUrl)
+                put("supportsCustomBaseUrl", definition.supportsCustomBaseUrl)
+                put("isBuiltIn", definition.isBuiltIn)
+                put("category", definition.category)
+            })
+        }
+    })
+    val providerModelOptions = providerConfigs.availableModelOptions()
+    put("modelOptions", buildJsonArray {
+        providerModelOptions.forEach { option ->
+            add(buildJsonObject {
+                put("key", option.key)
+                put("providerConfigId", option.providerConfigId)
+                put("providerName", option.providerName)
+                put("modelId", option.modelId)
+                put("fullLabel", option.fullLabel)
+                put("chatLabel", option.chatLabel)
+            })
+        }
+    })
+    put("automaticModels", buildJsonObject {
+        AutomaticModelPurpose.entries.forEach { purpose ->
+            val key = providerModelOptions.resolveAutomaticModelKey(purpose)
+            put(purpose.name.lowercase(), buildJsonObject {
+                put("key", key)
+                put("label", providerModelOptions.findModelOption(key)?.fullLabel.orEmpty())
+            })
+        }
+    })
+    put("providerModels", buildJsonObject {
+        providerModels.forEach { (id, models) ->
+            put(id, buildJsonArray { models.forEach { add(JsonPrimitive(it)) } })
+        }
+    })
+    put("providerOperation", providerOperation)
+    put("providerError", providerError)
+    put("providerAuth", buildJsonObject {
+        put("providerId", providerAuthState.providerId)
+        put("authMethod", providerAuthState.authMethod.storageValue)
+        put("isRunning", providerAuthState.isRunning)
+        put("statusMessage", providerAuthState.statusMessage)
+        put("authorizationUrl", providerAuthState.authorizationUrl)
+        put("deviceCode", providerAuthState.deviceCode)
+        put("verificationUrl", providerAuthState.verificationUrl)
+        put("apiKey", providerAuthState.apiKey)
+        put("oauthCredentialJson", providerAuthState.oauthCredentialJson)
+        put("providerEnvironmentVariables", buildJsonArray {
+            providerAuthState.providerEnvironmentVariables.forEach { variable ->
+                add(buildJsonObject {
+                    put("name", variable.name)
+                    put("value", variable.value)
+                })
+            }
+        })
+        put("errorMessage", providerAuthState.errorMessage)
+        providerAuthState.prompt?.let { prompt ->
+            put("prompt", buildJsonObject {
+                put("id", prompt.id)
+                put("type", prompt.type)
+                put("message", prompt.message)
+                put("placeholder", prompt.placeholder)
+                put("options", buildJsonArray {
+                    prompt.options.forEach { option ->
+                        add(buildJsonObject {
+                            put("id", option.id)
+                            put("label", option.label)
+                            put("description", option.description)
+                        })
+                    }
+                })
+            })
+        }
+    })
+    put("operationMessage", operationMessage)
+    put("operationError", operationError)
+    put("operation", operation)
+    put("skills", buildJsonArray {
+        installedSkills.sortedBy { it.name.lowercase() }.forEach { skill ->
+            add(buildJsonObject {
+                put("id", skill.id)
+                put("name", skill.name)
+                put("description", skill.description)
+                put("enabled", skill.isEnabled)
+                put("source", skill.source)
+                put("compatibility", skill.compatibility)
+                put("guestPath", skill.guestPath)
+                put("license", skill.license)
+                put("resourceCount", skill.resourceCount)
+                put("allowedTools", buildJsonArray {
+                    skill.allowedTools.forEach { add(JsonPrimitive(it)) }
+                })
+            })
+        }
+    })
+    put("mcpServers", buildJsonArray {
+        mcpServers.forEach { server ->
+            add(buildJsonObject {
+                put("id", server.id)
+                put("name", server.name)
+                put("enabled", server.enabled)
+                put("transport", server.transport.name.lowercase())
+                put("detail", server.url.ifBlank { server.command })
+                put("actionLabel", server.actionLabel)
+                put("url", server.url)
+                put("command", server.command)
+                put("arguments", buildJsonArray {
+                    server.arguments.forEach { add(JsonPrimitive(it)) }
+                })
+                put("headers", buildJsonObject { server.headers.forEach { (key, value) -> put(key, value) } })
+                put("workingDirectory", server.workingDirectory)
+                put("environment", buildJsonObject {
+                    server.environment.forEach { (key, value) -> put(key, value) }
+                })
+                put("runtimeEnvironment", server.runtimeEnvironment)
+                put("connectTimeoutMillis", server.connectTimeoutMillis)
+                put("requestTimeoutMillis", server.requestTimeoutMillis)
+                put("createdAtMillis", server.createdAtMillis)
+                put("updatedAtMillis", server.updatedAtMillis)
+            })
+        }
+    })
+    // Script extension settings are schema driven and remain available to SwiftUI. Aether Native
+    // surfaces/components are intentionally not exported because they are platform UI code.
+    put("extensionSettings", buildJsonArray {
+        extensionSnapshot.settings.sortedBy { it.order }.forEach { page ->
+            add(buildJsonObject {
+                put("id", page.id)
+                put("settingsId", page.localId)
+                put("extensionId", page.extensionId)
+                put("extensionName", page.extensionName)
+                put("title", page.title)
+                put("subtitle", page.subtitle)
+                put("icon", page.icon)
+                put("trailingIcon", page.trailingIcon)
+                put("trailingAction", page.trailingAction)
+                put("trailingCategory", page.trailingCategory)
+                put("trailingArgs", page.trailingArgs)
+                put("sections", JsonArray(page.sections))
+                put("categories", buildJsonArray {
+                    page.categories.sortedBy { it.order }.forEach { category ->
+                        add(buildJsonObject {
+                            put("id", category.id)
+                            put("title", category.title)
+                            put("subtitle", category.subtitle)
+                            put("icon", category.icon)
+                            put("trailingIcon", category.trailingIcon)
+                            put("trailingAction", category.trailingAction)
+                            put("trailingCategory", category.trailingCategory)
+                            put("trailingArgs", category.trailingArgs)
+                            put("hidden", category.hidden)
+                            put("sections", JsonArray(category.sections))
+                        })
+                    }
+                })
+            })
+        }
+    })
+    put("capabilities", buildJsonObject {
+        put("persistentBackground", capabilities.persistentBackground)
+        put("localNotifications", capabilities.localNotifications)
+        put("alpine", capabilities.alpine)
+        put("alpineChrome", capabilities.alpineChrome)
+        put("scriptExtensions", capabilities.scriptExtensions)
+    })
+    put("extensionCount", extensionSnapshot.extensions.size)
+    put("piExtensions", buildJsonObject {
+        put("operation", piExtensions.operation)
+        put("message", piExtensions.message)
+        put("error", piExtensions.error)
+        put("installedError", piExtensions.installedError)
+        put("catalogError", piExtensions.catalogError)
+        put("installed", buildJsonArray {
+            piExtensions.installed.forEach { extension ->
+                add(buildJsonObject {
+                    put("id", extension.id)
+                    put("source", extension.source)
+                    put("name", extension.name)
+                    put("version", extension.version)
+                    put("description", extension.description)
+                    put("installedPath", extension.installedPath)
+                    put("extensionCount", extension.extensionCount)
+                    put("aetherExtensionCount", extension.aetherExtensionCount)
+                    put("skillCount", extension.skillCount)
+                    put("promptCount", extension.promptCount)
+                    put("themeCount", extension.themeCount)
+                    put("isEnabled", extension.isEnabled)
+                    put("kind", extension.kind.name.lowercase())
+                })
+            }
+        })
+        put("catalog", buildJsonArray {
+            piExtensions.catalog.forEach { entry ->
+                add(buildJsonObject {
+                    put("name", entry.name)
+                    put("source", entry.source)
+                    put("description", entry.description)
+                    put("author", entry.author)
+                    put("monthlyDownloads", entry.monthlyDownloads)
+                    put("packageUrl", entry.packageUrl)
+                    put("npmUrl", entry.npmUrl)
+                    put("repositoryUrl", entry.repositoryUrl)
+                    put("types", buildJsonArray { entry.types.forEach { add(JsonPrimitive(it)) } })
+                    put("compatibilityIssue", entry.compatibilityIssue?.name?.lowercase().orEmpty())
+                })
+            }
+        })
+        piExtensions.details?.let { details ->
+            put("details", buildJsonObject {
+                put("source", details.source)
+                put("name", details.name)
+                put("description", details.description)
+                put("version", details.version)
+                put("published", details.published)
+                put("downloads", details.downloads)
+                put("author", details.author)
+                put("license", details.license)
+                put("size", details.size)
+                put("dependencies", details.dependencies)
+                put("types", buildJsonArray { details.types.forEach { add(JsonPrimitive(it)) } })
+                put("manifestJson", details.manifestJson)
+                put("readmeMarkdown", details.readmeMarkdown)
+                put("npmUrl", details.npmUrl)
+                put("repositoryUrl", details.repositoryUrl)
+                put("compatibilityIssue", details.compatibilityIssue?.name?.lowercase().orEmpty())
+            })
+        }
+    })
+    put("alpine", buildJsonObject {
+        put("ready", alpine.ready)
+        put("issue", alpine.issue)
+        put("detail", alpine.detail)
+        put("operation", alpine.operation)
+        put("progress", alpine.progress)
+        put("isDefault", settings.defaultRuntimeId == LocalRuntimeId.Alpine)
+        put("profiles", buildJsonArray {
+            listOf("python", "node", "git_search", "ssh").forEach { id ->
+                val profile = settings.alpinePackageProfiles[id]
+                add(buildJsonObject {
+                    put("id", id)
+                    put("installed", profile?.installed == true)
+                    put("installedAtMillis", profile?.installedAtMillis ?: 0L)
+                    put("error", profile?.lastError.orEmpty())
+                })
+            }
+        })
+    })
+    put("statistics", buildJsonObject {
+        put("totalTokens", statistics.totalTokens)
+        put("inputTokens", statistics.inputTokens)
+        put("outputTokens", statistics.outputTokens)
+        put("reasoningTokens", statistics.reasoningTokens)
+        put("cachedInputTokens", statistics.cachedInputTokens)
+        put("sessionCount", statistics.sessionCount)
+        put("messageCount", statistics.messageCount)
+        put("turnCount", statistics.turnCount)
+        statistics.averageOutputTokensPerSecond?.let { put("averageOutputTokensPerSecond", it) }
+        statistics.averageFirstTokenLatencyMillis?.let { put("averageFirstTokenLatencyMillis", it) }
+        statistics.largestTurnTokens?.let { put("largestTurnTokens", it) }
+        statistics.averageTurnTokens?.let { put("averageTurnTokens", it) }
+        statistics.peakDay?.let { peak ->
+            put("peakDay", buildJsonObject {
+                put("label", peak.label)
+                put("tokens", peak.tokens)
+            })
+        }
+        put("recentDailyTokenUsage", buildJsonArray {
+            statistics.recentDailyTokenUsage.forEach { day ->
+                add(buildJsonObject {
+                    put("id", day.key)
+                    put("label", day.label)
+                    put("shortLabel", day.shortLabel)
+                    put("tokens", day.tokens)
+                })
+            }
+        })
+        put("allDailyTokenUsage", buildJsonArray {
+            statistics.allDailyTokenUsage.forEach { day ->
+                add(buildJsonObject {
+                    put("id", day.key)
+                    put("label", day.label)
+                    put("shortLabel", day.shortLabel)
+                    put("tokens", day.tokens)
+                })
+            }
+        })
+        put("recentSpeedSamples", buildJsonArray {
+            statistics.recentSpeedSamples.takeLast(12).forEachIndexed { index, sample ->
+                add(buildJsonObject {
+                    put("id", "${sample.timestampMillis}:$index")
+                    put("label", sample.label)
+                    put("shortLabel", sample.shortLabel)
+                    put("tokensPerSecond", sample.tokensPerSecond)
+                    put("timestampMillis", sample.timestampMillis)
+                })
+            }
+        })
+    })
+    put("appVersion", platformAppVersion())
+}
+.toString()
+
+internal fun AppSettings.withNativeSettingsPatch(patch: JsonObject): AppSettings = copy(
+    language = patch.nativeStringOrNull("language")
+        ?.let(com.zhousl.aether.data.AppLanguage::fromStorage) ?: language,
+    themeMode = patch.nativeStringOrNull("themeMode")
+        ?.let(com.zhousl.aether.data.AppThemeMode::fromStorage) ?: themeMode,
+    systemPrompt = patch.nativeStringOrNull("systemPrompt") ?: systemPrompt,
+    tavilyApiKey = patch.nativeStringOrNull("tavilyApiKey") ?: tavilyApiKey,
+    tavilyBaseUrl = patch.nativeStringOrNull("tavilyBaseUrl")
+        ?.let(::normalizeTavilyBaseUrl) ?: tavilyBaseUrl,
+    llmInactivityReconnectTimeoutSeconds = patch.nativeInt("llmInactivityReconnectTimeoutSeconds")
+        ?.let(::normalizeLlmInactivityReconnectTimeoutSeconds)
+        ?: llmInactivityReconnectTimeoutSeconds,
+    keepTasksRunningInBackground = patch.nativeBoolean("keepTasksRunningInBackground")
+        ?: keepTasksRunningInBackground,
+    notifyOnTaskCompletion = patch.nativeBoolean("notifyOnTaskCompletion")
+        ?: notifyOnTaskCompletion,
+    autoCleanOldCommandHistory = patch.nativeBoolean("autoCleanOldCommandHistory")
+        ?: autoCleanOldCommandHistory,
+    oldCommandHistoryRetentionHours = patch.nativeInt("oldCommandHistoryRetentionHours")
+        ?.let(::normalizeOldCommandHistoryRetentionHours)
+        ?: oldCommandHistoryRetentionHours,
+    defaultChatModelKey = patch.nativeStringOrNull("defaultChatModelKey") ?: defaultChatModelKey,
+    defaultTitleModelKey = patch.nativeStringOrNull("defaultTitleModelKey") ?: defaultTitleModelKey,
+    defaultNamingModelKey = patch.nativeStringOrNull("defaultNamingModelKey") ?: defaultNamingModelKey,
+    defaultCompactingModelKey = patch.nativeStringOrNull("defaultCompactingModelKey")
+        ?: defaultCompactingModelKey,
+)
+
+private fun JsonObject.nativeString(name: String): String = nativeStringOrNull(name).orEmpty()
+
+private fun JsonObject.nativeStringOrNull(name: String): String? =
+    (get(name) as? JsonPrimitive)?.contentOrNull
+
+private fun JsonObject.nativeBoolean(name: String): Boolean? =
+    nativeStringOrNull(name)?.toBooleanStrictOrNull()
+
+private fun JsonObject.nativeInt(name: String): Int? = nativeStringOrNull(name)?.toIntOrNull()
+
+private fun JsonObject.nativeLong(name: String): Long? = nativeStringOrNull(name)?.toLongOrNull()
+
+private fun JsonObject.nativeStringList(name: String): List<String> =
+    (get(name) as? JsonArray).orEmpty().mapNotNull { element ->
+        (element as? JsonPrimitive)?.contentOrNull
+    }
+
+private fun JsonObject.nativeStringMap(name: String): Map<String, String> =
+    (get(name) as? JsonObject).orEmpty().mapNotNull { (key, element) ->
+        (element as? JsonPrimitive)?.contentOrNull?.let { key to it }
+    }.toMap()
+
 @Composable
 private fun SharedSettingsScreen(
     capabilities: PlatformCapabilities,
@@ -8334,11 +9457,13 @@ private fun SharedSettingsScreen(
                     )
                 },
                 onOpenFiles = {
-                    destination = SettingsDestination(
-                        title = fileManagerTitle,
-                        subtitle = fileManagerTitle,
-                        kind = SharedSettingsKind.FileManager,
-                    )
+                    if (!platformServices.openAlpineFileManager()) {
+                        destination = SettingsDestination(
+                            title = fileManagerTitle,
+                            subtitle = fileManagerTitle,
+                            kind = SharedSettingsKind.FileManager,
+                        )
+                    }
                 },
                 onBack = { destination = null },
             )

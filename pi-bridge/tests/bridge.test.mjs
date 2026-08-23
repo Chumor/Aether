@@ -1860,6 +1860,92 @@ test("passes reasoning_effort none when off is selected for a model with thinkin
 
   assert.equal(result.assistant_text, "NONE_OK", JSON.stringify(result));
   assert.equal(receivedRequest.body.reasoning_effort, "none");
+  assert.equal(Object.hasOwn(result.usage, "reasoning_tokens"), false);
+});
+
+test("reads top-level reasoning_tokens from OpenAI-compatible completion usage", async (t) => {
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(
+        `data: ${JSON.stringify({
+          id: "chatcmpl-top-level-reasoning-usage",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "reasoning-model",
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", reasoning_content: "Brief reasoning" },
+              finish_reason: null,
+            },
+          ],
+        })}\n\n`,
+      );
+      response.write(
+        `data: ${JSON.stringify({
+          id: "chatcmpl-top-level-reasoning-usage",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "reasoning-model",
+          choices: [
+            {
+              index: 0,
+              delta: { content: "ANSWER" },
+              finish_reason: null,
+            },
+          ],
+        })}\n\n`,
+      );
+      response.write(
+        `data: ${JSON.stringify({
+          id: "chatcmpl-top-level-reasoning-usage",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "reasoning-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: 4,
+            completion_tokens: 9,
+            total_tokens: 13,
+            reasoning_tokens: 5,
+          },
+        })}\n\n`,
+      );
+      response.end("data: [DONE]\n\n");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  const client = new BridgeClient();
+  const result = await client.request(
+    "custom-top-level-reasoning-usage",
+    "complete_once",
+    {
+      model_config: {
+        provider_type: "openai_compatible",
+        provider_config_id: "custom-top-level-reasoning-usage",
+        pi_provider_id: "aether-test-reasoning",
+        pi_api: "openai-completions",
+        model_id: "reasoning-model",
+        base_url: `http://127.0.0.1:${address.port}/v1`,
+        api_key: "secret-key",
+        reasoning: true,
+      },
+      reasoning: "low",
+      system_prompt: "Reply briefly.",
+      messages: [userMessage("hello")],
+      stream: false,
+    },
+  );
+
+  assert.equal(result.assistant_text, "ANSWER", JSON.stringify(result));
+  assert.equal(result.reasoning_text, "Brief reasoning", JSON.stringify(result));
+  assert.equal(result.usage.reasoning_tokens, 5, JSON.stringify(result));
 });
 
 test("accepts arbitrary manual model IDs for a built-in provider", async (t) => {

@@ -251,6 +251,7 @@ dependencies {
     implementation(libs.shizuku.provider)
     implementation(libs.android.app.process)
     implementation(libs.posthog.android)
+    implementation(libs.sora.editor)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

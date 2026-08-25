@@ -671,6 +671,7 @@ internal enum class SharedPendingTurnMode { Queue, Steer }
 internal data class SharedAssistantRetryPlan(
     val retainedMessages: List<SharedChatMessage>,
     val userMessage: SharedChatMessage,
+    val piBranchMessageId: String?,
 )
 
 internal fun List<SharedPendingTurn>.nextSharedQueuedTurnIndex(): Int =
@@ -768,7 +769,8 @@ internal fun buildSharedAssistantRetryPlan(
     } ?: targetIndex
     val retained = messages.take(trimIndex)
     val user = retained.lastOrNull()?.takeIf { it.fromUser } ?: return null
-    return SharedAssistantRetryPlan(retained, user)
+    val piBranchMessageId = retained.dropLast(1).lastOrNull { !it.fromUser }?.id
+    return SharedAssistantRetryPlan(retained, user, piBranchMessageId)
 }
 
 internal fun resolveSharedProviderForModel(
@@ -3720,7 +3722,8 @@ fun IosComposeApp(
                             rawValue = plan.userMessage.text,
                             attachments = plan.userMessage.attachments,
                             retryResponseGroupId = plan.userMessage.id,
-                            piBranchMessageId = plan.userMessage.id,
+                            piBranchMessageId = plan.piBranchMessageId,
+                            resetPiBranchWhenMissing = true,
                         )
                     },
                     onRetryUserMessage = { messageId ->

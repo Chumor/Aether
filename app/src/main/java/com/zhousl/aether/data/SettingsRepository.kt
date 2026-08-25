@@ -297,6 +297,27 @@ class SettingsRepository(
         }
     }
 
+    suspend fun setProviderDeveloperRoleUnsupported(
+        id: String,
+        unsupported: Boolean,
+    ) {
+        if (id.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = parseProviderConfigs(prefs[PROVIDER_CONFIGS].orEmpty())
+            val updated = current.map { config ->
+                if (config.id == id && config.developerRoleUnsupported != unsupported) {
+                    config.copy(
+                        developerRoleUnsupported = unsupported,
+                        updatedAtMillis = System.currentTimeMillis(),
+                    )
+                } else {
+                    config
+                }
+            }
+            prefs[PROVIDER_CONFIGS] = serializeProviderConfigs(updated)
+        }
+    }
+
     suspend fun setProviderEnabled(
         id: String,
         enabled: Boolean,

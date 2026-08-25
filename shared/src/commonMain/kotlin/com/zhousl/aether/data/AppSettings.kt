@@ -12,7 +12,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.Transient
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 
@@ -147,8 +146,8 @@ data class AppSettings(
     val customHeaders: List<LlmCustomHeader> = emptyList(),
     val reasoningEffort: String = DefaultReasoningEffort,
     val systemPrompt: String = platformDefaultSystemPrompt(),
-    @Transient val tavilyApiKey: String = "",
-    @Transient val tavilyBaseUrl: String = DefaultTavilyBaseUrl,
+    val tavilyApiKey: String = "",
+    val tavilyBaseUrl: String = DefaultTavilyBaseUrl,
     val llmInactivityReconnectTimeoutSeconds: Int = DefaultLlmInactivityReconnectTimeoutSeconds,
     val keepTasksRunningInBackground: Boolean = true,
     val notifyOnTaskCompletion: Boolean = true,
@@ -171,7 +170,7 @@ data class AppSettings(
     val defaultTitleModelKey: String = "",
     val defaultNamingModelKey: String = "",
     val defaultCompactingModelKey: String = "",
-    @Transient val defaultSelectedSkillIds: List<String> = emptyList(),
+    val defaultSelectedSkillIds: List<String> = emptyList(),
     val onboardingSeenVersion: Int = 0,
     val onboardingCompletedVersion: Int = 0,
     val privacyPolicyAccepted: Boolean = false,

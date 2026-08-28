@@ -366,7 +366,6 @@ private fun SharedMarkdownTableRow(
     }
 }
 
-@Composable
 /**
  * Wraps the content in Unicode directional isolates (FSI … PDI) — the Compose/KMP-portable
  * equivalent of [androidx.core.text.BidiFormatter.unicodeWrap]. This forces the paragraph's
@@ -384,6 +383,7 @@ private fun AnnotatedString.bidiIsolated(): AnnotatedString {
     }
 }
 
+@Composable
 private fun SharedMarkdownRichTextBlock(
     text: SharedMarkdownSourceText,
     style: TextStyle,

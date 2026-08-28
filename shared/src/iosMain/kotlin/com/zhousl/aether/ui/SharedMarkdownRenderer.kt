@@ -758,9 +758,11 @@ private fun AnnotatedString.Builder.appendSharedInline(
         if (text[index] == '`') {
             val end = text.indexOf('`', index + 1)
             if (end > index + 1) {
+                append('\u2066') // LRI — isolate inline code as a stable LTR run
                 pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = AetherSurfaceHigh))
                 appendSharedSourceSegment(text.substring(index + 1, end), sourceOffset + index + 1, fadeSpan)
                 pop()
+                append('\u2069') // PDI
                 index = end + 1
                 continue
             }

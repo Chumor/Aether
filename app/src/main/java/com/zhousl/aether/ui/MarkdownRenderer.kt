@@ -2015,6 +2015,7 @@ private fun AnnotatedString.Builder.appendInline(
         if (text.startsWith("`", index)) {
             val end = text.indexOf('`', index + 1)
             if (end > index + 1) {
+                append('\u2066') // LRI — isolate inline code as a stable LTR run
                 pushStyle(
                     SpanStyle(
                         fontFamily = FontFamily.Monospace,
@@ -2027,6 +2028,7 @@ private fun AnnotatedString.Builder.appendInline(
                     fadeSpan = fadeSpan,
                 )
                 pop()
+                append('\u2069') // PDI
                 index = end + 1
                 continue
             }

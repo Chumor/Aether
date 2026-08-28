@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -366,6 +367,23 @@ private fun SharedMarkdownTableRow(
 }
 
 @Composable
+/**
+ * Wraps the content in Unicode directional isolates (FSI … PDI) — the Compose/KMP-portable
+ * equivalent of [androidx.core.text.BidiFormatter.unicodeWrap]. This forces the paragraph's
+ * base direction to be derived from the content's first strong character, so an embedded
+ * opposite-direction run (e.g. an English word or code snippet inside a Persian sentence,
+ * or a message that starts with a number/code) is laid out correctly regardless of the
+ * app's layout direction.
+ */
+private fun AnnotatedString.bidiIsolated(): AnnotatedString {
+    val source = this
+    return buildAnnotatedString {
+        append('\u2068') // FSI — First Strong Isolate
+        append(source)
+        append('\u2069') // PDI — Pop Directional Isolate
+    }
+}
+
 private fun SharedMarkdownRichTextBlock(
     text: SharedMarkdownSourceText,
     style: TextStyle,
@@ -391,12 +409,17 @@ private fun SharedMarkdownRichTextBlock(
         end = annotated.length,
     ).isNotEmpty()
     if (!hasLinks) {
-        Text(annotated, style = style, color = color, modifier = modifier)
+        Text(
+            annotated.bidiIsolated(),
+            style = style.copy(textDirection = TextDirection.Content),
+            color = color,
+            modifier = modifier,
+        )
     } else {
         @Suppress("DEPRECATION")
         ClickableText(
-            text = annotated,
-            style = style.copy(color = color),
+            text = annotated.bidiIsolated(),
+            style = style.copy(color = color, textDirection = TextDirection.Content),
             modifier = modifier,
             onClick = { offset ->
                 annotated.getStringAnnotations(SharedMarkdownLinkAnnotationTag, offset, offset)

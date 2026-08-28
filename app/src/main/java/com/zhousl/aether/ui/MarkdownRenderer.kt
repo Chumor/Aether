@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -1164,6 +1165,23 @@ private fun MarkdownTextHtmlBlock(
 }
 
 @Composable
+/**
+ * Wraps the content in Unicode directional isolates (FSI … PDI) — the Compose/KMP-portable
+ * equivalent of [androidx.core.text.BidiFormatter.unicodeWrap]. This forces the paragraph's
+ * base direction to be derived from the content's first strong character, so an embedded
+ * opposite-direction run (e.g. an English word or code snippet inside a Persian sentence,
+ * or a message that starts with a number/code) is laid out correctly regardless of the
+ * app's layout direction.
+ */
+private fun AnnotatedString.bidiIsolated(): AnnotatedString {
+    val source = this
+    return buildAnnotatedString {
+        append('\u2068') // FSI — First Strong Isolate
+        append(source)
+        append('\u2069') // PDI — Pop Directional Isolate
+    }
+}
+
 private fun MarkdownText(
     text: AnnotatedString,
     style: androidx.compose.ui.text.TextStyle,
@@ -1179,8 +1197,8 @@ private fun MarkdownText(
 
     if (!hasLinks) {
         Text(
-            text = text,
-            style = style,
+            text = text.bidiIsolated(),
+            style = style.copy(textDirection = TextDirection.Content),
             color = color,
             modifier = modifier,
         )
@@ -1188,8 +1206,8 @@ private fun MarkdownText(
     }
 
     ClickableText(
-        text = text,
-        style = style.copy(color = color),
+        text = text.bidiIsolated(),
+        style = style.copy(color = color, textDirection = TextDirection.Content),
         modifier = modifier,
     ) { offset ->
         text.getStringAnnotations(

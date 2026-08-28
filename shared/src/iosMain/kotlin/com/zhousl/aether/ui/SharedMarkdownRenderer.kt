@@ -403,6 +403,7 @@ private fun SharedMarkdownRichTextBlock(
         return
     }
     val annotated = sharedInlineMarkdown(text, fadeSpan)
+    val isolated = annotated.bidiIsolated()
     val hasLinks = annotated.getStringAnnotations(
         tag = SharedMarkdownLinkAnnotationTag,
         start = 0,
@@ -410,7 +411,7 @@ private fun SharedMarkdownRichTextBlock(
     ).isNotEmpty()
     if (!hasLinks) {
         Text(
-            annotated.bidiIsolated(),
+            isolated,
             style = style.copy(textDirection = TextDirection.Content),
             color = color,
             modifier = modifier,
@@ -418,11 +419,11 @@ private fun SharedMarkdownRichTextBlock(
     } else {
         @Suppress("DEPRECATION")
         ClickableText(
-            text = annotated.bidiIsolated(),
+            text = isolated,
             style = style.copy(color = color, textDirection = TextDirection.Content),
             modifier = modifier,
             onClick = { offset ->
-                annotated.getStringAnnotations(SharedMarkdownLinkAnnotationTag, offset, offset)
+                isolated.getStringAnnotations(SharedMarkdownLinkAnnotationTag, offset, offset)
                     .firstOrNull()?.let { onOpenLink(it.item) }
             },
         )

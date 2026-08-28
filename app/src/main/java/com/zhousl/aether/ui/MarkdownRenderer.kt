@@ -1189,6 +1189,7 @@ private fun MarkdownText(
     modifier: Modifier = Modifier,
     onLinkClick: (String) -> Unit,
 ) {
+    val isolated = text.bidiIsolated()
     val hasLinks = text.getStringAnnotations(
         tag = LinkAnnotationTag,
         start = 0,
@@ -1197,7 +1198,7 @@ private fun MarkdownText(
 
     if (!hasLinks) {
         Text(
-            text = text.bidiIsolated(),
+            text = isolated,
             style = style.copy(textDirection = TextDirection.Content),
             color = color,
             modifier = modifier,
@@ -1206,11 +1207,11 @@ private fun MarkdownText(
     }
 
     ClickableText(
-        text = text.bidiIsolated(),
+        text = isolated,
         style = style.copy(color = color, textDirection = TextDirection.Content),
         modifier = modifier,
     ) { offset ->
-        text.getStringAnnotations(
+        isolated.getStringAnnotations(
             tag = LinkAnnotationTag,
             start = offset,
             end = offset,

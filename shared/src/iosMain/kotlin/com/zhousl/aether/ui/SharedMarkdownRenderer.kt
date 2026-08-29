@@ -29,12 +29,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.zhousl.aether.platform.PlatformWebView
@@ -366,23 +366,6 @@ private fun SharedMarkdownTableRow(
     }
 }
 
-/**
- * Wraps the content in Unicode directional isolates (FSI … PDI) — the Compose/KMP-portable
- * equivalent of [androidx.core.text.BidiFormatter.unicodeWrap]. This forces the paragraph's
- * base direction to be derived from the content's first strong character, so an embedded
- * opposite-direction run (e.g. an English word or code snippet inside a Persian sentence,
- * or a message that starts with a number/code) is laid out correctly regardless of the
- * app's layout direction.
- */
-private fun AnnotatedString.bidiIsolated(): AnnotatedString {
-    val source = this
-    return buildAnnotatedString {
-        append('\u2068') // FSI — First Strong Isolate
-        append(source)
-        append('\u2069') // PDI — Pop Directional Isolate
-    }
-}
-
 @Composable
 private fun SharedMarkdownRichTextBlock(
     text: SharedMarkdownSourceText,
@@ -403,7 +386,6 @@ private fun SharedMarkdownRichTextBlock(
         return
     }
     val annotated = sharedInlineMarkdown(text, fadeSpan)
-    val isolated = annotated.bidiIsolated()
     val hasLinks = annotated.getStringAnnotations(
         tag = SharedMarkdownLinkAnnotationTag,
         start = 0,
@@ -411,7 +393,7 @@ private fun SharedMarkdownRichTextBlock(
     ).isNotEmpty()
     if (!hasLinks) {
         Text(
-            isolated,
+            annotated,
             style = style.copy(textDirection = TextDirection.Content),
             color = color,
             modifier = modifier,
@@ -419,11 +401,11 @@ private fun SharedMarkdownRichTextBlock(
     } else {
         @Suppress("DEPRECATION")
         ClickableText(
-            text = isolated,
+            text = annotated,
             style = style.copy(color = color, textDirection = TextDirection.Content),
             modifier = modifier,
             onClick = { offset ->
-                isolated.getStringAnnotations(SharedMarkdownLinkAnnotationTag, offset, offset)
+                annotated.getStringAnnotations(SharedMarkdownLinkAnnotationTag, offset, offset)
                     .firstOrNull()?.let { onOpenLink(it.item) }
             },
         )
@@ -718,7 +700,7 @@ private fun splitSharedMarkdownTableCellsWithOffsets(line: String): List<Pair<St
     return cells
 }
 
-private fun sharedInlineMarkdown(
+internal fun sharedInlineMarkdown(
     source: SharedMarkdownSourceText,
     fadeSpan: SharedMarkdownFadeSpan?,
 ): AnnotatedString = buildAnnotatedString {
@@ -758,11 +740,9 @@ private fun AnnotatedString.Builder.appendSharedInline(
         if (text[index] == '`') {
             val end = text.indexOf('`', index + 1)
             if (end > index + 1) {
-                append('\u2066') // LRI — isolate inline code as a stable LTR run
                 pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = AetherSurfaceHigh))
                 appendSharedSourceSegment(text.substring(index + 1, end), sourceOffset + index + 1, fadeSpan)
                 pop()
-                append('\u2069') // PDI
                 index = end + 1
                 continue
             }

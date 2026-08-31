@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.DriveFolderUpload
 import androidx.compose.material.icons.rounded.FileUpload
@@ -119,6 +120,7 @@ internal fun AndroidAlpineFileManagerScreen(
     var editorFile by remember { mutableStateOf<AndroidAlpineFileEntry?>(null) }
     var editorContent by remember { mutableStateOf("") }
     var imagePreview by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingDownload by remember { mutableStateOf<AndroidAlpineFileEntry?>(null) }
 
     fun refresh() {
         val requestedPath = path
@@ -162,6 +164,27 @@ internal fun AndroidAlpineFileManagerScreen(
     val folderImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { uri -> importDocuments(listOfNotNull(uri), folders = true) },
+    )
+    val fileExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("*/*"),
+        onResult = { uri ->
+            val entry = pendingDownload
+            pendingDownload = null
+            if (uri != null && entry != null) {
+                scope.launch {
+                    loading = true
+                    runCatching {
+                        val output = context.contentResolver.openOutputStream(uri, "w")
+                            ?: error("Unable to open the selected download location.")
+                        output.use { runtime.exportFile(entry.path, it) }
+                    }.onFailure { failure ->
+                        runCatching { context.contentResolver.delete(uri, null, null) }
+                        error = failure.message ?: "Unable to download the file."
+                    }
+                    loading = false
+                }
+            }
+        },
     )
 
     fun open(entry: AndroidAlpineFileEntry) {
@@ -368,6 +391,17 @@ internal fun AndroidAlpineFileManagerScreen(
                         onClick = { draftName = entry.name; dialog = AndroidFileDialog.Rename },
                         leadingIcon = { Icon(Icons.Rounded.Edit, null) },
                     )
+                    if (!entry.isDirectory) {
+                        DropdownMenuItem(
+                            text = { Text("Download") },
+                            onClick = {
+                                pendingDownload = entry
+                                selected = null
+                                fileExportLauncher.launch(entry.name)
+                            },
+                            leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                         onClick = { dialog = AndroidFileDialog.Delete },

@@ -59,7 +59,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -109,7 +108,6 @@ internal fun AndroidAlpineFileManagerScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
-    var showHidden by remember { mutableStateOf(false) }
     var grid by remember { mutableStateOf(false) }
     var sort by remember { mutableStateOf(AndroidFileSort.Name) }
     var optionsExpanded by remember { mutableStateOf(false) }
@@ -242,7 +240,6 @@ internal fun AndroidAlpineFileManagerScreen(
 
     val visibleEntries = entries
         .asSequence()
-        .filter { showHidden || !it.name.startsWith('.') }
         .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
         .sortedWith(compareByDescending<AndroidAlpineFileEntry> { it.isDirectory }.thenComparator { left, right ->
             when (sort) {
@@ -301,11 +298,6 @@ internal fun AndroidAlpineFileManagerScreen(
                                     leadingIcon = { Icon(Icons.Rounded.Sort, null) },
                                 )
                             }
-                            DropdownMenuItem(
-                                text = { Text("Show hidden files") },
-                                onClick = { showHidden = !showHidden },
-                                trailingIcon = { Switch(checked = showHidden, onCheckedChange = { showHidden = it }) },
-                            )
                         }
                     }
                 }

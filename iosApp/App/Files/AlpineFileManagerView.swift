@@ -71,7 +71,6 @@ private final class AlpineDirectoryModel: ObservableObject {
     @Published var entries: [AlpineFileEntry] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published var showsHiddenFiles = false
     @Published var sortOrder: SortOrder = .name
     @Published var isImporting = false
     @Published var isExporting = false
@@ -98,7 +97,6 @@ private final class AlpineDirectoryModel: ObservableObject {
 
     func visibleEntries(matching query: String) -> [AlpineFileEntry] {
         entries
-            .filter { showsHiddenFiles || !$0.name.hasPrefix(".") }
             .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
             .sorted { lhs, rhs in
                 if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
@@ -275,7 +273,6 @@ private struct AlpineDirectoryView: View {
                             Text(order.rawValue).tag(order)
                         }
                     }
-                    Toggle("Show Hidden Files", isOn: $model.showsHiddenFiles)
                     Button { model.load() } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }

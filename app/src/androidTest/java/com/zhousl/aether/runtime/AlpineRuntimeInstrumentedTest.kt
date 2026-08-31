@@ -15,6 +15,32 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AlpineRuntimeInstrumentedTest {
     @Test
+    fun fileManagerListsFilesCreatedInGuestWorkspace() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val alpine = AlpineRuntime(context)
+        val setup = alpine.initialize()
+        assertEquals(setup.detail, LocalRuntimeIssue.Ready, setup.issue)
+
+        val fileName = "file-manager-${System.nanoTime()}.txt"
+        val guestPath = "${alpine.workspaceRoot}/$fileName"
+        val fixture = JSONObject(
+            alpine.executeCommand(
+                command = "printf 'visible from file manager' > '$guestPath'",
+                workingDirectory = alpine.workspaceRoot,
+                awaitTimeoutMillis = 30_000L,
+            )
+        )
+        assertTrue(fixture.optString("errmsg"), fixture.optBoolean("ok"))
+
+        try {
+            val entries = AndroidAlpineFileManagerRuntime(alpine).listDirectory(alpine.workspaceRoot)
+            assertTrue(entries.any { it.name == fileName && it.path == guestPath })
+        } finally {
+            alpine.executeCommand("rm -f '$guestPath'", alpine.workspaceRoot, 30_000L)
+        }
+    }
+
+    @Test
     fun fileManagerExportsBinaryFilesAndSymbolicLinkTargets() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val alpine = AlpineRuntime(context)

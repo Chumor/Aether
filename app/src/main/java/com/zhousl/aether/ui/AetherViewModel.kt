@@ -2396,6 +2396,7 @@ class AetherViewModel(
             sessionId = sessionId,
             mode = settings.agentWorkspaceMode,
         )
+        val alpineWorkspaceDirectory = runtime.runtimeRouter.alpineWorkspaceDirectory()
         val metadata = runtime.chatRepository.getAgentSessionMetadata(sessionId)
         val entryId = aetherMessageId?.let { messageId ->
             runtime.chatRepository.getAgentMessageEntryIds(sessionId, messageId).lastOrNull()
@@ -2407,7 +2408,7 @@ class AetherViewModel(
                 reset = entryId == null && resetWhenMissing,
                 sessionPayload = JSONObject().apply {
                     put("session_file", metadata?.jsonlPath.orEmpty())
-                    put("workspace_directory", workspaceDirectory)
+                    put("workspace_directory", alpineWorkspaceDirectory)
                     put("termux_workspace_directory", workspaceDirectory)
                     put("runtime", metadata?.runtime ?: settings.defaultRuntimeId?.storageValue.orEmpty())
                     put("platform", "android")
@@ -5413,12 +5414,16 @@ class AetherViewModel(
             try {
                 val metadata = runtime.chatRepository.getAgentSessionMetadata(sessionId)
                 val settings = snapshot.settings
+                val termuxWorkspaceDirectory = workspaceFileBridge.workspaceDirectory(
+                    sessionId,
+                    settings.agentWorkspaceMode,
+                )
                 piKernelBridge.compactSession(
                     sessionId = sessionId,
                     sessionPayload = JSONObject().apply {
                         put("session_file", metadata?.jsonlPath.orEmpty())
-                        put("workspace_directory", workspaceFileBridge.workspaceDirectory(sessionId, settings.agentWorkspaceMode))
-                        put("termux_workspace_directory", workspaceFileBridge.workspaceDirectory(sessionId, settings.agentWorkspaceMode))
+                        put("workspace_directory", runtime.runtimeRouter.alpineWorkspaceDirectory())
+                        put("termux_workspace_directory", termuxWorkspaceDirectory)
                         put("runtime", metadata?.runtime ?: settings.defaultRuntimeId?.storageValue.orEmpty())
                         put("platform", "android")
                         val modelKey = thinkingCatalogKey(settings.piProviderId, settings.modelId)

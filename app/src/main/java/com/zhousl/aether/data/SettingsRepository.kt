@@ -394,6 +394,9 @@ class SettingsRepository(
                 prefs[BASE_URL] = fallbackOption.baseUrl
                 prefs[MODEL_ID] = fallbackOption.modelId
                 prefs[USER_AGENT] = normalizeLlmUserAgent(fallbackOption.userAgent)
+                prefs[CUSTOM_HEADERS] = serializeCustomHeaders(fallbackOption.customHeaders)
+                prefs[COMPATIBILITY_MODE] = fallbackOption.compatibilityMode
+                prefs[DEVELOPER_ROLE_UNSUPPORTED] = fallbackOption.developerRoleUnsupported
             }
         }
     }

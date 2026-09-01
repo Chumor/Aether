@@ -97,6 +97,7 @@ class SettingsRepository(
             modelId = preferences[MODEL_ID] ?: defaults.modelId,
             userAgent = normalizeLlmUserAgent(preferences[USER_AGENT]),
             customHeaders = parseCustomHeaders(preferences[CUSTOM_HEADERS].orEmpty()),
+            compatibilityMode = preferences[COMPATIBILITY_MODE] ?: false,
             developerRoleUnsupported = preferences[DEVELOPER_ROLE_UNSUPPORTED] ?: false,
             reasoningEffort = normalizeReasoningEffort(preferences[REASONING_EFFORT]),
             systemPrompt = preferences[SYSTEM_PROMPT] ?: defaults.systemPrompt,
@@ -414,6 +415,7 @@ class SettingsRepository(
             it[MODEL_ID] = settings.modelId
             it[USER_AGENT] = normalizeLlmUserAgent(settings.userAgent)
             it[CUSTOM_HEADERS] = serializeCustomHeaders(settings.customHeaders)
+            it[COMPATIBILITY_MODE] = settings.compatibilityMode
             it[DEVELOPER_ROLE_UNSUPPORTED] = settings.developerRoleUnsupported
             it[REASONING_EFFORT] = normalizeReasoningEffort(settings.reasoningEffort)
             it[SYSTEM_PROMPT] = settings.systemPrompt
@@ -563,6 +565,7 @@ class SettingsRepository(
             it[MODEL_ID] = settings.modelId
             it[USER_AGENT] = normalizeLlmUserAgent(settings.userAgent)
             it[CUSTOM_HEADERS] = serializeCustomHeaders(settings.customHeaders)
+            it[COMPATIBILITY_MODE] = settings.compatibilityMode
             it[DEVELOPER_ROLE_UNSUPPORTED] = settings.developerRoleUnsupported
             it[REASONING_EFFORT] = normalizeReasoningEffort(settings.reasoningEffort)
             it[TERMUX_SETUP_COMPLETED] = settings.termuxSetupCompleted
@@ -632,6 +635,7 @@ class SettingsRepository(
         val MODEL_ID = stringPreferencesKey("model_id")
         val USER_AGENT = stringPreferencesKey("user_agent")
         val CUSTOM_HEADERS = stringPreferencesKey("custom_headers")
+        val COMPATIBILITY_MODE = booleanPreferencesKey("compatibility_mode")
         val DEVELOPER_ROLE_UNSUPPORTED = booleanPreferencesKey("developer_role_unsupported")
         val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")
         val SYSTEM_PROMPT = stringPreferencesKey("system_prompt")

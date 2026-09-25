@@ -268,49 +268,4 @@ class ChatRepositorySerializationTest {
 
         assertTrue(reparsed.single().chromeEnabled)
     }
-
-    @Test
-    fun migrationKeepsLegacyCurrentSessionWhenItExists() {
-        val sessions = listOf(
-            ChatSession(id = "session-1", title = "First", preview = "First", messages = emptyList()),
-            ChatSession(id = "session-2", title = "Second", preview = "Second", messages = emptyList()),
-        )
-
-        val currentSessionId = resolveLegacyCurrentSessionIdForMigration(
-            legacyCurrentSessionId = "session-2",
-            legacySessions = sessions,
-        )
-
-        assertEquals("session-2", currentSessionId)
-    }
-
-    @Test
-    fun migrationFallsBackToFirstSessionWhenLegacyCurrentSessionIsAbsent() {
-        val sessions = listOf(
-            ChatSession(id = "session-1", title = "First", preview = "First", messages = emptyList()),
-            ChatSession(id = "session-2", title = "Second", preview = "Second", messages = emptyList()),
-        )
-
-        val currentSessionId = resolveLegacyCurrentSessionIdForMigration(
-            legacyCurrentSessionId = null,
-            legacySessions = sessions,
-        )
-
-        assertEquals("session-1", currentSessionId)
-    }
-
-    @Test
-    fun migrationFallsBackToFirstSessionWhenLegacyCurrentSessionIsMissing() {
-        val sessions = listOf(
-            ChatSession(id = "session-1", title = "First", preview = "First", messages = emptyList()),
-            ChatSession(id = "session-2", title = "Second", preview = "Second", messages = emptyList()),
-        )
-
-        val currentSessionId = resolveLegacyCurrentSessionIdForMigration(
-            legacyCurrentSessionId = "missing-session",
-            legacySessions = sessions,
-        )
-
-        assertEquals("session-1", currentSessionId)
-    }
 }

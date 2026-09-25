@@ -1,9 +1,6 @@
 package com.zhousl.aether.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.room.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
@@ -21,18 +18,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-private val TestSessionsJson = stringPreferencesKey("sessions_json")
-private val TestCurrentSessionId = stringPreferencesKey("current_session_id")
-private val TestRoomMigrationComplete = booleanPreferencesKey("room_migration_complete")
-
-private suspend fun clearLegacyChatState(context: Context) {
-    context.chatDataStore.edit { preferences ->
-        preferences.remove(TestSessionsJson)
-        preferences.remove(TestCurrentSessionId)
-        preferences.remove(TestRoomMigrationComplete)
-    }
-}
-
 @RunWith(AndroidJUnit4::class)
 class ChatRepositoryCheckpointInstrumentedTest {
     private lateinit var database: ChatHistoryDatabase
@@ -41,7 +26,6 @@ class ChatRepositoryCheckpointInstrumentedTest {
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        runBlocking { clearLegacyChatState(context) }
         database = Room.inMemoryDatabaseBuilder(context, ChatHistoryDatabase::class.java)
             .setDriver(BundledSQLiteDriver())
             .allowMainThreadQueries()
@@ -52,8 +36,6 @@ class ChatRepositoryCheckpointInstrumentedTest {
     @After
     fun tearDown() {
         database.close()
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        runBlocking { clearLegacyChatState(context) }
     }
 
     @Test

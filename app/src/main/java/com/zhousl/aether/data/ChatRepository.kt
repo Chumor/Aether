@@ -1,6 +1,10 @@
 package com.zhousl.aether.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
 import androidx.room.immediateTransaction
 import androidx.room.useWriterConnection
 import com.zhousl.aether.data.chatdb.ChatHistoryDao
@@ -34,6 +38,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.mapLatest
@@ -47,6 +52,8 @@ private const val MessageJsonChunkSize = 64 * 1024
 internal const val MessageJsonBatchByteLimit = 64 * 1024
 private const val MaxMessagesPerJsonBatch = 8
 private const val WorkspaceFileRefQueryChunkSize = 500
+
+internal val Context.chatDataStore by preferencesDataStore(name = "aether_chats")
 
 internal fun shouldStartNewMessageJsonBatch(currentBytes: Long, nextBytes: Long): Boolean =
     currentBytes > 0L && nextBytes > MessageJsonBatchByteLimit - currentBytes
@@ -118,7 +125,7 @@ private suspend fun <R> ChatHistoryDatabase.withTransaction(
 }
 
 class ChatRepository(
-    context: Context,
+    private val context: Context,
     private val database: ChatHistoryDatabase = AndroidChatHistoryDatabaseFactory.getInstance(context),
 ) : ChatStatePersistence {
     private val chatHistoryDao: ChatHistoryDao = database.chatHistoryDao()
@@ -595,6 +602,7 @@ class ChatRepository(
     private suspend fun replaceChatStateBatched(
         sessions: List<ChatSession>,
         currentSessionId: String,
+        migrationComplete: Boolean = true,
         writeIntent: PersistedChatWriteIntent = PersistedChatWriteIntent.SyncSnapshot,
     ) {
         clearRestoredMessageCache()
@@ -610,7 +618,7 @@ class ChatRepository(
                 chatHistoryDao.upsertMeta(
                     ChatStateMetaEntity(
                         currentSessionId = null,
-                        roomMigrationComplete = true,
+                        roomMigrationComplete = migrationComplete,
                         workspaceFileRefsComplete = true,
                     )
                 )
@@ -632,7 +640,7 @@ class ChatRepository(
             chatHistoryDao.upsertMeta(
                 ChatStateMetaEntity(
                     currentSessionId = safeCurrentSessionId.toStoredCurrentSessionId(),
-                    roomMigrationComplete = true,
+                    roomMigrationComplete = migrationComplete,
                     workspaceFileRefsComplete = existingWorkspaceFileRefsComplete,
                 )
             )
@@ -696,7 +704,33 @@ class ChatRepository(
         if (chatHistoryDao.getMeta()?.roomMigrationComplete == true) {
             rebuildWorkspaceFileRefsIfNeeded()
         } else {
+            val preferences = context.chatDataStore.data.first()
+            val legacySessionsJson = preferences[SESSIONS_JSON].orEmpty()
+            val existingSessions = chatHistoryDao.getSessions()
+            if (legacySessionsJson.isNotBlank() && existingSessions.isEmpty()) {
+                val legacySessions = parseChatSessions(legacySessionsJson)
+                if (legacySessions.isNotEmpty()) {
+                    val currentSessionId = preferences[CURRENT_SESSION_ID]
+                        ?.takeIf { id -> id == DraftSessionId || legacySessions.any { it.id == id } }
+                        ?: legacySessions.first().id.takeIf(String::isNotBlank)
+                        ?: DraftSessionId
+                    replaceChatStateBatched(
+                        sessions = legacySessions,
+                        currentSessionId = currentSessionId,
+                        migrationComplete = false,
+                    )
+                }
+            }
             markRoomMigrationCompletePreservingExistingState()
+            clearLegacyChatState()
+        }
+    }
+
+    private suspend fun clearLegacyChatState() {
+        context.chatDataStore.edit { data ->
+            data.remove(SESSIONS_JSON)
+            data.remove(CURRENT_SESSION_ID)
+            data[ROOM_MIGRATION_COMPLETE] = true
         }
     }
 
@@ -796,6 +830,9 @@ class ChatRepository(
     }
 
     private companion object {
+        val SESSIONS_JSON = stringPreferencesKey("sessions_json")
+        val CURRENT_SESSION_ID = stringPreferencesKey("current_session_id")
+        val ROOM_MIGRATION_COMPLETE = booleanPreferencesKey("room_migration_complete")
         val roomInitializationMutex = Mutex()
     }
 }

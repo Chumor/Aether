@@ -92,6 +92,12 @@ jobs:
           mkdir -p dist/nightly
           cp app/build/outputs/apk/nightly/app-nightly.apk "dist/nightly/Aether-nightly-${SHORT_SHA}.apk"
 
+      - name: Upload Nightly APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: Aether-nightly
+          path: dist/nightly/Aether-nightly-${{ steps.nightly.outputs.short_sha }}.apk
+
       - name: Prepare Telegram metadata
         id: telegram_metadata
         shell: bash
@@ -106,6 +112,7 @@ jobs:
           commit_subject="$(git log -1 --pretty=%s)"
           commit_author="$(git log -1 --pretty=%an)"
           commit_display="$SHORT_SHA"
+          push_commit_count=1
           commit_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             if [[ -z "${PUSH_BEFORE:-}" || "$PUSH_BEFORE" =~ ^0+$ ]] \
@@ -118,6 +125,7 @@ jobs:
             pushed_commit_shas="$(git log --reverse --topo-order --format='%h' "$push_range")"
             pushed_commit_subjects="$(git log --reverse --topo-order --format='%s' "$push_range")"
             pushed_commit_count="$(git rev-list --count "$push_range")"
+            push_commit_count="$pushed_commit_count"
             if (( pushed_commit_count == 0 )); then
               echo "::error::No commits found in the push range ${push_range}." >&2
               exit 1
@@ -133,7 +141,7 @@ jobs:
             fi
           fi
           workflow_run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          caption="$(COMMIT_SUBJECT="$commit_subject" COMMIT_AUTHOR="$commit_author" COMMIT_DISPLAY="$commit_display" COMMIT_URL="$commit_url" WORKFLOW_RUN_URL="$workflow_run_url" GIT_BRANCH="$GITHUB_REF_NAME" RUN_NUMBER="$GITHUB_RUN_NUMBER" python3 - <<'PY'
+          caption="$(COMMIT_SUBJECT="$commit_subject" COMMIT_AUTHOR="$commit_author" COMMIT_DISPLAY="$commit_display" PUSH_COMMIT_COUNT="$push_commit_count" COMMIT_URL="$commit_url" WORKFLOW_RUN_URL="$workflow_run_url" GIT_BRANCH="$GITHUB_REF_NAME" RUN_NUMBER="$GITHUB_RUN_NUMBER" python3 - <<'PY'
           import html
           import os
 
@@ -142,20 +150,30 @@ jobs:
           branch = os.environ["GIT_BRANCH"]
           commit_display = os.environ["COMMIT_DISPLAY"]
           run_number = os.environ["RUN_NUMBER"]
+          push_commit_count = int(os.environ["PUSH_COMMIT_COUNT"])
           commit_url = html.escape(os.environ["COMMIT_URL"], quote=True)
           run_url = html.escape(os.environ["WORKFLOW_RUN_URL"], quote=True)
 
-          plain_caption = "\n".join([
-              "Aether Nightly",
-              "",
-              f"Commit: {commit_display}",
-              subject,
-              f"Author: {author}",
-              f"Branch: {branch}",
-              f"Workflow run #{run_number}",
-          ])
+          def render_plain_caption(subject):
+              return "\n".join([
+                  "Aether Nightly",
+                  "",
+                  f"Commit: {commit_display}",
+                  subject,
+                  f"Author: {author}",
+                  f"Branch: {branch}",
+                  f"Workflow run #{run_number}",
+              ])
+
+          plain_caption = render_plain_caption(subject)
           if len(plain_caption.encode("utf-16-le")) // 2 > 1024:
-              raise SystemExit("Nightly Telegram caption exceeds the 1024-character limit.")
+              if push_commit_count > 1:
+                  subject = f"{push_commit_count} commits; see the comparison link above."
+              else:
+                  subject = "Subject exceeds caption limit; see the commit link above."
+              plain_caption = render_plain_caption(subject)
+              if len(plain_caption.encode("utf-16-le")) // 2 > 1024:
+                  raise SystemExit("Telegram caption template exceeds the 1024-character limit.")
 
           caption = "\n".join([
               "<b>Aether Nightly</b>",
@@ -178,12 +196,6 @@ jobs:
             printf '%s\n' "$caption"
             printf '%s\n' "$delimiter"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Upload Nightly APK
-        uses: actions/upload-artifact@v7
-        with:
-          name: Aether-nightly
-          path: ${{ steps.telegram_metadata.outputs.apk_path }}
 
       - name: Push APK to Telegram channel
         shell: bash
